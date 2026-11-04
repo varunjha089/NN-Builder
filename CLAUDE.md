@@ -61,7 +61,8 @@ web/src/                   Design.tsx: the canvas reads left to right (handles l
                            by groupLayers(): Input, image stages by resolution (pool + a following Dropout stay in their stage), Embedding
                            and Encoder block k for transformers, Classifier; collapsible, with parameter subtotals; every block name in
                            its kind's colour (COLORS, neon at night), status colour only for warnings/errors;
-                           App.tsx (demo cards on the Projects page and File → New from Demo open "<Architecture> demo" as the draft: nothing
+                           App.tsx (Projects page: New project and Open side by side, then the demos as clickable tiles; .page scrolls at the
+                           window edge with the content centred, at most 1180 px; demo cards on the Projects page and File → New from Demo open "<Architecture> demo" as the draft: nothing
                            in the projects folder until Save… / File → Save Project… ⌘S (project_save_as); unsaved, it is discarded
                            without asking (the owner's choice); runs refuse a draft);
                            App.tsx (top bar: Project ▾, Design, Dataset, Code, Train, Results, and Connection set apart on the right; job panel;

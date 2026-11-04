@@ -226,34 +226,42 @@ function ProjectTab({ st, toast, opened, reload }: { st: AppState; toast: (m: st
   const [path, setPath] = useState("");
   const [demos, setDemos] = useState<Template[]>([]);
   useEffect(() => { api.templates().then(setDemos).catch(() => {}); }, []);
+  const create = () => api.projectNew(name).then(() => { setName(""); opened(); }).catch((e) => toast(errText(e)));
+  const openPath = () => api.projectOpen(path).then(opened).catch((e) => toast(errText(e)));
   const fromDemo = (t: Template) => api.projectFromTemplate(t.key).then((m) => { toast(m); opened(); }).catch((e) => toast(errText(e)));
   return (
     <div className="page">
       <h2>Projects</h2>
-      <h3>New project</h3>
-      <p className="row"><input id="newProjectName" value={name} onChange={(e) => setName(e.target.value)} placeholder="name" />
-        <button className="primary" onClick={() => api.projectNew(name).then(() => { setName(""); opened(); }).catch((e) => toast(errText(e)))}>Create</button></p>
-      <p className="muted small">Made in {st.projects_dir} <button className="small" onClick={() => { const d = prompt("Folder for new projects:", st.projects_dir); if (d) api.setProjectsDir(d).then(reload); }}>change</button></p>
-      <h3>Open</h3>
-      <table className="grid"><tbody>
-        {st.projects.map((p) => <tr key={p.path}><td>{p.name}</td><td className="muted small">{p.path}</td>
-          <td>{p.exists ? <button onClick={() => api.projectOpen(p.path).then(opened).catch((e) => toast(errText(e)))}>Open</button> : "missing"}</td></tr>)}
-        {!st.projects.length && <tr><td className="muted">No projects yet.</td></tr>}
-      </tbody></table>
-      <p className="row"><input className="grow" value={path} onChange={(e) => setPath(e.target.value)} placeholder="folder of a project (contains project.json)" />
-        <button onClick={() => api.projectOpen(path).then(opened).catch((e) => toast(errText(e)))}>Open folder</button></p>
-      <h3>Start from a demo architecture</h3>
-      <p className="muted small">Opens the network on the canvas as an unsaved project: nothing is written to your projects folder until you save it
-        (Save… or ⌘S). Unsaved, it is discarded when you open another demo or project, or quit. Every demo is also in the Design tab under "Famous architectures".</p>
+      <div className="ptop">
+        <div className="card">
+          <h3>New project</h3>
+          <p className="row"><input id="newProjectName" className="grow" value={name} onChange={(e) => setName(e.target.value)} placeholder="name"
+            onKeyDown={(e) => { if (e.key === "Enter") create(); }} />
+            <button className="primary" onClick={create}>Create</button></p>
+          <p className="muted small">Made in {st.projects_dir} <button className="small" onClick={() => { const d = prompt("Folder for new projects:", st.projects_dir); if (d) api.setProjectsDir(d).then(reload); }}>change</button></p>
+        </div>
+        <div className="card">
+          <h3>Open</h3>
+          {st.projects.length ? <table className="grid"><tbody>
+            {st.projects.map((p) => <tr key={p.path}><td><strong>{p.name}</strong><div className="muted small">{p.path}</div></td>
+              <td className="num">{p.exists ? <button onClick={() => api.projectOpen(p.path).then(opened).catch((e) => toast(errText(e)))}>Open</button> : <span className="muted">missing</span>}</td></tr>)}
+          </tbody></table> : <p className="muted">No saved projects yet. Create one, or open a demo below and save it (⌘S).</p>}
+          <p className="row"><input className="grow" value={path} onChange={(e) => setPath(e.target.value)} placeholder="folder of a project (contains project.json)"
+            onKeyDown={(e) => { if (e.key === "Enter") openPath(); }} />
+            <button onClick={openPath}>Open folder</button></p>
+        </div>
+      </div>
+      <div className="section-head"><h3>Start from a demo architecture</h3><span className="muted small">{demos.length} networks · also in Design → Famous architectures</span></div>
+      <p className="muted small">A demo opens on the canvas unsaved: nothing is written to your projects folder until you save it (Save… or ⌘S); unsaved, it is
+        discarded when you open another demo or project, or quit.</p>
       <div className="demos">
         {demos.map((t) => (
-          <div key={t.key} className="demo">
-            <div className="row"><strong>{t.title}</strong><span className="muted small">{t.year}</span>
-              {t.task === "segment" && <span className="pill">segmentation</span>}</div>
+          <button key={t.key} className="demo" onClick={() => fromDemo(t)} title={t.about}>
+            <span className="dtitle"><strong>{t.title}</strong><span className="muted small">{t.year}</span>
+              {t.task === "segment" && <span className="pill">segmentation</span>}</span>
             <p className="small muted">{(() => { const parts = t.about.split(". "); return (/et al$| & /.test(parts[0]) ? parts[1] : parts[0]).replace(/\.$/, ""); })()}.</p>
-            <div className="row"><span className="muted small">input {t.input[1]}×{t.input[2]}×{t.input[0]}</span><span className="grow" />
-              <button onClick={() => fromDemo(t)}>Open demo</button></div>
-          </div>
+            <span className="dfoot"><span className="muted">input {t.input[1]}×{t.input[2]}×{t.input[0]}</span><span className="go">Open →</span></span>
+          </button>
         ))}
       </div>
       <p className="muted small">NN Builder {st.version} · settings in {st.home}. This Mac only designs; training runs on Kaggle, a college GPU or AWS.</p>

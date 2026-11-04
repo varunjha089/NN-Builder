@@ -18,7 +18,8 @@ header nav { display: flex; gap: 2px; }
 .summary { font-size: 12px; }
 .grow { flex: 1; }
 main { flex: 1; min-height: 0; overflow: hidden; display: flex; }
-.page { padding: 16px 22px; overflow: auto; width: 100%; max-width: 1100px; }
+/* the page scrolls at the window edge; its content stays centred and at most 1180 px wide */
+.page { padding: 16px max(22px, calc((100% - 1180px) / 2)); overflow: auto; width: 100%; }
 .muted { color: var(--muted); }
 .small { font-size: 11.5px; }
 h2 { margin: 4px 0 8px; font-size: 18px; }
@@ -101,10 +102,21 @@ canvas.pix { image-rendering: pixelated; border: 1px solid var(--line); }
 .aug input[type=number] { width: 60px; }
 .thumb.seg .row { gap: 3px; margin: 0; }
 .arrange { width: 100%; margin-bottom: 8px; }
-.demos { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; margin: 8px 0 18px; }
-.demo { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 9px 12px; display: flex; flex-direction: column; }
-.demo p { flex: 1; margin: 4px 0; }
-.demo .row { margin: 2px 0; }
+.demos { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 12px; margin: 10px 0 20px; }
+.demo { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px 10px; display: flex; flex-direction: column;
+  text-align: left; font: inherit; color: var(--ink); cursor: pointer; transition: border-color .15s, box-shadow .15s, transform .15s; }
+.demo:hover { border-color: var(--accent); transform: translateY(-1px); box-shadow: 0 4px 14px rgba(47,111,222,.15); }
+.demo .dtitle { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.demo .dtitle strong { font-size: 14px; }
+.demo p { flex: 1; margin: 6px 0 10px; line-height: 1.5; }
+.demo .dfoot { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--line); padding-top: 8px; font-size: 11.5px; }
+.demo .go { margin-left: auto; color: var(--accent); font-weight: 600; }
+.ptop { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; margin: 6px 0 4px; }
+.ptop .card { margin: 0; }
+.ptop h3 { margin-top: 2px; }
+.ptop table.grid td { vertical-align: middle; }
+.section-head { display: flex; align-items: baseline; gap: 12px; margin-top: 22px; }
+.section-head h3 { margin: 0; }
 .updatebar { display: flex; gap: 10px; align-items: center; padding: 7px 14px; background: var(--info); border-bottom: 1px solid var(--line); flex-shrink: 0; }
 table.layers .ghead td { border-top: 1px solid var(--line); }
 table.layers .gsub { font-size: 10.5px; font-weight: 400; color: var(--muted); margin-left: 14px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -129,6 +141,9 @@ table.layers .gitem td { font-size: 11px; }
 [data-theme="night"] h4 { color: #ff4fd8; text-shadow: 0 0 6px rgba(255,79,216,.6); }
 [data-theme="night"] .tab.on { text-shadow: 0 0 6px var(--accent); box-shadow: inset 0 0 0 1px var(--accent), 0 0 10px rgba(0,229,255,.35); }
 [data-theme="night"] header { box-shadow: 0 1px 0 var(--accent), 0 2px 14px rgba(0,229,255,.25); border-bottom-color: transparent; }
+[data-theme="night"] button.demo:hover:not(:disabled) { text-shadow: none; border-color: var(--accent); box-shadow: 0 0 14px rgba(0,229,255,.45), inset 0 0 12px rgba(0,229,255,.08); }
+[data-theme="night"] .demo .dtitle strong { color: #fff; text-shadow: 0 0 6px rgba(0,229,255,.5); }
+[data-theme="night"] .demo .go { text-shadow: 0 0 6px var(--accent); }
 [data-theme="night"] .card, [data-theme="night"] .demo, [data-theme="night"] .templates, [data-theme="night"] .aug, [data-theme="night"] .job {
   border-color: rgba(0,229,255,.45); box-shadow: 0 0 10px rgba(0,229,255,.18), inset 0 0 12px rgba(0,229,255,.06); }
 [data-theme="night"] button { border-color: rgba(255,79,216,.5); color: #ffd6f6; }
@@ -157,3 +172,4 @@ table.layers .gitem td { font-size: 11px; }
 [data-theme="night"] .react-flow__minimap { background: var(--panel); }
 [data-theme="night"] .react-flow__background { background: var(--bg); }
 [data-theme="night"] .react-flow__background circle, [data-theme="night"] .react-flow__background path { fill: #26305e; stroke: #26305e; }
+[data-theme="night"] button.demo { color: var(--ink); border-color: rgba(0,229,255,.35); text-shadow: none; }
