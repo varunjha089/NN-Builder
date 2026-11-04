@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "The main window: events (menu -> tab) and the app's own commands",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:default"]
+  "permissions": ["core:default", "core:window:allow-set-theme", "dialog:default"]
 }

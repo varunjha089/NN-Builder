@@ -609,7 +609,11 @@ fn build_menu(h: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .separator()
         .item(&item(h, "arrange", "Arrange Left to Right", Some("CmdOrCtrl+L"))?)
         .build()?;
-    let view = SubmenuBuilder::new(h, "View").fullscreen().build()?;
+    let view = SubmenuBuilder::new(h, "View")
+        .item(&item(h, "night", "Night Mode (neon)", Some("CmdOrCtrl+Shift+N"))?)
+        .separator()
+        .fullscreen()
+        .build()?;
     let conn = SubmenuBuilder::new(h, "Connection")
         .item(&item(h, "connection", "Open Connection", Some("CmdOrCtrl+Shift+K"))?)
         .item(&item(h, "tools", "Install Tools (kaggle, boto3)…", None)?)

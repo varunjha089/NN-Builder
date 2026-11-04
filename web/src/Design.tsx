@@ -1,5 +1,5 @@
 // The canvas: layer nodes joined by tensor edges (React Flow), a palette, and the inspector for the selected node.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   ReactFlow, Background, Controls, MiniMap, Handle, Position, addEdge, applyEdgeChanges, applyNodeChanges,
   type Connection, type Edge, type EdgeChange, type Node, type NodeChange, type NodeProps, MarkerType,
@@ -7,6 +7,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { api, fmt, errText, type Analysis, type AppState, type Graph, type NodeResult, type Params, type Template } from "./api";
 import { SlidingPreview } from "./Preview";
+import { neon, useTheme } from "./theme";
 
 export const COLORS: Record<string, string> = {
   input: "#3b6fd8", conv2d: "#d9822b", dwconv2d: "#c96d1a", convtranspose2d: "#b5651d", pool2d: "#2a9d8f", global_pool: "#21867a", upsample: "#3c8d7f",
@@ -47,12 +48,20 @@ function summary(kind: string, p: Params): string {
   }
 }
 
+/** a kind's colour: as defined by day, its neon version at night */
+function useKindColor(): ((kind: string) => string) & { night: boolean } {
+  const night = useTheme() === "night";
+  // night: neon outlines from styles.css (red/yellow for problems), so no inline border
+  return Object.assign((kind: string) => (night ? neon(COLORS[kind] ?? "#999999") : COLORS[kind] ?? "#999999"), { night });
+}
+
 function LayerNode({ data, selected }: NodeProps<Node<LayerData>>) {
+  const color = useKindColor();
   const r = data.result;
   const st = r?.status ?? "ok";
   const border = st === "error" ? "#c62828" : st === "warn" ? "#d08a00" : st === "blocked" || st === "unconnected" ? "#9aa3ae" : "#d5dae1";
   return (
-    <div className={`layer ${selected ? "sel" : ""}`} style={{ borderColor: border, opacity: st === "unconnected" ? 0.6 : 1 }}>
+    <div className={`layer st-${st} ${selected ? "sel" : ""}`} style={{ borderColor: color.night ? undefined : border, opacity: st === "unconnected" ? 0.6 : 1, "--c": color(data.kind) } as CSSProperties}>
       {data.kind !== "input" && <Handle type="target" position={Position.Left} />}
       <div className="lh" style={{ background: COLORS[data.kind] }}>{data.title}{st === "error" ? " ✕" : st === "warn" ? " ⚠" : ""}</div>
       {data.summary && <div className="ls">{data.summary}</div>}
@@ -104,6 +113,7 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, relo
   remember: (prev: Graph) => void;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
+  const color = useKindColor(), night = color.night;
   // designs saved in the earlier top-to-bottom view are turned left to right once
   useEffect(() => {
     if (isVertical(graph)) {
@@ -139,7 +149,8 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, relo
   }, [graph, results, selected, titles]);
   const edges: Edge[] = graph.edges.map((e) => ({
     id: e.id, source: e.source, target: e.target, label: analysis?.edges[e.id] ? fmt(analysis.edges[e.id]) : undefined,
-    labelStyle: { fontSize: 10, fill: "#4b5563" }, labelBgStyle: { fill: "#f6f7f9" }, markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
+    labelStyle: { fontSize: 10, fill: "var(--edge-label)" }, labelBgStyle: { fill: "var(--bg)" },
+    markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: night ? "#00e5ff" : undefined },
   }));
 
   const onNodesChange = useCallback((changes: NodeChange<Node<LayerData>>[]) => {
@@ -253,7 +264,7 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, relo
         <p className="muted small">Click a block to add it after the selected one. Drag from a block's right dot to another block's left dot to connect (several arrows into Add / Concat / Multiply). Select + Backspace deletes.</p>
         {GROUPS.map(([g, kinds]) => (
           <div key={g}><h4>{g}</h4>{kinds.map((k) => (
-            <button key={k} className="pal" style={{ borderLeftColor: COLORS[k] }} onClick={() => addBlock(k)}>{titles[k]}</button>
+            <button key={k} className="pal" style={{ borderLeftColor: COLORS[k], "--c": color(k) } as CSSProperties} onClick={() => addBlock(k)}>{titles[k]}</button>
           ))}</div>
         ))}
       </div>
@@ -262,7 +273,8 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, relo
           onPaneClick={() => setSelected(null)} fitView fitViewOptions={{ padding: 0.2, maxZoom: 1 }} minZoom={0.2} deleteKeyCode={["Backspace", "Delete"]}>
           <Background gap={24} />
           <Controls />
-          <MiniMap pannable zoomable nodeColor={(n) => COLORS[(n.data as LayerData).kind] ?? "#999"} />
+          <MiniMap pannable zoomable nodeColor={(n) => color((n.data as LayerData).kind)}
+            maskColor={night ? "rgba(5,6,12,.7)" : undefined} />
         </ReactFlow>}
       </div>
       <Inspector node={sel} result={sel ? results[sel.id] : undefined} analysis={analysis} st={st} setParam={setParam} setParams={setParams}
@@ -348,6 +360,7 @@ function Inspector({ node, result, analysis, st, setParam, setParams, candidates
   setParam: (k: string, v: unknown) => void; setParams: (p: Params) => void;
   candidates: { id: string; label: string }[]; addSkip: (src: string, mode: "add" | "concat") => void;
 }) {
+  const color = useKindColor();
   if (!node) {
     return (
       <div className="inspector">
@@ -371,7 +384,7 @@ function Inspector({ node, result, analysis, st, setParam, setParams, candidates
   const padSet = (v: string) => setParam("padding", v === "same" || v === "valid" ? v : Number(v));
   return (
     <div className="inspector">
-      <h3 style={{ color: COLORS[node.kind] }}>{result?.title ?? node.kind}</h3>
+      <h3 style={{ color: color(node.kind), "--c": color(node.kind) } as CSSProperties}>{result?.title ?? node.kind}</h3>
       <div className="fields">
         {node.kind === "conv2d" && <>
           <Num label="Filters (output channels)" value={p.filters} onChange={(v) => setParam("filters", v)} />

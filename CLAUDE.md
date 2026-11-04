@@ -47,7 +47,7 @@ app/src-tauri/src/main.rs  Tauri commands (thin: they call nnb-core), keychain (
                            datasets-server/whoami calls (ureq), the menu bar (build_menu / on_menu): App (About, Check for Updates…), File (New
                            Project ⌘N, Open Project… ⌘O with a folder dialog, New from Demo ▸, Import/Export Design… (model.json, dialogs from
                            tauri-plugin-dialog), Export train.py ⌘E, Show Project in Finder ⇧⌘R), Edit (Undo ⌘Z / Redo ⇧⌘Z of the design,
-                           Cut/Copy/Paste/Select All, Arrange ⌘L), View, Connection, Window. Dialog actions run in Rust and emit
+                           Cut/Copy/Paste/Select All, Arrange ⌘L), View (Night Mode ⇧⌘N), Connection, Window. Dialog actions run in Rust and emit
                            "project-changed" / "toast"; the rest is emitted as "menu" (id) to the window. Undo/Redo: App.tsx keeps snapshots
                            (Design calls remember(prev) before each change; changes within 0.6 s are one step; in a text field the menu
                            items undo the typing instead)
@@ -59,6 +59,11 @@ web/src/                   Design.tsx: the canvas reads left to right (handles l
                            App.tsx (top bar: Project ▾, Design, Dataset, Code, Train, Results, and Connection set apart on the right; job panel;
                            Code and Project tabs), Design.tsx (canvas, palette, inspector), Preview.tsx (sliding window, charts, images),
                            DatasetTab, TrainTab, ResultsTab, ConnectionTab, api.ts (typed invoke wrappers)
+                           theme.ts: day / night (neon) theme: `data-theme` on <html> switches the CSS variables in styles.css; night
+                           draws boxes and text as neon glows (each layer glows in its kind's colour made bright by neon(), passed as
+                           --c); remembered in localStorage; the ☾/☀ button in the top bar and View → Night Mode; also sets the window's
+                           dark title bar (permission core:window:allow-set-theme). Canvas drawings read the variables (cssVar) and redraw
+                           on a theme change (useTheme). New colours go in styles.css as variables, not hard-coded in components.
 .github/workflows/ci.yml   core tests + PyTorch comparison on GitHub's machines
 ```
 

@@ -1,6 +1,7 @@
 // The window: top bar with the tabs (Connection set apart on the right), the project, background tasks and messages.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { toggleTheme, useTheme } from "./theme";
 import { api, errText, type Analysis, type AppState, type Dataset, type Graph, type JobSnap, type Template, type TrainSettings, type UpdateCheck } from "./api";
 import { Design, arrange } from "./Design";
 import { DatasetTab } from "./DatasetTab";
@@ -13,6 +14,7 @@ type Tab = "project" | "design" | "dataset" | "code" | "train" | "results" | "co
 export default function App() {
   const [st, setSt] = useState<AppState | null>(null);
   const [tab, setTab] = useState<Tab>("design");
+  const theme = useTheme();
   const [graph, setGraph] = useState<Graph | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [ds, setDsState] = useState<Dataset | null>(null);
@@ -128,6 +130,8 @@ export default function App() {
     } else if (id === "new-project") {
       setTab("project");
       window.setTimeout(() => document.getElementById("newProjectName")?.focus(), 50);
+    } else if (id === "night") {
+      toggleTheme();
     } else if (id === "export-code") {
       api.exportCode().then((p) => toast(`Saved ${p}`)).catch((err) => toast(errText(err)));
     }
@@ -146,6 +150,7 @@ export default function App() {
         <nav>{st.project && tabs.map(([t, label]) => <button key={t} className={`tab ${tab === t ? "on" : ""}`} onClick={() => setTab(t)}>{label}</button>)}</nav>
         <span className="grow" />
         {analysis && st.project && <span className={`summary ${ok ? "st-ok" : "st-error"}`}>{ok ? `${analysis.total_params.toLocaleString()} params · ready` : analysis.ok ? "dataset incomplete" : "design has problems"}</span>}
+        <button className="tab theme-btn" title={theme === "night" ? "Day mode (⇧⌘N)" : "Night mode (⇧⌘N)"} onClick={toggleTheme}>{theme === "night" ? "☀" : "☾"}</button>
         <button className={`tab conn-tab ${tab === "connection" ? "on" : ""}`} onClick={() => setTab("connection")}>Connection{missing ? <span className="dot" /> : null}</button>
       </header>
       {update && <div className="updatebar">
