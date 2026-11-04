@@ -214,8 +214,12 @@ def kaggle_root():
         os.makedirs(root, exist_ok=True)
         exe = os.path.join(os.path.dirname(sys.executable), "kaggle")
         emit("info", message=f"downloading {DATASET['kaggle_slug']} from Kaggle")
-        r = subprocess.run([exe if os.path.exists(exe) else "kaggle", "datasets", "download", DATASET["kaggle_slug"], "-p", root, "--unzip"],
-                           capture_output=True, text=True)
+        try:
+            r = subprocess.run([exe if os.path.exists(exe) else "kaggle", "datasets", "download", DATASET["kaggle_slug"], "-p", root, "--unzip"],
+                               capture_output=True, text=True)
+        except FileNotFoundError:
+            raise SystemExit("DATA: the kaggle command is not installed on this machine (Prepare installs it with the training packages; "
+                             "or: pip install kaggle)")
         if r.returncode != 0:
             raise SystemExit("DATA: Kaggle download failed (is the Kaggle token on this machine? Connection tab): " + (r.stderr or r.stdout)[-500:])
     return root

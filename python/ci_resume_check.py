@@ -53,6 +53,7 @@ def start(run, env):
 
 
 def main(run):
+    run = os.path.abspath(run)  # train.py runs inside the run folder
     data = os.path.join(run, "data")
     make_images(data)
     env = {**os.environ, "NNB_DATA": data, "PYTHONUNBUFFERED": "1"}
