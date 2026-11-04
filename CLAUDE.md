@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Version 0.1.0 (2026-11-04): first build of the plan below, as a Rust (Tauri 2) app with a React Flow canvas. Local git repository; no GitHub
-repository yet (ask the owner before creating one and whether it is public). Not yet tried against a real Kaggle account, college server or EC2
-instance: those flows are tested with stand-ins only. The earlier Python/Blockly app (0.1.1, 2026-11-03) is in the Trash.
+Version 0.2.0 (2026-11-04). Public repository github.com/varunjha089/NN-Builder (MIT); releases there feed the app's automatic update.
+Kaggle, a college server and EC2 are tested with stand-ins only (never against real accounts in tests). The earlier Python/Blockly app
+(0.1.1, 2026-11-03) is in the Trash.
 
 ## Layout
 
@@ -64,6 +64,26 @@ web/src/                   Design.tsx: the canvas reads left to right (handles l
 - Look at the window with a scratch settings folder: `open -n --env NN_BUILDER_HOME=<scratch> "target/release/bundle/macos/NN Builder.app"`
   (starting the binary directly may give a process without a window).
 - The keychain items belong to the app; an unsigned rebuild may make macOS ask once to allow access to them again.
+
+## Automatic updates
+
+- `app/src-tauri/src/update.rs` (adapted from the LaTeX Editor): `check` reads `releases/latest` of `REPO` without signing in (override with
+  `NN_BUILDER_UPDATE_URL`); `pick_asset` by OS/arch from the names the Build workflow gives (`NN-Builder_X_aarch64.app.zip`,
+  `NN-Builder_X_x64-setup.exe`, `nn-builder_X_amd64.AppImage` / `.deb`); `download` checks size and the release's `digest` SHA-256; `install`:
+  macOS unzips (ditto) next to the running bundle and swaps by rename; Windows runs the installer at exit; AppImage replaced; .deb via xdg-open.
+- Commands `update_check(manual)` (automatic at start only when `auto_update` is on and `last_update_check` is over a day old; both in
+  settings.json), `update_install` (a background job ending in "UPDATE_READY"), `update_restart` (Tauri restart, or installer + exit).
+  Window: the banner under the top bar; Connection menu → Check for Updates…; the switch on the Projects page.
+- If the packaged file names change, change `pick_asset`, its test and `.github/workflows/build.yml` together.
+
+## Releasing a version
+
+1. Raise the version in `Cargo.toml` ([workspace.package]), `app/src-tauri/tauri.conf.json` and `web/package.json`; `cargo build` (Cargo.lock);
+   test; commit; push `main`.
+2. Create a draft release `vX.Y.Z` with the notes (API, token header file; see ../HOW_THINGS_WERE_DONE.txt), then push the tag `vX.Y.Z`.
+   The Build workflow builds macOS / Windows / Linux and its `release` job attaches the four files (it refuses a tag that differs from the version).
+3. When the files are attached, publish the draft (`draft: false`): only then does `releases/latest` show it and the apps offer the update.
+   Check: `curl https://api.github.com/repos/varunjha089/NN-Builder/releases/latest` lists the assets with a `digest`.
 
 ## Rules for changes
 

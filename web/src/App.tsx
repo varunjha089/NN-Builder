@@ -1,7 +1,7 @@
 // The window: top bar with the tabs (Connection set apart on the right), the project, background tasks and messages.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { api, errText, type Analysis, type AppState, type Dataset, type Graph, type JobSnap, type Template, type TrainSettings } from "./api";
+import { api, errText, type Analysis, type AppState, type Dataset, type Graph, type JobSnap, type Template, type TrainSettings, type UpdateCheck } from "./api";
 import { Design } from "./Design";
 import { DatasetTab } from "./DatasetTab";
 import { TrainTab } from "./TrainTab";
@@ -22,6 +22,7 @@ export default function App() {
   const [msg, setMsg] = useState("");
   const [job, setJob] = useState<JobSnap | null>(null);
   const [jobLog, setJobLog] = useState<string[]>([]);
+  const [update, setUpdate] = useState<UpdateCheck["release"] | null>(null);
   const timers = useRef<Record<string, number>>({});
 
   const toast = useCallback((m: string) => {
@@ -46,7 +47,15 @@ export default function App() {
   useEffect(() => {
     reload().then((s) => (s.project ? loadProject() : setTab("project"))).catch((e) => toast(errText(e)));
     const un = listen<string>("open-tab", (e) => setTab(e.payload as Tab));
-    return () => { un.then((f) => f()); };
+    // automatic update check: at most once a day, when switched on (the Rust side decides)
+    api.updateCheck(false).then((u) => { if (u?.release?.newer) setUpdate(u.release); }).catch(() => {});
+    const un2 = listen("check-update", () => {
+      api.updateCheck(true).then((u) => {
+        if (u?.release?.newer) setUpdate(u.release);
+        else toast(`You're up to date: NN Builder ${u?.current ?? ""} is the newest version.`);
+      }).catch((e) => toast(errText(e)));
+    });
+    return () => { un.then((f) => f()); un2.then((f) => f()); };
   }, [reload, loadProject, toast]);
 
   const setDs = (d: Dataset) => {
@@ -70,6 +79,7 @@ export default function App() {
       setJob(j);
       if (j.log.length) setJobLog((l) => [...l, ...j.log].slice(-400));
       if (j.state === "running") { window.setTimeout(tick, 700); return; }
+      if (j.state === "done" && j.message === "UPDATE_READY") { toast("Update installed: restarting …"); window.setTimeout(() => api.updateRestart(), 800); return; }
       if (j.state === "done" && j.message.startsWith("RUN ")) { setRunId(j.message.slice(4)); setTab("train"); }
       else if (j.message) toast(j.message);
       reload();
@@ -92,6 +102,14 @@ export default function App() {
         {analysis && st.project && <span className={`summary ${ok ? "st-ok" : "st-error"}`}>{ok ? `${analysis.total_params.toLocaleString()} params · ready` : analysis.ok ? "dataset incomplete" : "design has problems"}</span>}
         <button className={`tab conn-tab ${tab === "connection" ? "on" : ""}`} onClick={() => setTab("connection")}>Connection{missing ? <span className="dot" /> : null}</button>
       </header>
+      {update && <div className="updatebar">
+        <strong>NN Builder {update.version} is available</strong> <span className="muted">(you have {st.version})</span>
+        {update.asset ? <button className="primary" onClick={() => api.updateInstall().then(startJob).catch((e) => toast(errText(e)))}>
+          Install and restart ({(update.asset.size / 1e6).toFixed(0)} MB)</button>
+          : <span className="muted">no installer for this system in the release</span>}
+        <button onClick={() => api.openUrl(update.page)}>What's new</button>
+        <button onClick={() => setUpdate(null)}>Later</button>
+      </div>}
       <main>
         {tab === "project" && <ProjectTab st={st} toast={toast} opened={async () => { await reload(); await loadProject(); setTab("design"); }} reload={reload} />}
         {tab === "design" && graph && <Design st={st} graph={graph} setGraph={setGraph} analysis={analysis} setAnalysis={setAnalysis} toast={toast}
@@ -162,6 +180,15 @@ function ProjectTab({ st, toast, opened, reload }: { st: AppState; toast: (m: st
       <p className="row"><input className="grow" value={path} onChange={(e) => setPath(e.target.value)} placeholder="folder of a project (contains project.json)" />
         <button onClick={() => api.projectOpen(path).then(opened).catch((e) => toast(errText(e)))}>Open folder</button></p>
       <p className="muted small">NN Builder {st.version} · settings in {st.home}. This Mac only designs; training runs on Kaggle, a college GPU or AWS.</p>
+      <AutoUpdate />
     </div>
   );
+}
+
+function AutoUpdate() {
+  const [on, setOn] = useState<boolean | null>(null);
+  useEffect(() => { api.updateSettings().then((u) => setOn(u.auto)).catch(() => {}); }, []);
+  if (on === null) return null;
+  return <p className="row small"><label className="chk"><input type="checkbox" checked={on} onChange={(e) => { setOn(e.target.checked); api.setAutoUpdate(e.target.checked); }} />
+    Check for updates automatically (once a day, from the GitHub releases)</label><span className="muted">· or Connection menu → Check for Updates…</span></p>;
 }

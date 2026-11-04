@@ -102,3 +102,4 @@ canvas.pix { image-rendering: pixelated; border: 1px solid var(--line); }
 .demo { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 9px 12px; display: flex; flex-direction: column; }
 .demo p { flex: 1; margin: 4px 0; }
 .demo .row { margin: 2px 0; }
+.updatebar { display: flex; gap: 10px; align-items: center; padding: 7px 14px; background: #eef4ff; border-bottom: 1px solid #c9d8f5; flex-shrink: 0; }

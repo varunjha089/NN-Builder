@@ -3,7 +3,7 @@
 Design neural networks on a canvas, check every shape while you build, and train them on a GPU somewhere else: **Kaggle**, a **college GPU
 server** (SSH) or an **AWS EC2** instance (g4dn.xlarge). Your computer only designs: it never trains, never downloads datasets and needs no PyTorch.
 
-Version 0.1.0 · MIT licence · Rust (Tauri 2) + React; the generated training code is Python (PyTorch).
+Version 0.2.0 · MIT licence · Rust (Tauri 2) + React; the generated training code is Python (PyTorch).
 
 ## What it does
 
@@ -41,9 +41,16 @@ Version 0.1.0 · MIT licence · Rust (Tauri 2) + React; the generated training c
   password or key, jump host; AWS instance with region, instance id and key file). Password machines: you log in once in a Terminal window the
   app opens; the app never sees or stores the password.
 
+## Updates
+
+The app checks the GitHub releases once a day (switch on the Projects page; or Connection menu → Check for Updates…). When a newer version
+exists, a bar offers "Install and restart": the download is checked against the release's SHA-256, then the app replaces itself and restarts.
+Your projects, settings and keychain entries are not touched.
+
 ## Install and run
 
-macOS: build with the steps below and copy `NN Builder.app` to /Applications. First steps in the app: Connection → Install tools → add your
+Download the file for your system from the [releases](https://github.com/varunjha089/NN-Builder/releases/latest) (macOS: unzip and move
+`NN Builder.app` to Applications; the builds are not signed, so the first time right-click → Open), or build it with the steps below. First steps in the app: Connection → Install tools → add your
 Kaggle token (and/or a machine) → Project → New → Design → Dataset → Train.
 
 ## Build

@@ -31,6 +31,11 @@ fn edge(g: &mut Graph, a: &str, b: &str) {
     g.edges.push(Edge { id, source: a.into(), target: b.into() });
 }
 
+/// compile a Python file with python3 (or python on Windows); None when no Python is installed (the check is skipped)
+fn py_compile(f: &std::path::Path) -> Option<std::process::Output> {
+    ["python3", "python"].iter().find_map(|py| std::process::Command::new(py).args(["-m", "py_compile"]).arg(f).output().ok())
+}
+
 fn mnist() -> Dataset {
     Dataset::default()
 }
@@ -141,8 +146,9 @@ fn generated_python_compiles() {
         let dir = tempfile::tempdir().unwrap();
         let f = dir.path().join("train.py");
         std::fs::write(&f, &code).unwrap();
-        let out = std::process::Command::new("python3").args(["-m", "py_compile"]).arg(&f).output().expect("python3");
-        assert!(out.status.success(), "{}\n{}", String::from_utf8_lossy(&out.stderr), code);
+        if let Some(out) = py_compile(&f) {
+            assert!(out.status.success(), "{}\n{}", String::from_utf8_lossy(&out.stderr), code);
+        }
         assert!(code.contains("nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1)") || ds.source != "builtin");
         assert!(code.contains("EXPECTED = {\"input\": ["), "{code}");
     }
@@ -198,8 +204,9 @@ fn every_template_is_valid_and_compiles() {
         let code = train_script(&g, &ds, &a, &TrainSettings::default(), t.title).unwrap();
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("t.py"), &code).unwrap();
-        let out = std::process::Command::new("python3").args(["-m", "py_compile"]).arg(dir.path().join("t.py")).output().unwrap();
-        assert!(out.status.success(), "{}: {}", t.key, String::from_utf8_lossy(&out.stderr));
+        if let Some(out) = py_compile(&dir.path().join("t.py")) {
+            assert!(out.status.success(), "{}: {}", t.key, String::from_utf8_lossy(&out.stderr));
+        }
         // positions are spread out (no two nodes on the same spot)
         let mut pos: Vec<(i64, i64)> = g.nodes.iter().map(|n| (n.x as i64, n.y as i64)).collect();
         pos.sort();

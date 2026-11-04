@@ -54,7 +54,14 @@ export interface JobSnap { name: string; state: string; message: string; log: st
 
 export interface Template { key: string; title: string; year: number; task: string; input: [number, number, number]; about: string }
 
+export interface UpdateCheck { current: string; release: { version: string; newer: boolean; notes: string; page: string; asset: { name: string; size: number } | null } | null }
+
 export const api = {
+  updateSettings: () => invoke<{ auto: boolean; last_check: number | null; version: string }>("update_settings"),
+  setAutoUpdate: (on: boolean) => invoke<void>("set_auto_update", { on }),
+  updateCheck: (manual: boolean) => invoke<UpdateCheck | null>("update_check", { manual }),
+  updateInstall: () => invoke<void>("update_install"),
+  updateRestart: () => invoke<void>("update_restart"),
   templates: () => invoke<Template[]>("templates_list"),
   templateApply: (key: string) => invoke<string>("template_apply", { key }),
   projectFromTemplate: (key: string) => invoke<string>("project_from_template", { key }),

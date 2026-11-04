@@ -2,6 +2,8 @@
 //! live only in the system keychain and are handed to nnb-core for one call at a time. Nothing here trains or downloads datasets.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod update;
+
 use nnb_core::cloud::{self, AwsCreds, KaggleCreds};
 use nnb_core::codegen::TrainSettings;
 use nnb_core::dataset::{Dataset, BUILTINS};
@@ -22,6 +24,8 @@ const SERVICE: &str = "NN Builder";
 struct App {
     project: Mutex<Option<Project>>,
     jobs: Jobs,
+    /// an update that is installed and waits for the restart
+    update_after: std::sync::Arc<Mutex<Option<update::After>>>,
 }
 
 type R<T> = Result<T, String>;
@@ -466,6 +470,73 @@ async fn run_reveal(st: State<'_, App>, id: String) -> R<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------- automatic updates
+const DAY: u64 = 24 * 3600;
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+#[tauri::command]
+async fn update_settings() -> R<Value> {
+    let s = store::settings();
+    Ok(json!({"auto": s["auto_update"].as_bool().unwrap_or(true), "last_check": s["last_update_check"], "version": env!("CARGO_PKG_VERSION")}))
+}
+
+#[tauri::command]
+async fn set_auto_update(on: bool) -> R<()> {
+    store::save_setting("auto_update", json!(on)).map_err(e)
+}
+
+/// manual: always ask GitHub. Automatic (at start): only when switched on and not asked in the last day; null when not asked.
+#[tauri::command]
+async fn update_check(manual: bool) -> R<Value> {
+    let s = store::settings();
+    if !manual && (!s["auto_update"].as_bool().unwrap_or(true) || now_secs().saturating_sub(s["last_update_check"].as_u64().unwrap_or(0)) < DAY) {
+        return Ok(Value::Null);
+    }
+    store::save_setting("last_update_check", json!(now_secs())).map_err(e)?;
+    let r = blocking(update::check).await?;
+    Ok(match r {
+        Some(rel) => json!({"current": env!("CARGO_PKG_VERSION"), "release": rel}),
+        None => json!({"current": env!("CARGO_PKG_VERSION"), "release": null}),
+    })
+}
+
+#[tauri::command]
+async fn update_install(st: State<'_, App>) -> R<()> {
+    let after = st.update_after.clone();
+    let ok = st.jobs.start("Update NN Builder", move |log: Log| {
+        let rel = update::check()?.ok_or("No release found.")?;
+        if !rel.newer {
+            return Err(format!("You already have the newest version ({}).", env!("CARGO_PKG_VERSION")));
+        }
+        let asset = rel.asset.ok_or(format!("Version {} has no installer for this system; download it from {}", rel.version, rel.page))?;
+        log(format!("Downloading {} ({:.1} MB) ...", asset.name, asset.size as f64 / 1e6));
+        let file = update::download(&asset, &update::work_dir(), &*log)?;
+        log("Checksum verified. Installing ...".into());
+        let a = update::install(&file)?;
+        *after.lock().unwrap() = Some(a);
+        Ok("UPDATE_READY".into())
+    });
+    if ok { Ok(()) } else { Err("Another task is running.".into()) }
+}
+
+/// start the new version: restart the app, or run the Windows installer and quit
+#[tauri::command]
+async fn update_restart(st: State<'_, App>, app: tauri::AppHandle) -> R<()> {
+    let after = st.update_after.lock().unwrap().take();
+    match after {
+        Some(update::After::Installer(path)) => {
+            std::process::Command::new(path).spawn().map_err(e)?;
+            app.exit(0);
+        }
+        Some(update::After::Restart) => app.restart(),
+        _ => {}
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn job_status(st: State<'_, App>, since: usize) -> R<nnb_core::jobs::Snapshot> {
     Ok(st.jobs.snapshot(since))
@@ -486,7 +557,7 @@ async fn open_url(url: String) -> R<()> {
 }
 
 fn main() {
-    let app = App { project: Mutex::new(store::last_project()), jobs: Jobs::default() };
+    let app = App { project: Mutex::new(store::last_project()), jobs: Jobs::default(), update_after: Default::default() };
     tauri::Builder::default()
         .manage(app)
         .setup(|app| {
@@ -494,11 +565,14 @@ fn main() {
             let menu = Menu::default(app.handle())?;
             let open = MenuItem::with_id(app, "connection", "Open Connection", true, Some("CmdOrCtrl+Shift+K"))?;
             let tools = MenuItem::with_id(app, "tools", "Install Tools (kaggle, boto3)…", true, None::<&str>)?;
-            let conn = Submenu::with_items(app, "Connection", true, &[&open, &tools])?;
+            let upd = MenuItem::with_id(app, "check-update", "Check for Updates…", true, None::<&str>)?;
+            let conn = Submenu::with_items(app, "Connection", true, &[&open, &tools, &upd])?;
             menu.insert(&conn, 3)?;
             app.set_menu(menu)?;
             app.on_menu_event(|app, ev| {
-                if ev.id() == "connection" || ev.id() == "tools" {
+                if ev.id() == "check-update" {
+                    let _ = app.emit("check-update", ());
+                } else if ev.id() == "connection" || ev.id() == "tools" {
                     let _ = app.emit("open-tab", "connection");
                     if let Some(w) = app.get_webview_window("main") {
                         let _ = w.set_focus();
@@ -511,7 +585,7 @@ fn main() {
             app_state, templates_list, template_apply, project_from_template, project_new, project_open, set_projects_dir, project_load, save_graph, save_dataset, save_train, code, export_code,
             set_kaggle, set_hf, set_aws, clear_secret, test_kaggle, test_hf, test_aws, tools_install,
             machine_save, machine_delete, machine_test, machine_connect, machine_prepare, hf_info, kaggle_files,
-            targets, run_start, runs_list, run_status, run_stop, run_fetch, run_results, run_reveal, job_status, open_url
+            update_settings, set_auto_update, update_check, update_install, update_restart, targets, run_start, runs_list, run_status, run_stop, run_fetch, run_results, run_reveal, job_status, open_url
         ])
         .run(tauri::generate_context!())
         .expect("error while running NN Builder");
