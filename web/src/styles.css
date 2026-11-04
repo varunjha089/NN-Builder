@@ -117,6 +117,10 @@ canvas.pix { image-rendering: pixelated; border: 1px solid var(--line); }
 .ptop table.grid td { vertical-align: middle; }
 .section-head { display: flex; align-items: baseline; gap: 12px; margin-top: 22px; }
 .section-head h3 { margin: 0; }
+button.section-head.fold { background: none; border: 0; padding: 0; width: 100%; text-align: left; cursor: pointer; }
+.section-head .caret { width: 14px; color: var(--muted); }
+[data-theme="night"] button.section-head.fold, [data-theme="night"] button.section-head.fold:hover:not(:disabled) { box-shadow: none; text-shadow: none; }
+.section-head.fold:hover h3 { text-decoration: underline; text-underline-offset: 3px; }
 .updatebar { display: flex; gap: 10px; align-items: center; padding: 7px 14px; background: var(--info); border-bottom: 1px solid var(--line); flex-shrink: 0; }
 table.layers .ghead td { border-top: 1px solid var(--line); }
 table.layers .gsub { font-size: 10.5px; font-weight: 400; color: var(--muted); margin-left: 14px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

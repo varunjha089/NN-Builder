@@ -19,7 +19,8 @@ crates/core/src/
                            Transformer encoder on image rows, ViT-Base/16, ViT-Tiny, U-Net, Attention U-Net): TEMPLATES (key, title, year, task,
                            input, about), build(key) with a left-to-right layout (a column per depth); plus one original design,
                            MSG-Former (msg_former: multi-scale dilated convolutions + squeeze-and-excitation gate + residual, then
-                           Transformer encoders; 466,522 params, counted by hand in the test)
+                           Transformer encoders; 466,522 params, counted by hand in the test) and ViT-g/14 (vit_g14, 1,011,216,522 params,
+                           counted by hand; too big to train on a 16 GB T4, said in its description; CI builds it in PyTorch, ~4 GB RAM)
   dataset.rs               Dataset (builtin | huggingface | kaggle; task classify | segment; resize (built-in); hf_mask_col, kaggle_mask_dir;
                            image_size, channels, classes), BUILTINS, input_shape, problems()
   shapes.rs                analyze(graph, dataset) -> Analysis: computation order (Kahn), per-node in/out shapes, params, rf, padding/stride
@@ -63,7 +64,8 @@ web/src/                   Design.tsx: the canvas reads left to right (handles l
                            by groupLayers(): Input, image stages by resolution (pool + a following Dropout stay in their stage), Embedding
                            and Encoder block k for transformers, Classifier; collapsible, with parameter subtotals; every block name in
                            its kind's colour (COLORS, neon at night), status colour only for warnings/errors;
-                           App.tsx (Projects page: New project and Open side by side, then the demos as clickable tiles; .page scrolls at the
+                           App.tsx (Projects page: New project and Open side by side, then the demos as clickable tiles in a section that
+                           folds (remembered in localStorage "nnb-demos-open"); .page scrolls at the
                            window edge with the content centred, at most 1180 px; demo cards on the Projects page and File → New from Demo open "<Architecture> demo" as the draft: nothing
                            in the projects folder until Save… / File → Save Project… ⌘S (project_save_as); unsaved, it is discarded
                            without asking (the owner's choice); runs refuse a draft);

@@ -222,6 +222,9 @@ fn every_template_is_valid_and_compiles() {
     // MSG-Former, counted by hand: stem 928, gated blocks 38,288 + 152,352, class token + positions 8,448, 2 encoders 264,960,
     // final LayerNorm 256, head 1,290
     assert_eq!(p("msg_former"), 466_522);
+    // ViT-g/14, counted by hand: 40 blocks × 25,250,176 (attention 4d²+4d, MLP 2·d·6144 + 6144 + d, two LayerNorms) + patch convolution
+    // 829,312 + class token and 257 positions 363,264 + final LayerNorm 2,816 + head 14,090
+    assert_eq!(p("vit_g14"), 1_011_216_522);
 }
 
 #[test]

@@ -41,6 +41,8 @@ pub const TEMPLATES: &[Template] = &[
         about: "Dosovitskiy et al. The image is cut into 16×16 patches (a 16×16 stride-16 convolution), giving 196 tokens of 768 values; a class token and position embeddings are added; 12 Transformer encoder blocks (12 heads, MLP 3072); the class token gives the prediction. About 86 million parameters (the same count as torchvision's vit_b_16)." },
     Template { key: "vit_tiny", title: "ViT-Tiny (CIFAR-10)", year: 2020, task: "classify", input: [3, 32, 32],
         about: "A small Vision Transformer for 32×32 images: 4×4 patches (64 tokens of 192 values), 6 encoder blocks with 3 heads and MLP 384, dropout 0.1. Trains in minutes on a GPU; needs augmentation to do well on small datasets." },
+    Template { key: "vit_g14", title: "ViT-g/14 (1 billion parameters)", year: 2022, task: "classify", input: [3, 224, 224],
+        about: "Zhai et al., Scaling Vision Transformers. A giant ViT: 14×14 patches (256 tokens of 1408 values), 40 encoder blocks with 16 heads and MLP 6144; 1,011,216,522 parameters with a 10-class head. Too big to train on a T4 (Kaggle, g4dn.xlarge: 16 GB): the weights and Adam's moments alone need about 16 GB, so it needs a 40–80 GB GPU (A100/H100) or model sharding. Here it shows how a transformer scales: the same block as ViT-Base, only wider and deeper." },
     Template { key: "unet", title: "U-Net", year: 2015, task: "segment", input: [3, 128, 128],
         about: "Ronneberger et al. An encoder (two 3×3 convolutions + max pooling, 32→256 filters) and a decoder (2×2 transposed convolution, Concat with the encoder's skip connection, two 3×3 convolutions), ending with a 1×1 convolution giving a class for every pixel. Padding 'same' keeps sizes equal (the paper crops instead)." },
     Template { key: "attention_unet", title: "Attention U-Net", year: 2018, task: "segment", input: [3, 128, 128],
@@ -301,8 +303,12 @@ pub fn build(key: &str) -> Option<Graph> {
             let p = b.add("token_pool", json!({"mode": "cls"}), &[&n]);
             b.add("output", json!({}), &[&p]);
         }
-        "vit_b16" | "vit_tiny" => {
-            let (patch, d, depth, heads, mlp, drop) = if key == "vit_b16" { (16, 768, 12, 12, 3072, 0.0) } else { (4, 192, 6, 3, 384, 0.1) };
+        "vit_b16" | "vit_tiny" | "vit_g14" => {
+            let (patch, d, depth, heads, mlp, drop) = match key {
+                "vit_b16" => (16, 768, 12, 12, 3072, 0.0),
+                "vit_g14" => (14, 1408, 40, 16, 6144, 0.0),
+                _ => (4, 192, 6, 3, 384, 0.1),
+            };
             let c = b.add("conv2d", json!({"filters": d, "kernel": [patch, patch], "stride": [patch, patch], "padding": "valid", "activation": "none"}), &[&x]);
             let t = b.add("to_tokens", json!({"mode": "patches"}), &[&c]);
             let mut h = b.add("cls_pos", json!({"cls": true}), &[&t]);

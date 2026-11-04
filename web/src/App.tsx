@@ -226,6 +226,8 @@ function ProjectTab({ st, toast, opened, reload }: { st: AppState; toast: (m: st
   const [path, setPath] = useState("");
   const [demos, setDemos] = useState<Template[]>([]);
   useEffect(() => { api.templates().then(setDemos).catch(() => {}); }, []);
+  const [demosOpen, setDemosOpen] = useState(() => { try { return localStorage.getItem("nnb-demos-open") !== "0"; } catch { return true; } });
+  const flipDemos = () => setDemosOpen((o) => { try { localStorage.setItem("nnb-demos-open", o ? "0" : "1"); } catch { /* not remembered */ } return !o; });
   const create = () => api.projectNew(name).then(() => { setName(""); opened(); }).catch((e) => toast(errText(e)));
   const openPath = () => api.projectOpen(path).then(opened).catch((e) => toast(errText(e)));
   const fromDemo = (t: Template) => api.projectFromTemplate(t.key).then((m) => { toast(m); opened(); }).catch((e) => toast(errText(e)));
@@ -251,7 +253,10 @@ function ProjectTab({ st, toast, opened, reload }: { st: AppState; toast: (m: st
             <button onClick={openPath}>Open folder</button></p>
         </div>
       </div>
-      <div className="section-head"><h3>Start from a demo architecture</h3><span className="muted small">{demos.length} networks · also in Design → Famous architectures</span></div>
+      <button className="section-head fold" onClick={() => flipDemos()} aria-expanded={demosOpen}>
+        <span className="caret">{demosOpen ? "▾" : "▸"}</span><h3>Start from a demo architecture</h3>
+        <span className="muted small">{demos.length} networks · also in Design → Famous architectures</span></button>
+      {demosOpen && <>
       <p className="muted small">A demo opens on the canvas unsaved: nothing is written to your projects folder until you save it (Save… or ⌘S); unsaved, it is
         discarded when you open another demo or project, or quit.</p>
       <div className="demos">
@@ -264,6 +269,7 @@ function ProjectTab({ st, toast, opened, reload }: { st: AppState; toast: (m: st
           </button>
         ))}
       </div>
+      </>}
       <p className="muted small">NN Builder {st.version} · settings in {st.home}. This Mac only designs; training runs on Kaggle, a college GPU or AWS.</p>
       <AutoUpdate />
     </div>

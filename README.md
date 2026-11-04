@@ -12,7 +12,7 @@ Version 0.2.0 · MIT licence · Rust (Tauri 2) + React; the generated training c
   Segmentation output. Branches work (ResNet skips with Add, U-Net with Concat, attention gates with Multiply, Transformer blocks with Add).
   The network reads left to right; "Arrange left to right" lays out any design.
   - **Famous architectures** to start from (Projects page: "Start from a demo architecture" opens one unsaved, ⌘S keeps it; or Design → Famous architectures): LeNet-5, a small CIFAR-10 CNN, AlexNet, VGG-16, GoogLeNet (Inception v1), ResNet-18, MobileNet v1,
-    a small DenseNet, a Transformer encoder (image rows as tokens), ViT-Base/16, ViT-Tiny (CIFAR-10), U-Net and Attention U-Net (VGG-16,
+    a small DenseNet, a Transformer encoder (image rows as tokens), ViT-Base/16, ViT-Tiny (CIFAR-10), ViT-g/14 (1 billion parameters), U-Net and Attention U-Net (VGG-16,
     ResNet-18 and ViT-Base/16 have exactly torchvision's parameter counts), plus one original design, MSG-Former: multi-scale dilated
     convolutions with a squeeze-and-excitation gate and residual shortcuts, then Transformer encoder blocks.
   - **Skip connections:** select a block and choose an earlier one: an Add (residual) or Concat is inserted, with a 1×1 convolution (or pooling)
