@@ -451,7 +451,7 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
                 return None;
             }
             let h = int(p, "heads", 4, 1, 64);
-            if x[1] % h != 0 {
+            if !x[1].is_multiple_of(h) {
                 err(r, &format!("The token dimension {} must divide evenly by the number of heads {h}.", x[1]));
                 return None;
             }
