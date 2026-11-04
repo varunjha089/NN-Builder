@@ -211,6 +211,7 @@ fn every_template_is_valid_and_compiles() {
     assert_eq!(p("lenet5"), 61_706); // LeNet-5 with 10 classes
     assert_eq!(p("vgg16"), 134_301_514); // torchvision VGG-16 with 10 classes
     assert_eq!(p("resnet18"), 11_181_642); // torchvision ResNet-18 with 10 classes
+    assert_eq!(p("vit_b16"), 85_806_346); // torchvision vit_b_16 (86,567,656 with 1000 classes) with a 10-class head
 }
 
 #[test]
@@ -227,4 +228,27 @@ fn segmentation_and_multiply_rules() {
     // Output on a segmentation dataset is refused too
     let a = analyze(&model::starter(), &dataset_for(t));
     assert!(a.nodes.iter().any(|n| n.messages.iter().any(|m| m.contains("Segmentation output"))));
+}
+
+#[test]
+fn transformer_blocks() {
+    let t = nnb_core::templates::get("vit_tiny").unwrap();
+    let g = nnb_core::templates::build("vit_tiny").unwrap();
+    let a = analyze(&g, &dataset_for(t));
+    let shape = |k: &str| a.nodes.iter().find(|n| n.kind == k).unwrap().out.clone().unwrap();
+    assert_eq!(shape("to_tokens"), vec![64, 192]);
+    assert_eq!(shape("cls_pos"), vec![65, 192]);
+    assert_eq!(shape("token_pool"), vec![192]);
+    let code = model_code(&g, &a).unwrap();
+    assert!(code.contains("class SelfAttention(nn.Module)") && code.contains("SelfAttention(dim=192, heads=3, dropout=0.1)"), "{code}");
+    // heads must divide the dimension; Output needs a pooled vector; BatchNorm is refused on tokens
+    let mut g2 = g.clone();
+    for n in g2.nodes.iter_mut().filter(|n| n.kind == "attention") {
+        n.params.insert("heads".into(), json!(5));
+    }
+    assert!(analyze(&g2, &dataset_for(t)).nodes.iter().any(|n| n.messages.iter().any(|m| m.contains("divide evenly"))));
+    let g3 = chain(vec![("input", json!({})), ("to_tokens", json!({})), ("batchnorm", json!({})), ("token_pool", json!({})), ("output", json!({}))]);
+    assert!(!analyze(&g3, &Dataset::default()).ok);
+    let g4 = chain(vec![("input", json!({})), ("to_tokens", json!({"mode": "rows"})), ("output", json!({}))]);
+    assert!(analyze(&g4, &Dataset::default()).nodes[2].messages[0].contains("Token pool"));
 }

@@ -35,6 +35,12 @@ pub const TEMPLATES: &[Template] = &[
         about: "Howard et al. Depthwise separable convolutions: a 3×3 depthwise convolution per channel, then a 1×1 convolution to mix channels; about 9× fewer computations than normal convolutions." },
     Template { key: "densenet_small", title: "DenseNet (small, CIFAR)", year: 2017, task: "classify", input: [3, 32, 32],
         about: "Huang et al. In each dense block every layer receives the Concat of all earlier layers' outputs (growth 12); transition layers (1×1 convolution + average pooling) shrink the image between blocks." },
+    Template { key: "transformer", title: "Transformer encoder (image rows as tokens)", year: 2017, task: "classify", input: [1, 28, 28],
+        about: "Vaswani et al. The Transformer's encoder: each block is LayerNorm → multi-head self-attention → Add, then LayerNorm → a two-layer MLP (GELU) → Add. The app trains on images, so every row of a 28×28 image is one token (28 tokens of 28 values), embedded to 64 dimensions with a class token and position embeddings; 2 blocks, 4 heads." },
+    Template { key: "vit_b16", title: "ViT-Base/16", year: 2020, task: "classify", input: [3, 224, 224],
+        about: "Dosovitskiy et al. The image is cut into 16×16 patches (a 16×16 stride-16 convolution), giving 196 tokens of 768 values; a class token and position embeddings are added; 12 Transformer encoder blocks (12 heads, MLP 3072); the class token gives the prediction. About 86 million parameters (the same count as torchvision's vit_b_16)." },
+    Template { key: "vit_tiny", title: "ViT-Tiny (CIFAR-10)", year: 2020, task: "classify", input: [3, 32, 32],
+        about: "A small Vision Transformer for 32×32 images: 4×4 patches (64 tokens of 192 values), 6 encoder blocks with 3 heads and MLP 384, dropout 0.1. Trains in minutes on a GPU; needs augmentation to do well on small datasets." },
     Template { key: "unet", title: "U-Net", year: 2015, task: "segment", input: [3, 128, 128],
         about: "Ronneberger et al. An encoder (two 3×3 convolutions + max pooling, 32→256 filters) and a decoder (2×2 transposed convolution, Concat with the encoder's skip connection, two 3×3 convolutions), ending with a 1×1 convolution giving a class for every pixel. Padding 'same' keeps sizes equal (the paper crops instead)." },
     Template { key: "attention_unet", title: "Attention U-Net", year: 2018, task: "segment", input: [3, 128, 128],
@@ -76,11 +82,30 @@ impl B {
     fn conv(&mut self, x: &str, filters: usize, k: usize, s: usize, act: &str) -> String {
         self.add("conv2d", json!({"filters": filters, "kernel": [k, k], "stride": [s, s], "padding": "same", "activation": act}), &[x])
     }
+    /// a pre-norm Transformer encoder block: x + Attention(LN(x)), then + MLP(LN(.))
+    fn encoder(&mut self, x: &str, d: usize, heads: usize, mlp: usize, drop: f64) -> String {
+        let ln1 = self.add("layernorm", json!({}), &[x]);
+        let mut a = self.add("attention", json!({"heads": heads, "dropout": drop}), &[&ln1]);
+        if drop > 0.0 {
+            a = self.add("dropout", json!({"rate": drop}), &[&a]);
+        }
+        let s1 = self.add("add", json!({}), &[x, &a]);
+        let ln2 = self.add("layernorm", json!({}), &[&s1]);
+        let mut m = self.add("dense", json!({"units": mlp, "activation": "gelu"}), &[&ln2]);
+        if drop > 0.0 {
+            m = self.add("dropout", json!({"rate": drop}), &[&m]);
+        }
+        let mut m2 = self.add("dense", json!({"units": d, "activation": "none"}), &[&m]);
+        if drop > 0.0 {
+            m2 = self.add("dropout", json!({"rate": drop}), &[&m2]);
+        }
+        self.add("add", json!({}), &[&s1, &m2])
+    }
     fn maxpool(&mut self, x: &str, size: usize, stride: usize, pad: usize) -> String {
         let st = if size == stride { json!("size") } else { json!([stride, stride]) };
         self.add("pool2d", json!({"mode": "max", "size": [size, size], "stride": st, "padding": pad}), &[x])
     }
-    /// place the nodes in rows by depth (longest path from the Input), branches side by side
+    /// place the nodes in columns by depth (longest path from the Input), left to right; branches are stacked in a column
     fn layout(mut self) -> Graph {
         let mut depth: HashMap<String, usize> = HashMap::new();
         for n in &self.g.nodes {
@@ -103,9 +128,9 @@ impl B {
         for n in &mut self.g.nodes {
             let d = depth[&n.id];
             let i = per_row.entry(d).or_default();
-            let offset = (widest - row_count[&d]) as f64 * 130.0;
-            n.x = 60.0 + offset + *i as f64 * 260.0;
-            n.y = 40.0 + d as f64 * 120.0;
+            let offset = (widest - row_count[&d]) as f64 * 75.0;
+            n.x = 60.0 + d as f64 * 300.0;
+            n.y = 60.0 + offset + *i as f64 * 150.0;
             *i += 1;
         }
         self.g
@@ -262,6 +287,29 @@ pub fn build(key: &str) -> Option<Graph> {
             let a = b.add("activation", json!({"fn": "relu"}), &[&n]);
             let g = b.add("global_pool", json!({"mode": "avg"}), &[&a]);
             b.add("output", json!({}), &[&g]);
+        }
+        "transformer" => {
+            let t = b.add("to_tokens", json!({"mode": "rows"}), &[&x]);
+            let e = b.add("dense", json!({"units": 64, "activation": "none"}), &[&t]);
+            let mut h = b.add("cls_pos", json!({"cls": true}), &[&e]);
+            for _ in 0..2 {
+                h = b.encoder(&h, 64, 4, 128, 0.1);
+            }
+            let n = b.add("layernorm", json!({}), &[&h]);
+            let p = b.add("token_pool", json!({"mode": "cls"}), &[&n]);
+            b.add("output", json!({}), &[&p]);
+        }
+        "vit_b16" | "vit_tiny" => {
+            let (patch, d, depth, heads, mlp, drop) = if key == "vit_b16" { (16, 768, 12, 12, 3072, 0.0) } else { (4, 192, 6, 3, 384, 0.1) };
+            let c = b.add("conv2d", json!({"filters": d, "kernel": [patch, patch], "stride": [patch, patch], "padding": "valid", "activation": "none"}), &[&x]);
+            let t = b.add("to_tokens", json!({"mode": "patches"}), &[&c]);
+            let mut h = b.add("cls_pos", json!({"cls": true}), &[&t]);
+            for _ in 0..depth {
+                h = b.encoder(&h, d, heads, mlp, drop);
+            }
+            let n = b.add("layernorm", json!({}), &[&h]);
+            let p = b.add("token_pool", json!({"mode": "cls"}), &[&n]);
+            b.add("output", json!({}), &[&p]);
         }
         "unet" | "attention_unet" => {
             let attention = key == "attention_unet";

@@ -84,6 +84,52 @@ fn k2(v: [usize; 2]) -> String {
     }
 }
 
+/// small modules for transformers (written into train.py only when the design uses them)
+const TOKEN_MODULES: &str = r#"class ToTokens(nn.Module):
+    """an image (C, H, W) as a sequence: "patches" -> H*W tokens of C values; "rows" -> H tokens of C*W values"""
+    def __init__(self, mode):
+        super().__init__()
+        self.mode = mode
+
+    def forward(self, x):
+        return x.flatten(2).transpose(1, 2) if self.mode == "patches" else x.permute(0, 2, 1, 3).flatten(2)
+
+
+class ClsPos(nn.Module):
+    """a learnable class token in front (optional) and a learnable position embedding added to every token"""
+    def __init__(self, tokens, dim, cls=True):
+        super().__init__()
+        self.cls = nn.Parameter(torch.zeros(1, 1, dim)) if cls else None
+        self.pos = nn.Parameter(torch.randn(1, tokens + (1 if cls else 0), dim) * 0.02)
+
+    def forward(self, x):
+        if self.cls is not None:
+            x = torch.cat([self.cls.expand(x.shape[0], -1, -1), x], dim=1)
+        return x + self.pos
+
+
+class SelfAttention(nn.Module):
+    """multi-head self-attention over the tokens"""
+    def __init__(self, dim, heads, dropout=0.0):
+        super().__init__()
+        self.mha = nn.MultiheadAttention(dim, heads, dropout=dropout, batch_first=True)
+
+    def forward(self, x):
+        return self.mha(x, x, x, need_weights=False)[0]
+
+
+class TokenPool(nn.Module):
+    """one vector per image: the class token ("cls") or the mean of all tokens ("mean")"""
+    def __init__(self, mode):
+        super().__init__()
+        self.mode = mode
+
+    def forward(self, x):
+        return x[:, 0] if self.mode == "cls" else x.mean(dim=1)
+
+
+"#;
+
 /// the modules of one node as Python source (empty for Input / Add / Concat, which are written in forward)
 fn modules(n: &Node, a: &Analysis, classes: usize) -> Vec<String> {
     let r = a.get(&n.id).unwrap();
@@ -94,7 +140,7 @@ fn modules(n: &Node, a: &Analysis, classes: usize) -> Vec<String> {
         "conv2d" | "dwconv2d" => {
             let c = inp[0];
             let out = r.out.as_ref().unwrap()[0];
-            let mut args = vec![format!("in_channels={c}"), format!("out_channels={out}"), format!("kernel_size={}", k2(pair(p, "kernel", 3, 1, 15)))];
+            let mut args = vec![format!("in_channels={c}"), format!("out_channels={out}"), format!("kernel_size={}", k2(pair(p, "kernel", 3, 1, 32)))];
             let st = r.stride.unwrap();
             if st != [1, 1] {
                 args.push(format!("stride={}", k2(st)));
@@ -119,7 +165,7 @@ fn modules(n: &Node, a: &Analysis, classes: usize) -> Vec<String> {
         }
         "convtranspose2d" => {
             let mut args = vec![format!("in_channels={}", inp[0]), format!("out_channels={}", r.out.as_ref().unwrap()[0]),
-                format!("kernel_size={}", k2(pair(p, "kernel", 2, 1, 15))), format!("stride={}", k2(r.stride.unwrap()))];
+                format!("kernel_size={}", k2(pair(p, "kernel", 2, 1, 32))), format!("stride={}", k2(r.stride.unwrap()))];
             let pd = r.padding.unwrap();
             if pd != [0, 0] {
                 args.push(format!("padding={}", k2(pd)));
@@ -153,7 +199,17 @@ fn modules(n: &Node, a: &Analysis, classes: usize) -> Vec<String> {
             });
         }
         "batchnorm" => m.push(if inp.len() == 3 { format!("nn.BatchNorm2d({})", inp[0]) } else { format!("nn.BatchNorm1d({})", inp[0]) }),
-        "layernorm" => m.push(if inp.len() == 3 { format!("nn.GroupNorm(1, {})   # LayerNorm over (channels, height, width)", inp[0]) } else { format!("nn.LayerNorm({})", inp[0]) }),
+        "layernorm" => m.push(if inp.len() == 3 { format!("nn.GroupNorm(1, {})   # LayerNorm over (channels, height, width)", inp[0]) } else { format!("nn.LayerNorm({})", inp.last().unwrap()) }),
+        "to_tokens" => m.push(format!("ToTokens({:?})", shapes::text(p, "mode", &["patches", "rows"], "patches"))),
+        "cls_pos" => {
+            let cls = p.get("cls").and_then(|v| v.as_bool()).unwrap_or(true);
+            m.push(format!("ClsPos(tokens={}, dim={}, cls={})", inp[0], inp[1], if cls { "True" } else { "False" }));
+        }
+        "attention" => {
+            let drop = p.get("dropout").and_then(|v| v.as_f64()).unwrap_or(0.0).clamp(0.0, 0.9);
+            m.push(format!("SelfAttention(dim={}, heads={}, dropout={})", inp[1], int(p, "heads", 4, 1, 64), (drop * 100.0).round() / 100.0));
+        }
+        "token_pool" => m.push(format!("TokenPool({:?})", shapes::text(p, "mode", &["cls", "mean"], "cls"))),
         "dropout" => {
             let rate = p.get("rate").and_then(|v| v.as_f64()).unwrap_or(0.25).clamp(0.0, 0.95);
             m.push(format!("nn.Dropout(p={})", (rate * 100.0).round() / 100.0));
@@ -161,7 +217,7 @@ fn modules(n: &Node, a: &Analysis, classes: usize) -> Vec<String> {
         "flatten" => m.push("nn.Flatten()".into()),
         "activation" => m.push(act(activation(p, "fn")).unwrap_or("nn.Identity()").into()),
         "dense" => {
-            m.push(format!("nn.Linear(in_features={}, out_features={})", inp[0], int(p, "units", 128, 1, 1 << 20)));
+            m.push(format!("nn.Linear(in_features={}, out_features={})", inp.last().unwrap(), int(p, "units", 128, 1, 1 << 20)));
             m.extend(act(activation(p, "activation")).map(String::from));
         }
         "output" => m.push(format!("nn.Linear(in_features={}, out_features={classes})", inp[0])),
@@ -224,7 +280,11 @@ pub fn model_code(g: &Graph, a: &Analysis) -> Result<String> {
             result_var = v.clone();
         }
     }
-    let mut s = String::from("class Net(nn.Module):\n    def __init__(self):\n        super().__init__()\n");
+    let mut s = String::new();
+    if g.nodes.iter().any(|n| order.contains(&n.id.as_str()) && matches!(n.kind.as_str(), "to_tokens" | "cls_pos" | "attention" | "token_pool")) {
+        s += TOKEN_MODULES;
+    }
+    s += "class Net(nn.Module):\n    def __init__(self):\n        super().__init__()\n";
     s += &init.join("\n");
     s += "\n\n    def forward(self, x):\n";
     s += &fwd.join("\n");

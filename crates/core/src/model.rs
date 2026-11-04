@@ -48,6 +48,10 @@ pub const KINDS: &[(&str, &str)] = &[
     ("add", "Add"),
     ("concat", "Concat"),
     ("multiply", "Multiply"),
+    ("to_tokens", "To tokens"),
+    ("cls_pos", "Class token + position"),
+    ("attention", "Self-attention"),
+    ("token_pool", "Token pool"),
     ("output", "Output"),
     ("seg_output", "Segmentation output"),
 ];
@@ -69,6 +73,10 @@ pub fn defaults(kind: &str) -> Value {
         "dropout" => json!({"rate": 0.25}),
         "dense" => json!({"units": 128, "activation": "relu"}),
         "activation" => json!({"fn": "relu"}),
+        "to_tokens" => json!({"mode": "patches"}),
+        "cls_pos" => json!({"cls": true}),
+        "attention" => json!({"heads": 4, "dropout": 0.0}),
+        "token_pool" => json!({"mode": "cls"}),
         _ => json!({}),
     }
 }
@@ -114,7 +122,7 @@ pub fn starter() -> Graph {
         for (k, v) in over.as_object().unwrap() {
             p.insert(k.clone(), v.clone());
         }
-        g.nodes.push(Node { id: format!("n{}", i + 1), kind: kind.into(), params: p, x: 80.0, y: 40.0 + 110.0 * i as f64 });
+        g.nodes.push(Node { id: format!("n{}", i + 1), kind: kind.into(), params: p, x: 40.0 + 300.0 * i as f64, y: 80.0 });
         if i > 0 {
             g.edges.push(Edge { id: format!("e{}", i), source: format!("n{i}"), target: format!("n{}", i + 1) });
         }

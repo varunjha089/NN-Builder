@@ -286,8 +286,16 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
     }
     let x = ins[0].clone();
     let is3 = x.len() == 3;
+    let is2 = x.len() == 2;
     let need3 = |r: &mut NodeResult| {
-        err(r, &format!("{} needs an image (channels, height, width), but its input is already flat {}. Put it before Flatten / Global pool.", r.title, fmt(&x)));
+        if x.len() == 2 {
+            err(r, &format!("{} needs an image (channels, height, width), but its input is a sequence of tokens {}. Put it before To tokens.", r.title, fmt(&x)));
+        } else {
+            err(r, &format!("{} needs an image (channels, height, width), but its input is already flat {}. Put it before Flatten / Global pool.", r.title, fmt(&x)));
+        }
+    };
+    let need2 = |r: &mut NodeResult| {
+        err(r, &format!("{} needs a sequence of tokens (tokens, dimension), but its input is {}. Put To tokens before it.", r.title, fmt(&x)));
     };
     let window_node = |r: &mut NodeResult, kernel: [usize; 2], stride: [usize; 2], pad: [usize; 2], dil: usize| -> Option<[usize; 2]> {
         let (h, w) = (x[1], x[2]);
@@ -325,8 +333,8 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
                 need3(r);
                 return None;
             }
-            let kernel = pair(p, "kernel", 3, 1, 15);
-            let stride = pair(p, "stride", 1, 1, 8);
+            let kernel = pair(p, "kernel", 3, 1, 32);
+            let stride = pair(p, "stride", 1, 1, 32);
             let dil = if k == "conv2d" { int(p, "dilation", 1, 1, 6) } else { 1 };
             let pad = match padding(p) {
                 Pad::Same => {
@@ -353,7 +361,7 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
                 return None;
             }
             let size = pair(p, "size", 2, 1, 8);
-            let stride = if p.get("stride").and_then(|v| v.as_str()) == Some("size") || p.get("stride").is_none() { size } else { pair(p, "stride", 2, 1, 8) };
+            let stride = if p.get("stride").and_then(|v| v.as_str()) == Some("size") || p.get("stride").is_none() { size } else { pair(p, "stride", 2, 1, 32) };
             let pd = int(p, "padding", 0, 0, 4);
             if pd * 2 > size[0].min(size[1]) {
                 err(r, &format!("Padding {pd} is more than half the pool size {}×{} (PyTorch does not allow that).", size[0], size[1]));
@@ -370,8 +378,8 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
                 need3(r);
                 return None;
             }
-            let kernel = pair(p, "kernel", 2, 1, 15);
-            let stride = pair(p, "stride", 2, 1, 8);
+            let kernel = pair(p, "kernel", 2, 1, 32);
+            let stride = pair(p, "stride", 2, 1, 32);
             let pd = int(p, "padding", 0, 0, 10);
             let op = int(p, "output_padding", 0, 0, 7);
             if op >= stride[0].max(1) || op >= stride[1].max(1) {
@@ -410,12 +418,59 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
             vec![x[0], x[1] * s, x[2] * s]
         }
         "batchnorm" | "layernorm" => {
-            r.params = 2 * x[0] as u64;
+            if k == "batchnorm" && is2 {
+                err(r, "BatchNorm is for images and vectors; use LayerNorm on a sequence of tokens.");
+                return None;
+            }
+            r.params = 2 * if is2 { x[1] } else { x[0] } as u64;
             x.clone()
+        }
+        "to_tokens" => {
+            if !is3 {
+                need3(r);
+                return None;
+            }
+            if text(p, "mode", &["patches", "rows"], "patches") == "rows" {
+                vec![x[1], x[0] * x[2]]
+            } else {
+                vec![x[1] * x[2], x[0]]
+            }
+        }
+        "cls_pos" => {
+            if !is2 {
+                need2(r);
+                return None;
+            }
+            let cls = p.get("cls").and_then(|v| v.as_bool()).unwrap_or(true) as usize;
+            r.params = (cls * x[1] + (x[0] + cls) * x[1]) as u64;
+            vec![x[0] + cls, x[1]]
+        }
+        "attention" => {
+            if !is2 {
+                need2(r);
+                return None;
+            }
+            let h = int(p, "heads", 4, 1, 64);
+            if x[1] % h != 0 {
+                err(r, &format!("The token dimension {} must divide evenly by the number of heads {h}.", x[1]));
+                return None;
+            }
+            let d = x[1] as u64;
+            r.params = 4 * d * d + 4 * d;
+            x.clone()
+        }
+        "token_pool" => {
+            if !is2 {
+                need2(r);
+                return None;
+            }
+            vec![x[1]]
         }
         "dropout" | "activation" => x.clone(),
         "flatten" => {
-            if !is3 {
+            if is2 {
+                vec![x[0] * x[1]]
+            } else if !is3 {
                 warn(r, "The input is already flat: Flatten does nothing here.");
                 x.clone()
             } else {
@@ -428,11 +483,16 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
                 err(r, &format!("{} needs a flat input, but its input is an image {}: add Flatten or Global pool before it.", r.title, fmt(&x)));
                 return None;
             }
-            r.params = (x[0] as u64 + 1) * units as u64;
+            if is2 && k == "output" {
+                err(r, &format!("Output needs one vector per image, but its input is a sequence of tokens {}: add Token pool before it.", fmt(&x)));
+                return None;
+            }
+            // on tokens, Dense acts on every token (the last dimension)
+            r.params = (*x.last().unwrap() as u64 + 1) * units as u64;
             if k == "dense" && r.params > BIG_DENSE {
                 warn(r, &format!("This Dense layer has {} parameters: try Global pool instead of Flatten before it.", r.params));
             }
-            vec![units]
+            if is2 { vec![x[0], units] } else { vec![units] }
         }
         "add" => {
             if ins.iter().any(|s| *s != x) {
@@ -472,6 +532,10 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
             vec![classes.max(1), x[1], x[2]]
         }
         "concat" => {
+            if is2 {
+                err(r, "Concat on token sequences is not supported yet.");
+                return None;
+            }
             if ins.iter().any(|s| s.len() != x.len()) {
                 err(r, "Concat cannot join an image and a flat vector.");
                 return None;
