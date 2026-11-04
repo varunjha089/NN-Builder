@@ -22,6 +22,10 @@ jobs:
         with:
           python-version: "3.12"
       - name: PyTorch (CPU)
-        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+        run: pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
       - name: Compare with PyTorch
         run: python python/verify_shapes.py cases.json
+      - name: Spot interruption and resume (real training on CPU)
+        run: |
+          cargo run -q -p nnb-core --example resume_case -- ci_run
+          python python/ci_resume_check.py ci_run

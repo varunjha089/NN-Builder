@@ -13,6 +13,7 @@ export function TrainTab({ st, ok, train, setTrain, runId, openRun, toast, start
   const [copyTokens, setCopyTokens] = useState(false);
   const [runs, setRuns] = useState<Awaited<ReturnType<typeof api.runs>>>([]);
   const [status, setStatus] = useState<RunStatus | null>(null);
+  const [moveTo, setMoveTo] = useState("");
   const events = useRef<Record<string, any>[]>([]);
   const since = useRef(0);
 
@@ -30,7 +31,9 @@ export function TrainTab({ st, ok, train, setTrain, runId, openRun, toast, start
         since.current = s.next;
         if (stop) return;
         setStatus({ ...s, events: events.current });
+        // an interrupted spot run is followed more slowly: the app asks AWS at most every 30 s
         if (["starting", "running"].includes(s.state)) timer = window.setTimeout(tick, 3000);
+        else if (s.state === "interrupted") timer = window.setTimeout(tick, 15000);
         else api.runs().then(setRuns).catch(() => {});
       } catch (e) { if (!stop) toast(errText(e)); }
     };
@@ -64,7 +67,11 @@ export function TrainTab({ st, ok, train, setTrain, runId, openRun, toast, start
         <label>Learning rate<input type="number" step={0.0001} min={0.0000001} max={1} value={train.lr} onChange={(e) => set({ lr: Number(e.target.value) })} /></label>
         <label>Optimizer<select value={train.optimizer} onChange={(e) => set({ optimizer: e.target.value })}><option value="adam">Adam</option><option value="sgd">SGD (momentum 0.9)</option></select></label>
         <label>Training images (0 = all)<input type="number" min={0} value={train.limit_train} onChange={(e) => set({ limit_train: Number(e.target.value) })} /></label>
-        {kind !== "kaggle" && <label>End the run after (hours)<input type="number" min={0.1} max={72} step={0.5} value={train.max_hours} onChange={(e) => set({ max_hours: Number(e.target.value) })} /></label>}
+        {kind !== "kaggle" && <label>End the run after (hours of running)<input type="number" min={0.1} max={72} step={0.5} value={train.max_hours} onChange={(e) => set({ max_hours: Number(e.target.value) })} /></label>}
+        {kind !== "kaggle" && <label>Checkpoint every (minutes, 0 = each epoch)<input type="number" min={0} max={240} value={train.checkpoint_minutes}
+          onChange={(e) => set({ checkpoint_minutes: Number(e.target.value) })} title="Also inside an epoch. Spot instances use 10 when this is 0." /></label>}
+        {kind === "aws" && <label>Automatic resumes after a spot interruption<input type="number" min={0} max={100} value={train.max_resumes}
+          onChange={(e) => set({ max_resumes: Number(e.target.value) })} /></label>}
         <div className="wide aug"><strong>Data augmentation</strong> <span className="muted small">(training images only; segmentation: image and mask together)</span>
           <div className="row">
             <label className="chk"><input type="checkbox" checked={train.aug_hflip} onChange={(e) => set({ aug_hflip: e.target.checked })} />horizontal flip</label>
@@ -88,7 +95,7 @@ export function TrainTab({ st, ok, train, setTrain, runId, openRun, toast, start
           <span className="muted">on {status.info.target}{startEv ? ` · ${startEv.gpu ?? startEv.device}` : ""}{startEv?.train_size ? ` · ${startEv.train_size.toLocaleString()} training images` : ""}</span>
           <span className="grow" />
           {status.info.url && <button onClick={() => api.openUrl(status.info.url)}>Open on Kaggle</button>}
-          {running && status.info.kind !== "kaggle" && <button onClick={() => api.runStop(status.id).then(toast).catch((e) => toast(errText(e)))}>Stop</button>}
+          {(running || status.state === "interrupted") && status.info.kind !== "kaggle" && <button onClick={() => api.runStop(status.id).then(toast).catch((e) => toast(errText(e)))}>Stop</button>}
           {status.info.kind !== "kaggle" && !running && <button onClick={() => api.runFetch(status.id).then(startJob).catch((e) => toast(errText(e)))}>Fetch results</button>}
           <button onClick={() => api.runReveal(status.id)}>Show files</button>
         </div>
@@ -98,6 +105,19 @@ export function TrainTab({ st, ok, train, setTrain, runId, openRun, toast, start
         {errEv && <div className="msg error">{errEv.message}</div>}
         {status.info.error && <div className="msg error">{status.info.error}</div>}
         {status.state === "crashed" && <div className="msg error">The run ended without a result: see the log.</div>}
+        {status.state === "interrupted" && <div className="msg warn">Interrupted by AWS (spot). It resumes from its last checkpoint when the instance is back.</div>}
+        {status.state === "terminated" && <div className="msg error">The spot instance was terminated, with the checkpoints on it.</div>}
+        {status.info.resumed_from && <p className="muted small">Continues run {status.info.resumed_from} from its checkpoint.</p>}
+        {(status.checkpoint || status.mirror) && <p className="muted small">
+          {status.checkpoint && <>Last checkpoint: epoch {status.checkpoint.epoch}{status.checkpoint.step ? `, batch ${status.checkpoint.step}/${status.checkpoint.steps}` : " (end)"} ({status.checkpoint.reason}, {new Date(status.checkpoint.time * 1000).toLocaleTimeString()}). </>}
+          {status.mirror?.copied && <>Copy on this Mac: {status.mirror.copied}{status.mirror.bytes ? `, ${(status.mirror.bytes / 1e6).toFixed(0)} MB` : ""}{status.mirror.checkpoint ? ` (epoch ${status.mirror.checkpoint.epoch}${status.mirror.checkpoint.step ? `, batch ${status.mirror.checkpoint.step}` : ""})` : ""}. </>}
+          {status.mirror?.error && <span className="st-warn">{status.mirror.error}</span>}</p>}
+        {status.info.kind !== "kaggle" && !running && status.state !== "done" && status.state !== "continued" && status.mirror?.copied && <div className="row">
+          <span>Continue on another machine from the copy on this Mac:</span>
+          <select value={moveTo} onChange={(e) => setMoveTo(e.target.value)}><option value="">choose…</option>
+            {targets.filter((t) => t.kind !== "kaggle" && t.name !== status.info.target).map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}</select>
+          <button disabled={!moveTo} onClick={() => api.runResumeOn(status.id, moveTo, gpu, copyTokens).then(startJob).catch((e) => toast(errText(e)))}>Continue there ▶</button>
+        </div>}
         <Chart title="Loss" series={[
           { name: "batch loss", color: "#c7d2e0", thin: true, pts: bt.map((e) => [e.epoch - 1 + e.step / e.steps, e.loss]) },
           { name: "train", color: "#2f6fde", pts: ep.map((e) => [e.epoch, e.train_loss]) },

@@ -1,7 +1,10 @@
 # ---------------------------------------------------------------- NN Builder training harness (the same on Kaggle, a college GPU and AWS)
 # Above this line: DATASET, TRAIN, CLASSES, EXPECTED, LAYERS and the Net class, written by the app from the design.
 # Writes (next to this script, or in /kaggle/working on Kaggle): metrics.jsonl (one JSON event per line; also printed as "NNB_EVENT ..."),
-# checkpoint.pt (every epoch; a restarted run resumes from it), model.pt and results.json at the end.
+# checkpoint.pt (every epoch, and every TRAIN["checkpoint_minutes"] inside an epoch; written atomically; a restarted run resumes from it,
+# also in the middle of an epoch with the same batch order), model.pt and results.json at the end.
+# Signals: TERM/INT/HUP = stop (the run ends, with results). USR1 = EC2 spot interruption notice: save a checkpoint at once and exit with
+# RESUME_EXIT (75), so the run is started again later and continues. USR2 = rebalance recommendation: save a checkpoint now, keep training.
 # Tasks: "classify" (one label per image) and "segment" (a class for every pixel; images + masks).
 import glob
 import json
@@ -20,6 +23,9 @@ TASK = DATASET.get("task", "classify")
 SEG = TASK == "segment"
 AUG = TRAIN.get("aug", {})
 STOP = False
+INTERRUPT = False
+CKPT_NOW = False
+RESUME_EXIT = 75
 STATS = {"mnist": ((0.1307,), (0.3081,)), "fashion_mnist": ((0.2860,), (0.3530,)),
          "cifar10": ((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616))}
 IMAGE_EXT = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff")
@@ -36,6 +42,54 @@ def emit(event, **data):
 def on_stop(signum, frame):
     global STOP
     STOP = True
+
+
+def on_interrupt(signum, frame):
+    global INTERRUPT
+    INTERRUPT = True
+
+
+def on_checkpoint(signum, frame):
+    global CKPT_NOW
+    CKPT_NOW = True
+
+
+class Interrupted(Exception):
+    """a spot interruption notice arrived during evaluation: leave at once (the checkpoint is saved by the caller)"""
+
+
+def save_checkpoint(path, state):
+    """atomic: an interruption or a full disk during the write leaves the previous checkpoint intact. False when it could not be written."""
+    tmp = path + ".tmp"
+    try:
+        torch.save(state, tmp)
+        with open(tmp, "rb") as f:
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        return True
+    except OSError as e:
+        emit("warning", message=f"could not write the checkpoint ({e}); the previous one is kept")
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return False
+
+
+class EpochOrder(torch.utils.data.Sampler):
+    """the training order of one epoch, fixed by (seed, epoch): a run resumed in the middle of an epoch continues with the batches it had not
+    seen yet, in the same order"""
+
+    def __init__(self, n, seed, epoch, start=0):
+        self.n, self.seed, self.epoch, self.start = n, seed, epoch, start
+
+    def __iter__(self):
+        g = torch.Generator()
+        g.manual_seed(self.seed * 100003 + self.epoch)
+        return iter(torch.randperm(self.n, generator=g)[self.start:].tolist())
+
+    def __len__(self):
+        return max(0, self.n - self.start)
 
 
 def resized():
@@ -285,6 +339,8 @@ def evaluate(model, loader, device):
     loss_sum, n_items, cm = 0.0, 0, torch.zeros(k * k, dtype=torch.long)
     with torch.no_grad():
         for x, y in loader:
+            if INTERRUPT:
+                raise Interrupted()
             x, y = x.to(device), y.to(device)
             out = model(x).float()
             loss_sum += nn.functional.cross_entropy(out, y).item() * len(y)
@@ -352,9 +408,16 @@ def pictures(model, test, device):
 # ---------------------------------------------------------------- training
 def main():
     from torch.utils.data import DataLoader
+    global CKPT_NOW
     for s in (signal.SIGTERM, signal.SIGINT, getattr(signal, "SIGHUP", None)):
         if s is not None:
             signal.signal(s, on_stop)
+    for s, f in ((getattr(signal, "SIGUSR1", None), on_interrupt), (getattr(signal, "SIGUSR2", None), on_checkpoint)):
+        if s is not None:
+            signal.signal(s, f)
+    if not ON_KAGGLE:
+        with open(os.path.join(OUT, "py_pid.txt"), "w") as f:
+            f.write(str(os.getpid()))
     cfg = TRAIN
     torch.manual_seed(cfg["seed"])
     random.seed(cfg["seed"])
@@ -365,59 +428,126 @@ def main():
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     train, test = load_data(cfg)
     workers = cfg.get("num_workers", 2) if device.type == "cuda" else 0
-    tl = DataLoader(train, batch_size=cfg["batch_size"], shuffle=True, num_workers=workers, pin_memory=device.type == "cuda")
+    bs = cfg["batch_size"]
+
+    def loader(epoch, skip_batches=0):
+        return DataLoader(train, batch_size=bs, sampler=EpochOrder(len(train), cfg["seed"], epoch, skip_batches * bs), num_workers=workers,
+                          pin_memory=device.type == "cuda")
+
     vl = DataLoader(test, batch_size=64 if SEG else 256, shuffle=False, num_workers=workers)
     opt = (torch.optim.SGD(model.parameters(), lr=cfg["lr"], momentum=0.9) if cfg["optimizer"] == "sgd"
            else torch.optim.Adam(model.parameters(), lr=cfg["lr"]))
     amp = bool(cfg.get("amp", True)) and device.type == "cuda"
     scaler = torch.amp.GradScaler("cuda", enabled=amp)
-    start_epoch = 1
     ck_path = os.path.join(OUT, "checkpoint.pt")
+    steps = (len(train) + bs - 1) // bs
+    zero = {"loss_sum": 0.0, "n": 0, "correct": 0, "units": 0, "seconds": 0.0}
+    # where training stands: `epoch` = last finished epoch, `step` = batches already done of the next one (with their running sums)
+    pos = {"epoch": 0, "step": 0, "sums": dict(zero)}
+    resumes = 0
+    dirty = {"v": False}  # trained since the last checkpoint
     if os.path.exists(ck_path):
-        ck = torch.load(ck_path, map_location=device)
+        try:
+            ck = torch.load(ck_path, map_location=device, weights_only=False)
+        except TypeError:  # PyTorch older than 1.13
+            ck = torch.load(ck_path, map_location=device)
         model.load_state_dict(ck["model"])
         opt.load_state_dict(ck["opt"])
-        start_epoch = ck["epoch"] + 1
-        emit("resume", epoch=start_epoch)
+        if "scaler" in ck:
+            scaler.load_state_dict(ck["scaler"])
+        pos = {"epoch": ck["epoch"], "step": ck.get("step", 0), "sums": ck.get("sums") or dict(zero)}
+        if ck.get("steps") not in (None, steps):
+            pos["step"], pos["sums"] = 0, dict(zero)  # a different batch size or dataset size: restart the epoch
+        rng = ck.get("rng") or {}
+        try:
+            if "torch" in rng:
+                torch.set_rng_state(rng["torch"].cpu())
+            if "cuda" in rng and device.type == "cuda":
+                torch.cuda.set_rng_state_all([t.cpu() for t in rng["cuda"]])
+            if "python" in rng:
+                random.setstate(rng["python"])
+        except (RuntimeError, ValueError, TypeError):
+            pass
+        resumes = ck.get("resumes", 0) + 1
+        emit("resume", epoch=pos["epoch"] + 1, step=pos["step"], steps=steps, resumes=resumes)
+
+    def state():
+        rng = {"torch": torch.get_rng_state(), "python": random.getstate()}
+        if device.type == "cuda":
+            rng["cuda"] = torch.cuda.get_rng_state_all()
+        return {"model": model.state_dict(), "opt": opt.state_dict(), "scaler": scaler.state_dict(), "epoch": pos["epoch"], "step": pos["step"],
+                "steps": steps, "sums": pos["sums"], "rng": rng, "resumes": resumes, "version": 2}
+
+    def checkpoint(reason):
+        if save_checkpoint(ck_path, state()):
+            dirty["v"] = False
+            emit("checkpoint", epoch=pos["epoch"] + (1 if pos["step"] else 0), step=pos["step"], steps=steps, reason=reason)
+
+    def interrupted():
+        if dirty["v"]:
+            checkpoint("spot interruption")
+        emit("interrupted", epoch=pos["epoch"] + 1, step=pos["step"], steps=steps)
+        sys.exit(RESUME_EXIT)
+
     gpu = torch.cuda.get_device_name(0) if device.type == "cuda" else "cpu"
     emit("start", device=str(device), gpu=gpu, torch=torch.__version__, python=sys.version.split()[0], params=n_params, task=TASK,
          train_size=len(train), test_size=len(test), epochs=cfg["epochs"], amp=amp, augmentation={k: v for k, v in AUG.items() if v})
-    if start_epoch == 1:
-        one_batch_check(model, tl, device)
-    steps = len(tl)
+    if pos["epoch"] == 0 and pos["step"] == 0:
+        one_batch_check(model, loader(1), device)
     every = max(1, steps // 20)
+    # the run's own setting, else the default for a spot instance (set by run.sh)
+    ck_every = float(cfg.get("checkpoint_minutes") or os.environ.get("NNB_CHECKPOINT_MINUTES") or 0) * 60
+    last_ck = time.time()
     stopped = False
-    for epoch in range(start_epoch, cfg["epochs"] + 1):
-        model.train()
-        t0, loss_sum, n, correct, units = time.time(), 0.0, 0, 0, 0
-        for step, (x, y) in enumerate(tl, 1):
-            x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
-            opt.zero_grad(set_to_none=True)
-            with torch.autocast(device_type="cuda", enabled=amp):
-                out = model(x)
-                loss = nn.functional.cross_entropy(out, y)
-            scaler.scale(loss).backward()
-            scaler.step(opt)
-            scaler.update()
-            loss_sum += loss.item() * len(y)
-            n += len(y)
-            correct += int((out.argmax(1) == y).sum())
-            units += y.numel()
-            if step % every == 0 or step == steps:
-                emit("batch", epoch=epoch, step=step, steps=steps, loss=round(loss.item(), 5))
-            if STOP:
-                stopped = True
+    try:
+        for epoch in range(pos["epoch"] + 1, cfg["epochs"] + 1):
+            model.train()
+            t0 = time.time()
+            sums = pos["sums"] if pos["step"] else dict(zero)
+            for step, (x, y) in enumerate(loader(epoch, pos["step"]), pos["step"] + 1):
+                x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
+                opt.zero_grad(set_to_none=True)
+                with torch.autocast(device_type="cuda", enabled=amp):
+                    out = model(x)
+                    loss = nn.functional.cross_entropy(out, y)
+                scaler.scale(loss).backward()
+                scaler.step(opt)
+                scaler.update()
+                sums["loss_sum"] += loss.item() * len(y)
+                sums["n"] += len(y)
+                sums["correct"] += int((out.argmax(1) == y).sum())
+                sums["units"] += y.numel()
+                pos.update(step=step, sums=sums)
+                dirty["v"] = True
+                if step % every == 0 or step == steps:
+                    emit("batch", epoch=epoch, step=step, steps=steps, loss=round(loss.item(), 5))
+                if INTERRUPT:
+                    sums["seconds"] += time.time() - t0
+                    interrupted()
+                if step < steps and (CKPT_NOW or (ck_every and time.time() - last_ck >= ck_every)):
+                    sums["seconds"] += time.time() - t0
+                    t0 = time.time()
+                    checkpoint("rebalance recommendation" if CKPT_NOW else "timer")
+                    CKPT_NOW, last_ck = False, time.time()
+                if STOP:
+                    stopped = True
+                    break
+            val_loss, val_acc, _, miou, _ = evaluate(model, vl, device)
+            ev = dict(epoch=epoch, train_loss=round(sums["loss_sum"] / max(sums["n"], 1), 5), train_acc=round(sums["correct"] / max(sums["units"], 1), 5),
+                      val_loss=round(val_loss, 5), val_acc=round(val_acc, 5), seconds=round(sums["seconds"] + time.time() - t0, 2), partial=stopped)
+            if SEG:
+                ev["val_miou"] = round(miou, 5)
+            emit("epoch", **ev)
+            pos.update(epoch=epoch, step=0, sums=dict(zero))
+            checkpoint("epoch")
+            last_ck = time.time()
+            if stopped or INTERRUPT:
                 break
-        val_loss, val_acc, _, miou, _ = evaluate(model, vl, device)
-        ev = dict(epoch=epoch, train_loss=round(loss_sum / max(n, 1), 5), train_acc=round(correct / max(units, 1), 5),
-                  val_loss=round(val_loss, 5), val_acc=round(val_acc, 5), seconds=round(time.time() - t0, 2), partial=stopped)
-        if SEG:
-            ev["val_miou"] = round(miou, 5)
-        emit("epoch", **ev)
-        torch.save({"model": model.state_dict(), "opt": opt.state_dict(), "epoch": epoch}, ck_path)
-        if stopped:
-            break
-    val_loss, val_acc, confusion, miou, iou = evaluate(model, vl, device)
+        if INTERRUPT:
+            interrupted()
+        val_loss, val_acc, confusion, miou, iou = evaluate(model, vl, device)
+    except Interrupted:
+        interrupted()
     torch.save(model.state_dict(), os.path.join(OUT, "model.pt"))
     res = {"task": TASK, "test_acc": val_acc, "test_loss": val_loss, "classes": CLASSES, "confusion": confusion}
     if SEG:

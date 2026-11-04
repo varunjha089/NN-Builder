@@ -36,18 +36,21 @@ crates/core/src/
                            put_secret_script (file via stdin, chmod 600)
   cloud.rs                 tools venv (settings/tools: kaggle + boto3), kaggle_test/files/push/status/output (CLI with env credentials and a
                            private KAGGLE_CONFIG_DIR), class_folders, aws() (python/helpers/aws_ec2.py: describe/start/stop)
-  runs.rs                  start (Kaggle push | ssh/aws: aws_up, prepare if needed, optional token copy, run.sh with timeout + exit code +
+  runs.rs                  spot: run_script (run.sh with flock, time budget over resumes, IMDS watcher), RESUME_SH + crontab @reboot,
+                           Poll, aws_explain, mirror_checkpoint, cancel_remote, resume_on (see "Spot instances" below)
+                           start (Kaggle push | ssh/aws: aws_up, prepare if needed, optional token copy, run.sh with timeout + exit code +
                            shutdown on AWS, rsync, launch via slurm/systemd/tmux/nohup), status (rate-limited polls: Kaggle 30 s, ssh 3 s;
                            metrics appended by byte offset; fetch when ended), stop, fetch (AWS: start/copy/stop), listing, results
   jobs.rs                  one background job with a log (Jobs), stream/capture for external commands
 crates/core/tests/         design.rs (shapes, codegen compiles with python3 -m py_compile, machine validation), drafts.rs (demo drafts),
                            flows.rs (whole ssh run and Kaggle run through stand-in ssh/rsync/python/kaggle scripts)
 crates/core/examples/dump_cases.rs   300 random designs -> JSON for python/verify_shapes.py (GitHub Actions only)
-python/harness.py          the training part of every train.py (data: torchvision / datasets / ImageFolder from Kaggle; segmentation: SegPairs of
+python/harness.py          the training part of every train.py (spot: SIGUSR1 = checkpoint + exit 75, SIGUSR2 = checkpoint now, timed and atomic
+                           checkpoints, mid-epoch resume; see "Spot instances") (data: torchvision / datasets / ImageFolder from Kaggle; segmentation: SegPairs of
                            image + mask (HF mask column, or Kaggle images/masks folders paired by name), per-pixel loss, pixel accuracy + mean IoU;
                            augmentation on training data only (seg: image and mask together); one-batch check against
                            EXPECTED; AMP; checkpoint.pt + resume; SIGTERM/SIGHUP = stop + save; metrics.jsonl + "NNB_EVENT" lines; results.json)
-python/helpers/aws_ec2.py  boto3 start/stop/describe (run with the tools venv; credentials in the environment for that call only)
+python/helpers/aws_ec2.py  boto3 start/stop/describe (+ lifecycle, state reason, spot request; refuses to start an interrupted spot instance) (run with the tools venv; credentials in the environment for that call only)
 python/verify_shapes.py    PyTorch comparison (CI)
 app/src-tauri/src/main.rs  Tauri commands (thin: they call nnb-core), keychain (service "NN Builder": kaggle, huggingface, aws), Hugging Face
                            datasets-server/whoami calls (ureq), the menu bar (build_menu / on_menu): App (About, Check for Updates…, Settings… ⌘,), File (New
@@ -225,9 +228,36 @@ train. It could come back later as an optional "export to C++" for teaching.
   run time set in the app. The app also shows the instance state and an estimated cost.
 - **Results while the instance is stopped:** next time the app opens it starts the instance, copies the results and stops it again; optionally
   the run uploads `model.pt` and the results to a private Hugging Face repository so they are available without restarting it.
-- **Spot instances** (cheaper, can be interrupted): supported later; checkpoints + resume make an interruption harmless.
-- AWS key: an IAM access key allowed only `ec2:StartInstances`, `ec2:StopInstances`, `ec2:DescribeInstances` for that one instance. A new AWS
-  account must first get a G-instance vCPU quota (often 0 at the start).
+- **Spot instances** (built 2026-11-04; detected from the instance, nothing to switch on). Recommended setup: a **persistent** spot request with
+  interruption behaviour **stop** (AWS restarts the instance when capacity returns; its disk, data cache and checkpoints survive), and the
+  machine setting "Keep a copy of checkpoints on this Mac". How each situation is handled:
+
+  | Situation | What happens |
+  |---|---|
+  | 2-minute interruption notice (instance metadata `spot/instance-action`) | run.sh's watcher sends SIGUSR1; train.py saves a mid-epoch checkpoint (atomic) and exits 75; `resume_wanted` stays |
+  | Rebalance recommendation (earlier warning) | SIGUSR2: train.py saves a checkpoint now and keeps training |
+  | Hard interruption without notice / crash of the instance | at most `checkpoint_minutes` of training lost (spot default 10 min when the setting is 0) |
+  | Interrupted during a checkpoint write, or a full disk | `torch.save` to `.tmp`, fsync, `os.replace`: the previous checkpoint stays whole; a failed write is a warning |
+  | Interrupted during evaluation / final results | checkpoint says "epoch trained, not evaluated" (or "all epochs done"); the resume only evaluates |
+  | Instance restarted by AWS while the Mac is off | crontab `@reboot` runs `resume.sh` (after 45 s for the GPU driver): the run continues by itself |
+  | Instance back while the app is open | the app follows the new public address (describe), sees the run not running with `resume_wanted`, runs `resume.sh now` |
+  | Two starters at once (cron + app) | `flock` on run.lock, and resume.sh skips a run whose train.py (py_pid.txt) is alive: one copy only |
+  | Resumed mid-epoch | `EpochOrder` sampler fixed by (seed, epoch): the remaining batches of that epoch in the same order; running sums, GradScaler and RNG restored; a different batch size restarts the epoch |
+  | Interrupted again and again / price too high | at most `max_resumes` automatic resumes (default 20; then exit 76 "gave up"); `max_hours` counts running time summed over resumes (used_seconds.txt) |
+  | Instance terminated (one-time request / behaviour terminate) | describe says terminated: state "terminated"; with the Mac copy, **Continue on another machine** (resume_on: new run, same train.py + checkpoint + metrics; the old run is marked "continued") |
+  | Old instance comes back after the run moved elsewhere | when that run is opened and its instance answers, the app stops it there and removes resume_wanted; the note says to cancel the spot request in the console (the app cannot act while closed) |
+  | Stop pressed while the instance is down | `cancel` is recorded: stopped (not resumed) as soon as it answers |
+  | Starting an interrupted spot instance by hand / no capacity | explained, not retried in a loop: AWS restarts it itself; "insufficient capacity" says try later or use another machine |
+  | User Stop / time limit | TERM: the run ends normally with results; resume_wanted removed; never resumed |
+
+  Mac side: status asks AWS (describe, at most every 30 s) instead of ssh while the instance is down; checkpoints are copied in a background
+  thread with rsync (temporary file + rename, so the copy is always whole; mirror.json says which one). The window shows the last checkpoint
+  and the Mac copy. Tests: flows.rs runs the whole spot path with stand-ins (fake EC2 metadata via curl, fake crontab; the stand-in ssh drops
+  `bash -l` so the real crontab is never used, and the test asserts that; never `stop_instance` in tests, the stand-in instance is this Mac);
+  the PyTorch side (mid-epoch checkpoint, exit 75, resume at the right batch, SIGUSR2) runs in CI: examples/resume_case.rs +
+  python/ci_resume_check.py.
+- AWS key: an IAM access key allowed only `ec2:StartInstances`, `ec2:StopInstances`, `ec2:DescribeInstances` for that one instance, plus
+  `ec2:DescribeSpotInstanceRequests` for spot details (optional). A new AWS account must first get a G-instance vCPU quota (often 0 at the start).
 
 ## 5. Secrets
 

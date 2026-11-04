@@ -46,6 +46,10 @@ pub struct Machine {
     pub region: String,
     #[serde(default)]
     pub instance_id: String,
+    /// copy every new checkpoint of a run back to this Mac while the app is open (for an EC2 spot instance that AWS may terminate, the Mac
+    /// copy is what "Resume on another machine" continues from)
+    #[serde(default)]
+    pub mirror: bool,
 }
 
 /// what Prepare found on the machine

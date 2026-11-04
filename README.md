@@ -37,6 +37,11 @@ Version 0.2.0 · MIT licence · Rust (Tauri 2) + React; the generated training c
   downloaded when it ends. On an **SSH machine** or **AWS** it is copied there and started detached (SLURM, systemd-run, tmux or
   nohup+setsid, whichever the machine allows), so it keeps going when your Mac sleeps or the network drops; the curves update while the app is
   open, and the results come back when the run ends. AWS: the app starts the instance, and the run stops it at the end.
+- **EC2 spot instances**: when AWS gives its 2-minute interruption notice, the run saves a checkpoint in the middle of the epoch and stops;
+  when the instance comes back (persistent spot request, interruption behaviour "stop") it continues at that batch by itself, even while your
+  computer is off. Checkpoints are also written every few minutes and safely (never half-written); the app can keep a copy of each one on
+  your computer, so a run whose instance was terminated can **continue on another machine** (e.g. a college GPU). Limits on automatic
+  resumes and on total running time keep the cost in check.
 - **Results tab:** test accuracy, confusion matrix, sample predictions, first-layer filters, feature maps; the files (model.pt, train.py,
   results.json) are in the run folder.
 - **Connection tab** (also the **Connection** menu): the tools (the official `kaggle` CLI and `boto3`, in a small Python environment of the

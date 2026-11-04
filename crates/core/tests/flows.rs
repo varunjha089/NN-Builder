@@ -24,6 +24,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 echo "$1" >> "$NNB_FAKE_LOG"; shift
+# no login shell: on macOS it would put /usr/bin before the stand-ins (and a real crontab would be changed)
+if [ "$1" = bash ] && [ "$2" = -l ]; then set -- bash "${@:3}"; fi
 cd "$NNB_FAKE_REMOTE" && HOME="$NNB_FAKE_REMOTE" exec "$@"
 "#;
 
@@ -68,6 +70,64 @@ case "$1 $2" in
   "kernels output") mkdir -p "$5"; echo '{"event": "done", "test_acc": 0.8}' > "$5/metrics.jsonl"; echo '{"test_acc": 0.8, "classes": []}' > "$5/results.json"
      echo '[{"stream_name":"stdout","time":1,"data":"training...\n"}]' > "$5/nnb-x.log" ;;
   *) echo "unexpected $*"; exit 2 ;;
+esac
+"#;
+
+/// stand-in train.py for a spot instance: the first time it trains until SIGUSR1 (the interruption notice), then saves a checkpoint and
+/// exits 75; started again (a checkpoint exists) it resumes and finishes
+const FAKE_SPOT_PY: &str = r#"#!/bin/bash
+if [ "$1" = "-" ]; then cat >/dev/null; echo "NNB_TORCH 2.9.0 cuda 3.12.3"; exit 0; fi
+if [ "$1" = "-c" ]; then exit 0; fi
+[ "$1" = "train.py" ] || exit 1
+echo $$ > py_pid.txt
+if [ -f checkpoint.pt ]; then
+  echo '{"event": "resume", "epoch": 2, "step": 3, "steps": 5, "resumes": 1}' >> metrics.jsonl
+  echo '{"event": "start", "device": "cuda", "params": 10, "train_size": 100, "test_size": 10, "epochs": 2}' >> metrics.jsonl
+  echo '{"event": "epoch", "epoch": 2, "train_loss": 0.4, "train_acc": 0.85, "val_loss": 0.3, "val_acc": 0.9}' >> metrics.jsonl
+  echo '{"test_acc": 0.9, "classes": ["a","b"], "confusion": [[5,0],[1,4]], "samples": []}' > results.json
+  echo "weights" > model.pt
+  echo '{"event": "done", "test_acc": 0.9}' >> metrics.jsonl
+  exit 0
+fi
+on_notice() {
+  echo '{"event": "checkpoint", "epoch": 2, "step": 3, "steps": 5, "reason": "spot interruption", "time": 1}' >> metrics.jsonl
+  echo ck-epoch2-step3 > checkpoint.pt
+  echo '{"event": "interrupted", "epoch": 2, "step": 3, "steps": 5}' >> metrics.jsonl
+  exit 75
+}
+trap on_notice USR1
+echo '{"event": "start", "device": "cuda", "params": 10, "train_size": 100, "test_size": 10, "epochs": 2}' >> metrics.jsonl
+echo '{"event": "epoch", "epoch": 1, "train_loss": 0.5, "train_acc": 0.8, "val_loss": 0.4, "val_acc": 0.85}' >> metrics.jsonl
+echo ck-epoch1 > checkpoint.pt
+echo '{"event": "checkpoint", "epoch": 1, "step": 0, "steps": 5, "reason": "epoch", "time": 1}' >> metrics.jsonl
+for i in $(seq 1 120); do sleep 0.5; done
+exit 1
+"#;
+
+/// stand-in curl for the EC2 metadata service: the spot interruption notice is served once, after the test creates <remote>/notice
+const FAKE_CURL: &str = r#"#!/bin/bash
+out=/dev/stdout; url=
+while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2 ;; -w|-H|-m|-X) shift 2 ;; http*) url=$1; shift ;; *) shift ;; esac; done
+case "$url" in
+  */api/token) echo tok ;;
+  */spot/instance-action)
+    if [ -f "$NNB_FAKE_REMOTE/notice" ]; then rm -f "$NNB_FAKE_REMOTE/notice"; echo '{"action": "stop"}' > "$out"; printf 200; else printf 404; fi ;;
+  *) printf 404 ;;
+esac
+"#;
+
+/// stand-in crontab: kept in a file in the fake remote home (the real crontab is never touched)
+const FAKE_CRONTAB: &str = r#"#!/bin/bash
+F="$NNB_FAKE_REMOTE/crontab.txt"
+case "$1" in -l) cat "$F" 2>/dev/null; exit 0 ;; -) cat > "$F"; exit 0 ;; *) exit 1 ;; esac
+"#;
+
+/// stand-in for the tools python running aws_ec2.py: a spot instance (persistent request, interruption behaviour stop)
+const FAKE_AWS_PY: &str = r#"#!/bin/bash
+case "$2" in
+  start|describe) echo '{"ok": true, "state": "running", "host": "ec2-1-2-3-4.example.com", "type": "g4dn.xlarge", "lifecycle": "spot", "state_reason": "", "shutdown_behavior": "stop", "spot": {"type": "persistent", "interruption": "stop", "state": "active", "status": "fulfilled"}}' ;;
+  stop) echo '{"ok": true, "state": "stopping", "host": ""}' ;;
+  *) exit 0 ;;
 esac
 "#;
 
@@ -171,4 +231,70 @@ fn remote_and_kaggle_runs() {
     assert_eq!(state, "done");
     assert!(std::fs::read_to_string(pr.runs_dir().join(&id).join("log.txt")).unwrap().contains("training"));
     assert!(runs::stop(&pr, &id).unwrap_err().to_string().contains("Cancel run"));
+
+    // ---- an EC2 spot instance: interruption notice -> checkpoint + exit 75 -> resumed -> done; checkpoint copied to the Mac;
+    //      then the run continued on another machine from that copy
+    script(&bin, "curl", FAKE_CURL);
+    script(&bin, "crontab", FAKE_CRONTAB);
+    script(&tools_bin, "python", FAKE_AWS_PY);
+    script(&remote_home, "spotpython", FAKE_SPOT_PY);
+    let key = b.join("spot.pem");
+    std::fs::write(&key, "not a real key").unwrap();
+    std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let spot = remote::save_machine(Machine { name: "spot".into(), kind: "aws".into(), user: "ubuntu".into(), region: "ap-south-1".into(),
+        instance_id: "i-0123456789abcdef0".into(), key: key.to_string_lossy().into(), python: format!("{}/spotpython", remote_home.display()),
+        launch: "nohup".into(), mirror: true, ..Default::default() }).unwrap();
+    let mut probe = spot.clone();
+    probe.host = "ec2-1-2-3-4.example.com".into();
+    let (_, which) = probe.run_script("command -v crontab");
+    assert!(which.trim() == bin.join("crontab").to_string_lossy(), "the remote shell must use the stand-in crontab, found {which:?}");
+    let aws = Creds { aws: Some(nnb_core::cloud::AwsCreds { access_key_id: "AKIATEST".into(), secret_access_key: "x".into() }), ..Default::default() };
+    // never "stop the instance" here: the stand-in instance is this Mac (run.sh would run sudo shutdown)
+    pr.save_train(&nnb_core::codegen::TrainSettings { stop_instance: false, ..pr.train() }).unwrap();
+    std::thread::sleep(Duration::from_millis(1100));
+    let id = runs::start(&pr, "spot", "", &aws, false, &log).unwrap_or_else(|e| panic!("{e}\n{:?}", lines.lock().unwrap()));
+    let rdir = remote_home.join(format!(".nn_builder/runs/{id}"));
+    assert!(runs::info(&pr.runs_dir().join(&id)).spot);
+    assert!(std::fs::read_to_string(remote_home.join("crontab.txt")).unwrap().contains("resume.sh # nn_builder_resume"), "resume at boot registered");
+    let run_sh = std::fs::read_to_string(rdir.join("run.sh")).unwrap();
+    assert!(!run_sh.contains("shutdown"), "no shutdown in a test");
+    assert!(run_sh.contains("NNB_CHECKPOINT_MINUTES=10") && run_sh.contains("spot_watch") && run_sh.contains("touch resume_wanted"));
+    // wait until it trains (checkpoint of epoch 1 written), then AWS gives notice
+    for _ in 0..40 {
+        if rdir.join("checkpoint.pt").exists() { break; }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    std::fs::write(remote_home.join("notice"), "").unwrap();
+    let (mut states, mut last) = (vec![], None);
+    for _ in 0..60 {
+        std::thread::sleep(Duration::from_millis(1100));
+        let s = runs::status(&pr, &id, 0, &aws).unwrap();
+        if states.last() != Some(&s.state) { states.push(s.state.clone()); }
+        if s.state == "done" { last = Some(s); break; }
+    }
+    let s = last.unwrap_or_else(|| panic!("the spot run did not finish: states {states:?}\nlog {:?}", std::fs::read_to_string(rdir.join("log.txt"))));
+    let names: Vec<&str> = s.events.iter().filter_map(|e| e["event"].as_str()).collect();
+    for want in ["checkpoint", "interrupted", "resume", "done"] {
+        assert!(names.contains(&want), "{want} missing in {names:?}\nstates {states:?}\nremote log:\n{}\nmetrics:\n{}", std::fs::read_to_string(rdir.join("log.txt")).unwrap_or_default(),
+            std::fs::read_to_string(rdir.join("metrics.jsonl")).unwrap_or_default());
+    }
+    assert!(std::fs::read_to_string(rdir.join("log.txt")).unwrap().contains("spot interruption notice"));
+    assert_eq!(std::fs::read_to_string(rdir.join("resumes.txt")).unwrap().trim(), "1", "resumed exactly once");
+    assert!(!rdir.join("resume_wanted").exists(), "a finished run is not resumed again");
+    assert!(rdir.join("used_seconds.txt").exists(), "running time is counted over resumes");
+    // the checkpoint copy on this Mac (written in the background)
+    let local = pr.runs_dir().join(&id);
+    for _ in 0..20 {
+        if local.join("mirror.json").exists() { break; }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    assert!(local.join("checkpoint.pt").exists(), "checkpoint copied to the Mac");
+
+    // continue that run on the college machine from the Mac copy
+    std::thread::sleep(Duration::from_millis(1100));
+    let new = runs::resume_on(&pr, &id, "college", "", &Creds::default(), false, &log).unwrap_or_else(|e| panic!("{e}\n{:?}", lines.lock().unwrap()));
+    assert!(remote_home.join(format!(".nn_builder/runs/{new}/checkpoint.pt")).exists(), "the checkpoint went to the new machine");
+    assert_eq!(runs::info(&pr.runs_dir().join(&new)).resumed_from, id);
+    assert_eq!(runs::info(&local).superseded_by, new);
+    assert!(runs::resume_on(&pr, &id, runs::KAGGLE, "", &Creds::default(), false, &log).is_err(), "no resuming on Kaggle");
 }

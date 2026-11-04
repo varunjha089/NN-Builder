@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { api, errText, type AppState, type Machine } from "./api";
 
-const EMPTY: Machine = { name: "", kind: "ssh", host: "", user: "", port: "", key: "", jump: "", auth: "key", workdir: "", python: "", launch: "auto", region: "", instance_id: "" };
+const EMPTY: Machine = { name: "", kind: "ssh", host: "", user: "", port: "", key: "", jump: "", auth: "key", workdir: "", python: "", launch: "auto", region: "", instance_id: "", mirror: false };
 
 const POLICY = `{
   "Version": "2012-10-17",
@@ -110,6 +110,9 @@ export function ConnectionTab({ st, reload, toast, startJob }: { st: AppState; r
             <option value="auto">automatic (best the machine allows)</option><option value="slurm">SLURM (sbatch)</option><option value="systemd">systemd-run</option>
             <option value="tmux">tmux</option><option value="nohup">nohup + setsid</option></select></label>
           <label>Remote folder<input value={m.workdir} onChange={(e) => up({ workdir: e.target.value })} placeholder=".nn_builder" /></label>
+          <label className="chk wide"><input type="checkbox" checked={!!m.mirror} onChange={(e) => up({ mirror: e.target.checked })} />
+            Keep a copy of checkpoints on this Mac (copied whenever a new one is written, while the app is open; recommended for EC2 spot instances:
+            if AWS terminates the instance, the run can continue on another machine from this copy)</label>
           <label className="wide">Python with PyTorch on the machine<input value={m.python} onChange={(e) => up({ python: e.target.value })} placeholder="optional; empty = the app makes ~/.nn_builder/venv (no sudo)" /></label>
         </div>
         <p className="row"><button className="primary" onClick={() => run(api.machineSave(m).then(() => { setM(EMPTY); setEditing(false); }),

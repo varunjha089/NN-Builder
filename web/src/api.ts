@@ -25,11 +25,12 @@ export interface Dataset {
 export interface TrainSettings {
   epochs: number; batch_size: number; lr: number; optimizer: string; seed: number; amp: boolean; limit_train: number; max_hours: number; stop_instance: boolean;
   aug_hflip: boolean; aug_vflip: boolean; aug_crop: number; aug_rotate: number; aug_color: boolean;
+  checkpoint_minutes: number; max_resumes: number;
 }
 
 export interface Machine {
   name: string; kind: "ssh" | "aws"; host: string; user: string; port: string; key: string; jump: string; auth: "key" | "password";
-  workdir: string; python: string; launch: string; region: string; instance_id: string;
+  workdir: string; python: string; launch: string; region: string; instance_id: string; mirror: boolean;
 }
 export interface Prepared {
   host_info: string; gpus: string[]; python: string; torch: string; cuda: boolean; slurm: boolean; systemd: boolean; linger: boolean; tmux: boolean; timeout: boolean;
@@ -48,8 +49,10 @@ export interface AppState {
 export interface ProjectData { name: string; path: string; graph: Graph; dataset: Dataset; train: TrainSettings; analysis: Analysis; dataset_problems: string[] }
 
 export interface RunInfo { id: string; target: string; kind: string; created: string; status: string; epochs: number; dataset: string; url: string; note: string;
-  error: string; reachable: boolean; launch: string; job: string; host: string }
-export interface RunStatus { id: string; state: string; info: RunInfo; events: Record<string, any>[]; next: number; log: string[]; has_results: boolean }
+  error: string; reachable: boolean; launch: string; job: string; host: string; spot: boolean; resumed_from: string; superseded_by: string; cancel: boolean }
+export interface RunStatus { id: string; state: string; info: RunInfo; events: Record<string, any>[]; next: number; log: string[]; has_results: boolean;
+  /** train.py's last "checkpoint" event, and the copy on this Mac (when the machine keeps one) */
+  checkpoint: Record<string, any> | null; mirror: { stamp?: string; copied?: string; bytes?: number; checkpoint?: Record<string, any>; error?: string } | null }
 export interface JobSnap { name: string; state: string; message: string; log: string[]; next: number; seconds: number }
 
 export interface Template { key: string; title: string; year: number; task: string; input: [number, number, number]; about: string }
@@ -97,6 +100,7 @@ export const api = {
   runStatus: (id: string, since: number) => invoke<RunStatus>("run_status", { id, since }),
   runStop: (id: string) => invoke<string>("run_stop", { id }),
   runFetch: (id: string) => invoke<void>("run_fetch", { id }),
+  runResumeOn: (id: string, target: string, gpu: string, copyTokens: boolean) => invoke<void>("run_resume_on", { id, target, gpu, copyTokens }),
   runResults: (id: string) => invoke<any>("run_results", { id }),
   runReveal: (id: string) => invoke<void>("run_reveal", { id }),
   job: (since: number) => invoke<JobSnap>("job_status", { since }),

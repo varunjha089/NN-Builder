@@ -309,8 +309,15 @@ async fn test_aws(name: String) -> R<String> {
         let m = remote::machine(&name).ok_or("Unknown machine.")?;
         let v = cloud::aws(&c, "describe", &m.region, &m.instance_id).map_err(e)?;
         let sb = v["shutdown_behavior"].as_str().unwrap_or("?");
-        Ok(format!("{} is {} ({}). Shutdown behaviour: {sb}{}", m.instance_id, v["state"].as_str().unwrap_or("?"), v["type"].as_str().unwrap_or("?"),
-            if sb == "terminate" { " — change it to Stop in the EC2 console, or a finished run would DELETE the instance." } else { "." }))
+        let mut msg = format!("{} is {} ({}). Shutdown behaviour: {sb}{}", m.instance_id, v["state"].as_str().unwrap_or("?"), v["type"].as_str().unwrap_or("?"),
+            if sb == "terminate" { " — change it to Stop in the EC2 console, or a finished run would DELETE the instance." } else { "." });
+        if v["lifecycle"] == "spot" {
+            msg.push_str(&format!("\nSpot instance: {}", runs::spot_summary(&v)));
+            if !m.mirror {
+                msg.push_str("\nTip: turn on 'Keep a copy of checkpoints on this Mac' for this machine, so a run can continue elsewhere if AWS terminates it.");
+            }
+        }
+        Ok(msg)
     }).await
 }
 
@@ -469,6 +476,17 @@ async fn run_fetch(st: State<'_, App>, id: String) -> R<()> {
     let ok = st.jobs.start("Fetch results", move |log: Log| {
         runs::fetch(&p, &id, &creds(), &log).map_err(e)?;
         Ok(format!("RUN {id}"))
+    });
+    if ok { Ok(()) } else { Err("Another task is running.".into()) }
+}
+
+/// continue a run on another machine from the checkpoint copy on this Mac
+#[tauri::command]
+async fn run_resume_on(st: State<'_, App>, id: String, target: String, gpu: String, copy_tokens: bool) -> R<()> {
+    let p = project(&st)?;
+    let ok = st.jobs.start(&format!("Continue on {target}"), move |log: Log| {
+        let new = runs::resume_on(&p, &id, &target, gpu.trim(), &creds(), copy_tokens, &log).map_err(e)?;
+        Ok(format!("RUN {new}"))
     });
     if ok { Ok(()) } else { Err("Another task is running.".into()) }
 }
@@ -736,7 +754,7 @@ fn main() {
             app_state, templates_list, template_apply, project_from_template, project_save_as, project_new, project_open, set_projects_dir, project_load, save_graph, save_dataset, save_train, code, export_code,
             set_kaggle, set_hf, set_aws, clear_secret, test_kaggle, test_hf, test_aws, tools_install,
             machine_save, machine_delete, machine_test, machine_connect, machine_prepare, hf_info, kaggle_files,
-            update_settings, set_auto_update, update_check, update_install, update_restart, targets, run_start, runs_list, run_status, run_stop, run_fetch, run_results, run_reveal, job_status, open_url
+            update_settings, set_auto_update, update_check, update_install, update_restart, targets, run_start, run_resume_on, runs_list, run_status, run_stop, run_fetch, run_results, run_reveal, job_status, open_url
         ])
         .build(tauri::generate_context!())
         .expect("error while running NN Builder")

@@ -45,7 +45,8 @@ textarea { width: 100%; font-family: ui-monospace, Menlo, monospace; font-size: 
 .msg.error { background: var(--errbg); color: var(--err); } .msg.warn { background: var(--warnbg); color: var(--warn); } .msg.ok { background: var(--okbg); color: var(--ok); } .msg.info { background: var(--info); }
 .st-ok { color: var(--ok); } .st-warn { color: var(--warn); } .st-error, tr.st-error td { color: var(--err); } tr.st-warn td { color: var(--warn); }
 .pill { padding: 2px 9px; border-radius: 12px; background: var(--info); font-size: 12px; }
-.pill.done { background: var(--okbg); color: var(--ok); } .pill.error, .pill.crashed, .pill.failed { background: var(--errbg); color: var(--err); } .pill.stopped { background: var(--warnbg); }
+.pill.done { background: var(--okbg); color: var(--ok); } .pill.error, .pill.crashed, .pill.failed, .pill.terminated { background: var(--errbg); color: var(--err); }
+.pill.stopped, .pill.interrupted { background: var(--warnbg); color: var(--warn); } .pill.continued { background: var(--info); }
 table.grid { border-collapse: collapse; width: 100%; margin: 6px 0; }
 table.grid th, table.grid td { border-bottom: 1px solid var(--line); padding: 4px 6px; text-align: left; vertical-align: top; }
 table.grid th { color: var(--muted); font-weight: 600; }
