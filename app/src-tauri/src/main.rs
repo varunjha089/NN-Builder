@@ -582,6 +582,7 @@ fn build_menu(h: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .about(None)
         .separator()
         .item(&item(h, "check-update", "Check for Updates…", None)?)
+        .item(&item(h, "settings", "Settings…", Some("CmdOrCtrl+,"))?)
         .separator()
         .services()
         .separator()
@@ -644,6 +645,9 @@ fn on_menu(h: &tauri::AppHandle, id: &str) {
     match id {
         "check-update" | "check-update-2" => {
             let _ = h.emit("check-update", ());
+        }
+        "settings" => {
+            let _ = h.emit("open-tab", "settings");
         }
         "connection" | "tools" => {
             let _ = h.emit("open-tab", "connection");

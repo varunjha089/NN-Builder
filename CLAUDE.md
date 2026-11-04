@@ -50,7 +50,7 @@ python/harness.py          the training part of every train.py (data: torchvisio
 python/helpers/aws_ec2.py  boto3 start/stop/describe (run with the tools venv; credentials in the environment for that call only)
 python/verify_shapes.py    PyTorch comparison (CI)
 app/src-tauri/src/main.rs  Tauri commands (thin: they call nnb-core), keychain (service "NN Builder": kaggle, huggingface, aws), Hugging Face
-                           datasets-server/whoami calls (ureq), the menu bar (build_menu / on_menu): App (About, Check for Updates…), File (New
+                           datasets-server/whoami calls (ureq), the menu bar (build_menu / on_menu): App (About, Check for Updates…, Settings… ⌘,), File (New
                            Project ⌘N, Open Project… ⌘O with a folder dialog, Save Project… ⌘S (the draft), New from Demo ▸, Import/Export Design… (model.json, dialogs from
                            tauri-plugin-dialog), Export train.py ⌘E, Show Project in Finder ⇧⌘R), Edit (Undo ⌘Z / Redo ⇧⌘Z of the design,
                            Cut/Copy/Paste/Select All, Arrange ⌘L), View (Night Mode ⇧⌘N), Connection, Window. Dialog actions run in Rust and emit
@@ -77,6 +77,10 @@ web/src/                   Design.tsx: the canvas reads left to right (handles l
                            --c); remembered in localStorage; the ☾/☀ button in the top bar and View → Night Mode; also sets the window's
                            dark title bar (permission core:window:allow-set-theme). Canvas drawings read the variables (cssVar) and redraw
                            on a theme change (useTheme). New colours go in styles.css as variables, not hard-coded in components.
+                           Night panel colours: in night mode the Design screen is three separate panels (palette, canvas, inspector)
+                           whose backgrounds are --night-palette/-canvas/-inspector, chosen in the Settings tab (⚙ in the top bar,
+                           NN Builder → Settings… ⌘,): presets + colour pickers, kept in localStorage "nnb-night-panels" (theme.ts
+                           setPanels/usePanels); the Settings tab also has the theme and the automatic-update switch.
 .github/workflows/ci.yml   core tests + PyTorch comparison on GitHub's machines
 ```
 

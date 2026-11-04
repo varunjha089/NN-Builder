@@ -173,7 +173,26 @@ table.layers .gitem td { font-size: 11px; }
 [data-theme="night"] .react-flow__handle { background: var(--accent); border-color: var(--bg); box-shadow: 0 0 6px var(--accent); }
 [data-theme="night"] .react-flow__controls-button { background: var(--panel); border-color: var(--line); fill: var(--accent); color: var(--accent); }
 [data-theme="night"] .react-flow__controls-button svg { fill: var(--accent); }
-[data-theme="night"] .react-flow__minimap { background: var(--panel); }
-[data-theme="night"] .react-flow__background { background: var(--bg); }
+[data-theme="night"] .react-flow__minimap { background: var(--night-palette, var(--panel)); }
+[data-theme="night"] .react-flow__background { background: var(--night-canvas, var(--bg)); }
+/* night: the Design screen in three separate portions (colours from Settings → Appearance) */
+[data-theme="night"] .design { gap: 8px; padding: 8px; background: #020306; }
+[data-theme="night"] .design > .palette, [data-theme="night"] .design > .canvas, [data-theme="night"] .design > .inspector {
+  border: 1px solid rgba(0,229,255,.35); border-radius: 10px; box-shadow: 0 0 12px rgba(0,229,255,.12); overflow: auto; }
+[data-theme="night"] .design > .palette { background: var(--night-palette, var(--panel)); }
+[data-theme="night"] .design > .canvas { background: var(--night-canvas, var(--bg)); overflow: hidden; }
+[data-theme="night"] .design > .inspector { background: var(--night-inspector, var(--panel)); }
+/* settings */
+.swatches { display: flex; gap: 8px; flex-wrap: wrap; }
+.swatch { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px; border-radius: 8px; font-size: 11px; }
+.swatch .trio { display: flex; width: 66px; height: 26px; border-radius: 5px; overflow: hidden; border: 1px solid var(--line); }
+.swatch .trio span { flex: 1; } .swatch .trio span:nth-child(2) { flex: 2; }
+.swatch.on { border-color: var(--accent); }
+.pcolor { display: grid; grid-template-columns: 110px 46px 90px auto; gap: 8px; align-items: center; margin: 6px 0; }
+.pcolor input[type=color] { width: 46px; height: 28px; padding: 0 2px; cursor: pointer; }
+.preview3 { display: flex; gap: 6px; height: 120px; padding: 6px; border-radius: 10px; background: #020306; margin: 10px 0; max-width: 520px; }
+.preview3 > div { border: 1px solid rgba(0,229,255,.35); border-radius: 8px; padding: 6px 8px; font-size: 11px; color: #c9fbff; }
+.preview3 .pv-side { width: 22%; } .preview3 .pv-mid { flex: 1; }
+.preview3 .chip { display: inline-block; margin: 3px 0; padding: 1px 6px; border: 1px solid; border-radius: 4px; text-shadow: 0 0 5px currentColor; box-shadow: 0 0 6px currentColor; }
 [data-theme="night"] .react-flow__background circle, [data-theme="night"] .react-flow__background path { fill: #26305e; stroke: #26305e; }
 [data-theme="night"] button.demo { color: var(--ink); border-color: rgba(0,229,255,.35); text-shadow: none; }

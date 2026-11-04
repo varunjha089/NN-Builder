@@ -1,7 +1,7 @@
 // The window: top bar with the tabs (Connection set apart on the right), the project, background tasks and messages.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { toggleTheme, useTheme } from "./theme";
+import { setTheme, toggleTheme, useTheme, usePanels, setPanels, luminance, PANEL_DEFAULTS, PANEL_PRESETS, type Panel } from "./theme";
 import { api, errText, type Analysis, type AppState, type Dataset, type Graph, type JobSnap, type Template, type TrainSettings, type UpdateCheck } from "./api";
 import { Design, arrange } from "./Design";
 import { DatasetTab } from "./DatasetTab";
@@ -9,7 +9,7 @@ import { TrainTab } from "./TrainTab";
 import { ResultsTab } from "./ResultsTab";
 import { ConnectionTab } from "./ConnectionTab";
 
-type Tab = "project" | "design" | "dataset" | "code" | "train" | "results" | "connection";
+type Tab = "project" | "design" | "dataset" | "code" | "train" | "results" | "connection" | "settings";
 
 export default function App() {
   const [st, setSt] = useState<AppState | null>(null);
@@ -157,6 +157,7 @@ export default function App() {
         <span className="grow" />
         {analysis && st.project && <span className={`summary ${ok ? "st-ok" : "st-error"}`}>{ok ? `${analysis.total_params.toLocaleString()} params · ready` : analysis.ok ? "dataset incomplete" : "design has problems"}</span>}
         <button className="tab theme-btn" title={theme === "night" ? "Day mode (⇧⌘N)" : "Night mode (⇧⌘N)"} onClick={toggleTheme}>{theme === "night" ? "☀" : "☾"}</button>
+        <button className={`tab theme-btn ${tab === "settings" ? "on" : ""}`} title="Settings (⌘,)" onClick={() => setTab("settings")}>⚙</button>
         <button className={`tab conn-tab ${tab === "connection" ? "on" : ""}`} onClick={() => setTab("connection")}>Connection{missing ? <span className="dot" /> : null}</button>
       </header>
       {update && <div className="updatebar">
@@ -175,6 +176,7 @@ export default function App() {
         {tab === "code" && <CodeTab toast={toast} />}
         {tab === "train" && train && <TrainTab st={st} ok={ok} train={train} setTrain={setTrain} runId={runId} openRun={setRunId} toast={toast} startJob={startJob} datasetSource={ds?.source ?? "builtin"} datasetTask={ds?.task ?? "classify"} />}
         {tab === "results" && <ResultsTab runId={runId} />}
+        {tab === "settings" && <SettingsTab />}
         {tab === "connection" && <ConnectionTab st={st} reload={reload} toast={toast} startJob={startJob} />}
       </main>
       {job && job.name && (job.state === "running" || jobLog.length > 0) && <div className="job">
@@ -271,6 +273,54 @@ function ProjectTab({ st, toast, opened, reload }: { st: AppState; toast: (m: st
       </div>
       </>}
       <p className="muted small">NN Builder {st.version} · settings in {st.home}. This Mac only designs; training runs on Kaggle, a college GPU or AWS.</p>
+      <AutoUpdate />
+    </div>
+  );
+}
+
+const PANEL_NAMES: [Panel, string, string][] = [
+  ["palette", "Blocks (left)", "the palette of blocks"],
+  ["canvas", "Canvas (middle)", "where the network is drawn"],
+  ["inspector", "Inspector (right)", "settings of the selected block and the layer table"],
+];
+
+function SettingsTab() {
+  const theme = useTheme();
+  const panels = usePanels();
+  const same = (a: Record<Panel, string>) => PANEL_NAMES.every(([k]) => a[k].toLowerCase() === panels[k].toLowerCase());
+  return (
+    <div className="page">
+      <h2>Settings</h2>
+      <h3>Appearance</h3>
+      <p className="row"><span>Theme:</span>
+        <label className="radio"><input type="radio" checked={theme === "day"} onChange={() => setTheme("day")} />Day</label>
+        <label className="radio"><input type="radio" checked={theme === "night"} onChange={() => setTheme("night")} />Night (neon)</label>
+        <span className="muted small">also ☾/☀ in the top bar, View → Night Mode (⇧⌘N)</span></p>
+      <h3>Night panel colours</h3>
+      <p className="muted small">In night mode the Design screen has three separate panels. Choose each one's background here; changes show at once.</p>
+      <div className="swatches">
+        {PANEL_PRESETS.map((p) => (
+          <button key={p.name} className={`swatch ${same(p.colors) ? "on" : ""}`} onClick={() => setPanels(p.colors)} title={`${p.name}: ${PANEL_NAMES.map(([k]) => p.colors[k]).join(" · ")}`}>
+            <span className="trio">{PANEL_NAMES.map(([k]) => <span key={k} style={{ background: p.colors[k] }} />)}</span>{p.name}
+          </button>
+        ))}
+      </div>
+      {PANEL_NAMES.map(([k, label, about]) => (
+        <div key={k} className="pcolor">
+          <span>{label}</span>
+          <input type="color" value={panels[k]} onChange={(e) => setPanels({ ...panels, [k]: e.target.value })} />
+          <code>{panels[k]}</code>
+          <span className="muted small">{about}{luminance(panels[k]) > 0.25 ? <span className="st-warn"> · light: neon text is hard to read on it</span> : null}</span>
+        </div>
+      ))}
+      <div className="preview3" aria-label="preview">
+        <div className="pv-side" style={{ background: panels.palette }}>Blocks<br /><span className="chip" style={{ color: "#ff9a3c" }}>Conv2D</span><br /><span className="chip" style={{ color: "#00ffd5" }}>Pool</span></div>
+        <div className="pv-mid" style={{ background: panels.canvas }}>Canvas<br /><span className="chip" style={{ color: "#3d8bff" }}>Input</span> → <span className="chip" style={{ color: "#ff9a3c" }}>Conv2D</span> → <span className="chip" style={{ color: "#39ff88" }}>Output</span></div>
+        <div className="pv-side" style={{ background: panels.inspector }}>Inspector<br /><span style={{ color: "#00e5ff" }}>Stage 1</span><br /><span className="muted">34,944 params</span></div>
+      </div>
+      <p className="row"><button onClick={() => setPanels(PANEL_DEFAULTS)} disabled={same(PANEL_DEFAULTS)}>Reset to Midnight</button>
+        {theme === "day" && <span className="muted small">You are in day mode: switch to Night to see the colours on the Design screen.</span>}</p>
+      <h3>Updates</h3>
       <AutoUpdate />
     </div>
   );
