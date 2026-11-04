@@ -115,7 +115,8 @@ doc/nn_builder_manual.tex  the user manual (LaTeX, plain thebibliography, no bib
   the bundle output (one copy only).
 - Look at the window with a scratch settings folder: `open -n --env NN_BUILDER_HOME=<scratch> "target/release/bundle/macos/NN Builder.app"`
   (starting the binary directly may give a process without a window).
-- The keychain items belong to the app; an unsigned rebuild may make macOS ask once to allow access to them again.
+- The keychain items belong to the app; an unsigned rebuild may make macOS ask once to allow access to them again ("Always Allow").
+  main.rs caches each item in memory after the first read (SECRETS), so a running app asks the Keychain at most once per item.
 
 ## Automatic updates
 

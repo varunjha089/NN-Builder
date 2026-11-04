@@ -45,12 +45,29 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> R<T> + Send + 'static) 
 }
 
 // ---------------------------------------------------------------- keychain
+/// each item is read from the Keychain once per launch and kept in memory: every Keychain read of an unsigned (or rebuilt) app can
+/// make macOS ask for the login password again, and the window and run status ask for the tokens every few seconds
+static SECRETS: std::sync::Mutex<Option<std::collections::HashMap<String, Option<String>>>> = std::sync::Mutex::new(None);
+
 fn secret(name: &str) -> Option<String> {
-    keyring::Entry::new(SERVICE, name).ok()?.get_password().ok()
+    let mut cache = SECRETS.lock().unwrap_or_else(|p| p.into_inner());
+    let map = cache.get_or_insert_with(Default::default);
+    if let Some(v) = map.get(name) {
+        return v.clone();
+    }
+    let v = keyring::Entry::new(SERVICE, name).ok().and_then(|en| en.get_password().ok());
+    map.insert(name.to_string(), v.clone());
+    v
+}
+
+fn remember_secret(name: &str, value: Option<String>) {
+    SECRETS.lock().unwrap_or_else(|p| p.into_inner()).get_or_insert_with(Default::default).insert(name.to_string(), value);
 }
 
 fn set_secret(name: &str, value: &str) -> R<()> {
-    keyring::Entry::new(SERVICE, name).map_err(e)?.set_password(value).map_err(e)
+    keyring::Entry::new(SERVICE, name).map_err(e)?.set_password(value).map_err(e)?;
+    remember_secret(name, Some(value.to_string()));
+    Ok(())
 }
 
 fn creds() -> Creds {
@@ -290,6 +307,7 @@ async fn clear_secret(name: String) -> R<()> {
     if let Ok(en) = keyring::Entry::new(SERVICE, &name) {
         let _ = en.delete_credential();
     }
+    remember_secret(&name, None);
     Ok(())
 }
 
