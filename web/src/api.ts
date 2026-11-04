@@ -37,7 +37,9 @@ export interface Prepared {
 
 export interface AppState {
   version: string; home: string; projects: { path: string; name: string; exists: boolean }[]; projects_dir: string;
-  project: { name: string; path: string } | null; tools_ready: boolean;
+  project: { name: string; path: string; draft: boolean } | null; tools_ready: boolean;
+  /** the unsaved demo, when there is one */
+  draft: { name: string; path: string; edited: boolean } | null;
   secrets: { kaggle: string | null; huggingface: boolean; aws: string | null };
   machines: { machine: Machine; prepared: Prepared | null }[];
   builtins: { key: string; label: string; shape: number[]; classes: string[] }[];
@@ -67,6 +69,7 @@ export const api = {
   projectFromTemplate: (key: string) => invoke<string>("project_from_template", { key }),
   state: () => invoke<AppState>("app_state"),
   projectNew: (name: string) => invoke<void>("project_new", { name }),
+  projectSaveAs: (name: string) => invoke<string>("project_save_as", { name }),
   projectOpen: (path: string) => invoke<void>("project_open", { path }),
   setProjectsDir: (path: string) => invoke<void>("set_projects_dir", { path }),
   load: () => invoke<ProjectData>("project_load"),

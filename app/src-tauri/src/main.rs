@@ -71,7 +71,8 @@ async fn app_state(st: State<'_, App>) -> R<Value> {
         "home": store::home(),
         "projects": store::listing(),
         "projects_dir": store::default_projects_dir(),
-        "project": pr.map(|p| json!({"name": p.name(), "path": p.dir})),
+        "project": pr.map(|p| json!({"name": p.name(), "path": p.dir, "draft": p.is_draft()})),
+        "draft": store::draft().map(|d| json!({"name": d.name(), "path": d.dir, "edited": d.draft_edited()})),
         "tools_ready": cloud::tools_ready(),
         "secrets": {"kaggle": c.kaggle.as_ref().map(|k| k.username.clone()), "huggingface": c.hf_token.is_some(), "aws": c.aws.as_ref().map(|a| format!("{}…", a.access_key_id.chars().take(4).collect::<String>()))},
         "machines": remote::machines().into_iter().map(|m| json!({"machine": m, "prepared": remote::prepared(&m.name)})).collect::<Vec<_>>(),
@@ -127,26 +128,49 @@ async fn template_apply(st: State<'_, App>, key: String) -> R<String> {
     apply_template(&project(&st)?, &key)
 }
 
-/// a new project that starts with a famous architecture (named after it; " 2", " 3" ... when that name is taken)
+/// open a famous architecture as the unsaved draft (nothing goes into the projects folder until Save Project…)
 #[tauri::command]
-async fn project_from_template(st: State<'_, App>, key: String) -> R<String> {
+async fn project_from_template(h: tauri::AppHandle, st: State<'_, App>, key: String) -> R<String> {
+    let h2 = h.clone();
+    let ok = blocking(move || Ok(discard_draft_ok(&h2))).await?;
+    if !ok {
+        return Err("Kept the unsaved demo.".into());
+    }
     new_from_template(&st, &key)
+}
+
+/// before the draft is replaced: when it was edited, ask (blocking: never call on the main thread)
+fn discard_draft_ok(h: &tauri::AppHandle) -> bool {
+    let Some(d) = store::draft().filter(|d| d.draft_edited()) else { return true };
+    h.dialog()
+        .message(format!("\"{}\" has changes that are not saved. Opening another demo replaces it.", d.name()))
+        .title("Discard the unsaved demo?")
+        .kind(tauri_plugin_dialog::MessageDialogKind::Warning)
+        .buttons(tauri_plugin_dialog::MessageDialogButtons::OkCancelCustom("Discard".into(), "Cancel".into()))
+        .blocking_show()
 }
 
 fn new_from_template(st: &App, key: &str) -> R<String> {
     let t = nnb_core::templates::get(key).ok_or("Unknown architecture.")?;
-    let base = store::default_projects_dir();
-    let mut name = format!("{} demo", t.title.split(" (").next().unwrap_or(t.title));
-    let mut n = 1;
-    while base.join(name.replace('/', "_")).exists() || base.join(&name).exists() {
-        n += 1;
-        name = format!("{} demo {n}", t.title.split(" (").next().unwrap_or(t.title));
-    }
-    let p = store::create(&name, None).map_err(e)?;
-    let msg = apply_template(&p, key)?;
-    let _ = std::fs::remove_file(p.dir.join("model.previous.json"));
+    let name = format!("{} demo", t.title.split(" (").next().unwrap_or(t.title));
+    let mut msg = String::new();
+    let p = store::create_draft(&name, |p| {
+        msg = apply_template(p, key).map_err(|x| anyhow::anyhow!(x))?;
+        let _ = std::fs::remove_file(p.dir.join("model.previous.json"));
+        Ok(())
+    }).map_err(e)?;
     *st.project.lock().unwrap() = Some(p);
-    Ok(format!("Project \"{name}\" created. {}", msg.split_once(". ").map(|x| x.1).unwrap_or("")))
+    Ok(format!("{} opened, not saved yet (File → Save Project… ⌘S keeps it). {}", t.title, msg.split_once(". ").map(|x| x.1).unwrap_or("")))
+}
+
+/// the unsaved demo becomes a project in the projects folder
+#[tauri::command]
+async fn project_save_as(st: State<'_, App>, name: String) -> R<String> {
+    let p = project(&st)?;
+    let saved = store::save_as(&p, &name, None).map_err(e)?;
+    let msg = format!("Saved as {}", saved.dir.display());
+    *st.project.lock().unwrap() = Some(saved);
+    Ok(msg)
 }
 
 fn apply_template(p: &Project, key: &str) -> R<String> {
@@ -429,6 +453,9 @@ async fn targets() -> R<Value> {
 #[tauri::command]
 async fn run_start(st: State<'_, App>, target: String, gpu: String, copy_tokens: bool) -> R<()> {
     let p = project(&st)?;
+    if p.is_draft() {
+        return Err("Save the demo first (File → Save Project… ⌘S): runs are kept with a saved project.".into());
+    }
     let ok = st.jobs.start(&format!("Train on {target}"), move |log: Log| {
         let id = runs::start(&p, &target, gpu.trim(), &creds(), copy_tokens, &log).map_err(e)?;
         Ok(format!("RUN {id}"))
@@ -588,6 +615,7 @@ fn build_menu(h: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let file = SubmenuBuilder::new(h, "File")
         .item(&item(h, "new-project", "New Project…", Some("CmdOrCtrl+N"))?)
         .item(&item(h, "open-project", "Open Project…", Some("CmdOrCtrl+O"))?)
+        .item(&item(h, "save-project", "Save Project…", Some("CmdOrCtrl+S"))?)
         .item(&demos)
         .separator()
         .item(&item(h, "import-design", "Import Design…", None)?)
@@ -688,13 +716,21 @@ fn on_menu(h: &tauri::AppHandle, id: &str) {
             Some(p) => reveal(&p.dir.join("project.json")),
             None => toast(h, "Open or create a project first."),
         },
-        d if d.starts_with("demo:") => match new_from_template(&st, &d[5..]) {
-            Ok(msg) => {
-                let _ = h.emit("project-changed", ());
-                toast(h, msg);
-            }
-            Err(err) => toast(h, err),
-        },
+        d if d.starts_with("demo:") => {
+            let (h2, key) = (h.clone(), d[5..].to_string());
+            std::thread::spawn(move || {
+                if !discard_draft_ok(&h2) {
+                    return;
+                }
+                match new_from_template(&h2.state::<App>(), &key) {
+                    Ok(msg) => {
+                        let _ = h2.emit("project-changed", ());
+                        toast(&h2, msg);
+                    }
+                    Err(err) => toast(&h2, err),
+                }
+            });
+        }
         other => {
             let _ = h.emit("menu", other.to_string());
         }
@@ -716,7 +752,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            app_state, templates_list, template_apply, project_from_template, project_new, project_open, set_projects_dir, project_load, save_graph, save_dataset, save_train, code, export_code,
+            app_state, templates_list, template_apply, project_from_template, project_save_as, project_new, project_open, set_projects_dir, project_load, save_graph, save_dataset, save_train, code, export_code,
             set_kaggle, set_hf, set_aws, clear_secret, test_kaggle, test_hf, test_aws, tools_install,
             machine_save, machine_delete, machine_test, machine_connect, machine_prepare, hf_info, kaggle_files,
             update_settings, set_auto_update, update_check, update_install, update_restart, targets, run_start, runs_list, run_status, run_stop, run_fetch, run_results, run_reveal, job_status, open_url

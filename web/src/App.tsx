@@ -15,6 +15,7 @@ export default function App() {
   const [st, setSt] = useState<AppState | null>(null);
   const [tab, setTab] = useState<Tab>("design");
   const theme = useTheme();
+  const [saving, setSaving] = useState(false);
   const [graph, setGraph] = useState<Graph | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [ds, setDsState] = useState<Dataset | null>(null);
@@ -130,6 +131,9 @@ export default function App() {
     } else if (id === "new-project") {
       setTab("project");
       window.setTimeout(() => document.getElementById("newProjectName")?.focus(), 50);
+    } else if (id === "save-project") {
+      if (st?.project?.draft) setSaving(true);
+      else toast(st?.project ? "Already saved: every change is written as you make it." : "Open or create a project first.");
     } else if (id === "night") {
       toggleTheme();
     } else if (id === "export-code") {
@@ -147,6 +151,8 @@ export default function App() {
       <header>
         <strong className="brand">NN Builder</strong>
         <button className={`tab proj ${tab === "project" ? "on" : ""}`} onClick={() => setTab("project")}>{st.project ? st.project.name : "No project"} ▾</button>
+        {st.project?.draft && <><span className="pill stopped" title="A demo: nothing is in your projects folder until you save it">not saved</span>
+          <button className="small primary" onClick={() => setSaving(true)}>Save…</button></>}
         <nav>{st.project && tabs.map(([t, label]) => <button key={t} className={`tab ${tab === t ? "on" : ""}`} onClick={() => setTab(t)}>{label}</button>)}</nav>
         <span className="grow" />
         {analysis && st.project && <span className={`summary ${ok ? "st-ok" : "st-error"}`}>{ok ? `${analysis.total_params.toLocaleString()} params · ready` : analysis.ok ? "dataset incomplete" : "design has problems"}</span>}
@@ -176,7 +182,26 @@ export default function App() {
           <button className="small" onClick={() => { setJob(null); setJobLog([]); }}>×</button></div>
         <pre>{jobLog.join("\n")}{job.state !== "running" && job.message ? `\n${job.message}` : ""}</pre>
       </div>}
+      {saving && st.project?.draft && <SaveDraft st={st} close={() => setSaving(false)} toast={toast}
+        saved={async () => { setSaving(false); await reload(); await loadProject(); }} />}
       {msg && <div className="toast" onClick={() => setMsg("")}>{msg}</div>}
+    </div>
+  );
+}
+
+/** the unsaved demo becomes a project in the projects folder */
+function SaveDraft({ st, close, saved, toast }: { st: AppState; close: () => void; saved: () => void; toast: (m: string) => void }) {
+  const [name, setName] = useState(st.project?.name ?? "");
+  const save = () => api.projectSaveAs(name).then((m) => { toast(m); saved(); }).catch((e) => toast(errText(e)));
+  return (
+    <div className="modal" onClick={close}>
+      <div className="card" onClick={(e) => e.stopPropagation()}>
+        <h3>Save project</h3>
+        <p className="row"><input autoFocus className="grow" value={name} onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") save(); if (e.key === "Escape") close(); }} /></p>
+        <p className="muted small">Saved in {st.projects_dir}</p>
+        <p className="row"><span className="grow" /><button onClick={close}>Cancel</button><button className="primary" onClick={save}>Save</button></p>
+      </div>
     </div>
   );
 }
@@ -213,12 +238,16 @@ function ProjectTab({ st, toast, opened, reload }: { st: AppState; toast: (m: st
       <table className="grid"><tbody>
         {st.projects.map((p) => <tr key={p.path}><td>{p.name}</td><td className="muted small">{p.path}</td>
           <td>{p.exists ? <button onClick={() => api.projectOpen(p.path).then(opened).catch((e) => toast(errText(e)))}>Open</button> : "missing"}</td></tr>)}
-        {!st.projects.length && <tr><td className="muted">No projects yet.</td></tr>}
+        {st.draft && <tr><td>{st.draft.name} <span className="pill stopped">not saved{st.draft.edited ? ", changed" : ""}</span></td>
+          <td className="muted small">opened demo: kept only until the next demo, or until you save it (⌘S)</td>
+          <td><button onClick={() => api.projectOpen(st.draft!.path).then(opened).catch((e) => toast(errText(e)))}>Open</button></td></tr>}
+        {!st.projects.length && !st.draft && <tr><td className="muted">No projects yet.</td></tr>}
       </tbody></table>
       <p className="row"><input className="grow" value={path} onChange={(e) => setPath(e.target.value)} placeholder="folder of a project (contains project.json)" />
         <button onClick={() => api.projectOpen(path).then(opened).catch((e) => toast(errText(e)))}>Open folder</button></p>
       <h3>Start from a demo architecture</h3>
-      <p className="muted small">Creates a new project with the network already on the canvas; change it from there. Every demo is also in the Design tab under "Famous architectures".</p>
+      <p className="muted small">Opens the network on the canvas as an unsaved project: nothing is written to your projects folder until you save it
+        (Save… or ⌘S), and the next demo replaces it. Every demo is also in the Design tab under "Famous architectures".</p>
       <div className="demos">
         {demos.map((t) => (
           <div key={t.key} className="demo">
@@ -226,7 +255,7 @@ function ProjectTab({ st, toast, opened, reload }: { st: AppState; toast: (m: st
               {t.task === "segment" && <span className="pill">segmentation</span>}</div>
             <p className="small muted">{(() => { const parts = t.about.split(". "); return (/et al$| & /.test(parts[0]) ? parts[1] : parts[0]).replace(/\.$/, ""); })()}.</p>
             <div className="row"><span className="muted small">input {t.input[1]}×{t.input[2]}×{t.input[0]}</span><span className="grow" />
-              <button onClick={() => fromDemo(t)}>Create project</button></div>
+              <button onClick={() => fromDemo(t)}>Open demo</button></div>
           </div>
         ))}
       </div>

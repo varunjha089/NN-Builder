@@ -24,7 +24,9 @@ crates/core/src/
                            used, plain-words messages (status ok/warn/error/blocked/unconnected), edge shapes; parameter readers (int, pair, text)
   codegen.rs               TrainSettings (incl. augmentation aug_*); model_code (Net with forward following the graph, LAYERS, EXPECTED); train_script = header (DATASET,
                            TRAIN, CLASSES as Python literals) + model + python/harness.py (include_str!)
-  store.rs                 home() (NN_BUILDER_HOME), settings.json (projects, last_project, projects_dir, machines, prepared), Project (files)
+  store.rs                 home() (NN_BUILDER_HOME), settings.json (projects, last_project, projects_dir, machines, prepared), Project (files);
+                           the draft: a demo opens as the one unsaved project in <settings>/draft (create_draft replaces it; draft_edited
+                           compares with draft-origin.json; not in the projects list); save_as moves it into the projects folder
   remote.rs                Machine (ssh | aws) + clean() validation, ssh/rsync commands (ControlMaster ~/.ssh/nnb-%C, BatchMode), connect_command
                            (one-time login), prepare_script (+ parse_prepare: GPUs, SLURM, systemd+linger, tmux, timeout, PyTorch), choose_launch,
                            put_secret_script (file via stdin, chmod 600)
@@ -34,7 +36,7 @@ crates/core/src/
                            shutdown on AWS, rsync, launch via slurm/systemd/tmux/nohup), status (rate-limited polls: Kaggle 30 s, ssh 3 s;
                            metrics appended by byte offset; fetch when ended), stop, fetch (AWS: start/copy/stop), listing, results
   jobs.rs                  one background job with a log (Jobs), stream/capture for external commands
-crates/core/tests/         design.rs (shapes, codegen compiles with python3 -m py_compile, machine validation),
+crates/core/tests/         design.rs (shapes, codegen compiles with python3 -m py_compile, machine validation), drafts.rs (demo drafts),
                            flows.rs (whole ssh run and Kaggle run through stand-in ssh/rsync/python/kaggle scripts)
 crates/core/examples/dump_cases.rs   300 random designs -> JSON for python/verify_shapes.py (GitHub Actions only)
 python/harness.py          the training part of every train.py (data: torchvision / datasets / ImageFolder from Kaggle; segmentation: SegPairs of
@@ -45,7 +47,7 @@ python/helpers/aws_ec2.py  boto3 start/stop/describe (run with the tools venv; c
 python/verify_shapes.py    PyTorch comparison (CI)
 app/src-tauri/src/main.rs  Tauri commands (thin: they call nnb-core), keychain (service "NN Builder": kaggle, huggingface, aws), Hugging Face
                            datasets-server/whoami calls (ureq), the menu bar (build_menu / on_menu): App (About, Check for Updates…), File (New
-                           Project ⌘N, Open Project… ⌘O with a folder dialog, New from Demo ▸, Import/Export Design… (model.json, dialogs from
+                           Project ⌘N, Open Project… ⌘O with a folder dialog, Save Project… ⌘S (the draft), New from Demo ▸, Import/Export Design… (model.json, dialogs from
                            tauri-plugin-dialog), Export train.py ⌘E, Show Project in Finder ⇧⌘R), Edit (Undo ⌘Z / Redo ⇧⌘Z of the design,
                            Cut/Copy/Paste/Select All, Arrange ⌘L), View (Night Mode ⇧⌘N), Connection, Window. Dialog actions run in Rust and emit
                            "project-changed" / "toast"; the rest is emitted as "menu" (id) to the window. Undo/Redo: App.tsx keeps snapshots
@@ -57,7 +59,9 @@ web/src/                   Design.tsx: the canvas reads left to right (handles l
                            convolution / pooling / Dense projection when shapes differ); the layer table (nothing selected) is grouped
                            by groupLayers(): Input, image stages by resolution (pool + a following Dropout stay in their stage), Embedding
                            and Encoder block k for transformers, Classifier; collapsible, with parameter subtotals;
-                           App.tsx (the Projects page starts with demo cards: project_from_template creates "<Architecture> demo" with it loaded);
+                           App.tsx (demo cards on the Projects page and File → New from Demo open "<Architecture> demo" as the draft: nothing
+                           in the projects folder until Save… / File → Save Project… ⌘S (project_save_as); an edited draft is replaced only
+                           after a Discard/Cancel dialog; runs refuse a draft);
                            App.tsx (top bar: Project ▾, Design, Dataset, Code, Train, Results, and Connection set apart on the right; job panel;
                            Code and Project tabs), Design.tsx (canvas, palette, inspector), Preview.tsx (sliding window, charts, images),
                            DatasetTab, TrainTab, ResultsTab, ConnectionTab, api.ts (typed invoke wrappers)
