@@ -86,3 +86,14 @@ canvas.pix { image-rendering: pixelated; border: 1px solid var(--line); }
 .layer .ls { padding: 3px 9px 0; color: #374151; }
 .layer .lo { padding: 2px 9px 5px; color: #1d2330; font-variant-numeric: tabular-nums; }
 .layer .lp { color: var(--muted); }
+.templates { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px 8px; margin-bottom: 8px; background: #f8faff; }
+.templates h4 { margin-top: 2px; }
+.templates select { width: 100%; }
+.templates button { margin-top: 4px; width: 100%; }
+.skip { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 4px; }
+.skip label { display: flex; flex-direction: column; gap: 2px; color: var(--muted); font-size: 12px; }
+.skip select { width: 100%; }
+.aug { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; background: #fbfcfd; }
+.aug label { flex-direction: row; align-items: center; gap: 4px; }
+.aug input[type=number] { width: 60px; }
+.thumb.seg .row { gap: 3px; margin: 0; }

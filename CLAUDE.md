@@ -13,11 +13,14 @@ instance: those flows are tested with stand-ins only. The earlier Python/Blockly
 ```
 Cargo.toml                 workspace: crates/core, app/src-tauri (version 0.1.0 in [workspace.package] and app/src-tauri/tauri.conf.json)
 crates/core/src/
-  model.rs                 Graph {nodes, edges}, KINDS, defaults(kind), arity, starter()
-  dataset.rs               Dataset (builtin | huggingface | kaggle; image_size, channels, classes), BUILTINS, input_shape, problems()
+  model.rs                 Graph {nodes, edges}, KINDS (incl. multiply, seg_output), defaults(kind), arity, starter()
+  templates.rs             famous architectures (LeNet-5, small CIFAR CNN, AlexNet, VGG-16, GoogLeNet, ResNet-18, MobileNet v1, small DenseNet,
+                           U-Net, Attention U-Net): TEMPLATES (key, title, year, task, input, about), build(key) with a depth layout
+  dataset.rs               Dataset (builtin | huggingface | kaggle; task classify | segment; resize (built-in); hf_mask_col, kaggle_mask_dir;
+                           image_size, channels, classes), BUILTINS, input_shape, problems()
   shapes.rs                analyze(graph, dataset) -> Analysis: computation order (Kahn), per-node in/out shapes, params, rf, padding/stride
                            used, plain-words messages (status ok/warn/error/blocked/unconnected), edge shapes; parameter readers (int, pair, text)
-  codegen.rs               TrainSettings; model_code (Net with forward following the graph, LAYERS, EXPECTED); train_script = header (DATASET,
+  codegen.rs               TrainSettings (incl. augmentation aug_*); model_code (Net with forward following the graph, LAYERS, EXPECTED); train_script = header (DATASET,
                            TRAIN, CLASSES as Python literals) + model + python/harness.py (include_str!)
   store.rs                 home() (NN_BUILDER_HOME), settings.json (projects, last_project, projects_dir, machines, prepared), Project (files)
   remote.rs                Machine (ssh | aws) + clean() validation, ssh/rsync commands (ControlMaster ~/.ssh/nnb-%C, BatchMode), connect_command
@@ -32,13 +35,18 @@ crates/core/src/
 crates/core/tests/         design.rs (shapes, codegen compiles with python3 -m py_compile, machine validation),
                            flows.rs (whole ssh run and Kaggle run through stand-in ssh/rsync/python/kaggle scripts)
 crates/core/examples/dump_cases.rs   300 random designs -> JSON for python/verify_shapes.py (GitHub Actions only)
-python/harness.py          the training part of every train.py (data: torchvision / datasets / ImageFolder from Kaggle; one-batch check against
+python/harness.py          the training part of every train.py (data: torchvision / datasets / ImageFolder from Kaggle; segmentation: SegPairs of
+                           image + mask (HF mask column, or Kaggle images/masks folders paired by name), per-pixel loss, pixel accuracy + mean IoU;
+                           augmentation on training data only (seg: image and mask together); one-batch check against
                            EXPECTED; AMP; checkpoint.pt + resume; SIGTERM/SIGHUP = stop + save; metrics.jsonl + "NNB_EVENT" lines; results.json)
 python/helpers/aws_ec2.py  boto3 start/stop/describe (run with the tools venv; credentials in the environment for that call only)
 python/verify_shapes.py    PyTorch comparison (CI)
 app/src-tauri/src/main.rs  Tauri commands (thin: they call nnb-core), keychain (service "NN Builder": kaggle, huggingface, aws), Hugging Face
                            datasets-server/whoami calls (ureq), native menu with a "Connection" menu (emits "open-tab")
-web/src/                   App.tsx (top bar: Project ▾, Design, Dataset, Code, Train, Results, and Connection set apart on the right; job panel;
+web/src/                   Design.tsx also has the "Famous architectures" picker (template_apply keeps the old design as model.previous.json and
+                           fits the dataset) and the skip-connection tool (inserts Add/Concat after the selected block, with a 1×1 strided
+                           convolution / pooling / Dense projection when shapes differ);
+                           App.tsx (top bar: Project ▾, Design, Dataset, Code, Train, Results, and Connection set apart on the right; job panel;
                            Code and Project tabs), Design.tsx (canvas, palette, inspector), Preview.tsx (sliding window, charts, images),
                            DatasetTab, TrainTab, ResultsTab, ConnectionTab, api.ts (typed invoke wrappers)
 .github/workflows/ci.yml   core tests + PyTorch comparison on GitHub's machines
@@ -56,7 +64,9 @@ web/src/                   App.tsx (top bar: Project ▾, Design, Dataset, Code,
 ## Rules for changes
 
 - A new block kind: model.rs (KINDS, defaults, arity), shapes.rs (step), codegen.rs (modules), Design.tsx (COLORS, GROUPS, summary, inspector
-  fields), dump_cases.rs (so CI compares it with PyTorch).
+  fields), dump_cases.rs (so CI compares it with PyTorch). A new template: templates.rs (TEMPLATES + build); the template test checks it is valid
+  at its input and compiles.
+- Git: every change is committed (one commit per logical change, message says what and why; the owner asked for this on 2026-11-04).
 - Never run PyTorch, train or download datasets on the Mac (tests included). No real Kaggle/AWS/SSH calls in tests: stand-ins only.
 - Remote commands only through remote.rs (validated fields, sh_quote, scripts on ssh stdin). Secrets only through the keychain and env/stdin.
 

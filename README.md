@@ -8,16 +8,24 @@ Version 0.1.0 · MIT licence · Rust (Tauri 2) + React; the generated training c
 ## What it does
 
 - **Design tab:** a node graph (React Flow). Blocks: Input, Conv2D, Depthwise Conv2D, ConvTranspose2D, Pool, Global pool, Upsample, BatchNorm,
-  LayerNorm, Dropout, Flatten, Dense, Activation, Add, Concat, Output. Branches work (ResNet skips with Add, U-Net with Concat).
+  LayerNorm, Dropout, Flatten, Dense, Activation, Add, Concat, Multiply, Output, Segmentation output. Branches work (ResNet skips with Add,
+  U-Net with Concat, attention gates with Multiply).
+  - **Famous architectures** to start from: LeNet-5, a small CIFAR-10 CNN, AlexNet, VGG-16, GoogLeNet (Inception v1), ResNet-18, MobileNet v1,
+    a small DenseNet, U-Net and Attention U-Net (VGG-16 and ResNet-18 have exactly torchvision's parameter counts).
+  - **Skip connections:** select a block and choose an earlier one: an Add (residual) or Concat is inserted, with a 1×1 convolution (or pooling)
+    on the skip path when channels or sizes differ.
   - Filters, kernel, stride, padding (`same` / `valid` / a number), dilation, pooling size and stride (= pool size unless unticked) are set in
     the inspector; kernel and stride have a "square" link; Conv2D has presets (3×3 keep size, 3×3 stride 2, 1×1, 5×5, 7×7 stride 2).
   - Every block shows its output shape and parameters, every arrow the shape it carries. Problems are explained in plain words (red: image too
     small for the window, Dense without Flatten, Add of different shapes, Concat of different sizes, a loop, no Output; yellow: a stride that
     drops rows or skips pixels, a huge Dense layer). Click a block for the formula with its numbers, its receptive field and an animation of
     the window sliding over the padded input.
-- **Dataset tab:** built-in (MNIST, Fashion-MNIST, CIFAR-10), **Hugging Face** (reads the dataset's splits, columns and class names through
+- **Dataset tab:** classification or **segmentation** (images + masks; pixel accuracy and mean IoU). Built-in (MNIST, Fashion-MNIST, CIFAR-10), **Hugging Face** (reads the dataset's splits, columns and class names through
   the public datasets-server API, nothing is downloaded) or **Kaggle** (reads the file list through the Kaggle API and finds the folder with one
-  subfolder per class). Images are resized and converted to grey or colour as you choose.
+  subfolder per class; for segmentation an images folder and a masks folder). Images are resized and converted to grey or colour as you choose
+  (built-in sets too, e.g. CIFAR-10 at 224×224 for AlexNet).
+- **Data augmentation** (Train tab): flips, rotation, padded random crop, brightness/contrast, on training images only; for segmentation the
+  image and its mask are flipped and rotated together.
 - **Code tab:** the standalone `train.py` the GPU machine runs: the model, the data loading, a training loop with mixed precision, a
   checkpoint every epoch and automatic resume, a one-batch shape check before training, and the results. Export it to run it anywhere.
 - **Train tab:** one button. On **Kaggle** the script is pushed as a private GPU notebook (with the dataset attached) and the results are

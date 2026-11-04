@@ -39,7 +39,14 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
       <h2>Dataset</h2>
       <p className="muted">Choose the data here. Only its description is read on this Mac; the images are downloaded on the GPU machine when training starts.</p>
       <div className="row">
-        {(["builtin", "huggingface", "kaggle"] as const).map((s) => (
+        <strong>Task:</strong>
+        <label className="radio"><input type="radio" checked={ds.task !== "segment"} onChange={() => up({ task: "classify" })} />Classification (one label per image)</label>
+        <label className="radio"><input type="radio" checked={ds.task === "segment"} onChange={() => up({ task: "segment", ...(ds.source === "builtin" ? { source: "huggingface" } : {}) })} />
+          Segmentation (a class for every pixel: images + masks)</label>
+      </div>
+      <div className="row">
+        <strong>Source:</strong>
+        {(["builtin", "huggingface", "kaggle"] as const).filter((s) => !(s === "builtin" && ds.task === "segment")).map((s) => (
           <label key={s} className="radio"><input type="radio" checked={ds.source === s} onChange={() => up({ source: s })} />
             {{ builtin: "Built-in (torchvision)", huggingface: "Hugging Face", kaggle: "Kaggle" }[s]}</label>
         ))}
@@ -48,6 +55,7 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
       {ds.source === "builtin" && <div className="form">
         <label>Dataset<select value={ds.builtin} onChange={(e) => up({ builtin: e.target.value })}>
           {st.builtins.map((b) => <option key={b.key} value={b.key}>{b.label} ({b.shape.join("×")}, {b.classes.length} classes)</option>)}</select></label>
+        <label className="chk"><input type="checkbox" checked={ds.resize} onChange={(e) => up({ resize: e.target.checked })} />Resize the images (e.g. to 224×224 for AlexNet)</label>
       </div>}
 
       {ds.source === "huggingface" && <>
@@ -62,8 +70,10 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
             <option value="">10% of the training split</option>{conf?.splits.map((s) => <option key={s.name} value={s.name}>{s.name} ({s.n?.toLocaleString()})</option>)}</select></label>
           <label>Image column<select value={ds.hf_image_col} onChange={(e) => up({ hf_image_col: e.target.value })}>
             {conf?.columns.map((c) => <option key={c.name} value={c.name}>{c.name} ({c.type})</option>)}</select></label>
-          <label>Label column<select value={ds.hf_label_col} onChange={(e) => { const c = conf?.columns.find((x) => x.name === e.target.value); up({ hf_label_col: e.target.value, ...(c?.names ? { classes: c.names } : {}) }); }}>
-            {conf?.columns.map((c) => <option key={c.name} value={c.name}>{c.name} ({c.type})</option>)}</select></label>
+          {ds.task === "segment" && <label>Mask column<select value={ds.hf_mask_col} onChange={(e) => up({ hf_mask_col: e.target.value })}>
+            {conf?.columns.map((c) => <option key={c.name} value={c.name}>{c.name} ({c.type})</option>)}</select></label>}
+          {ds.task !== "segment" && <label>Label column<select value={ds.hf_label_col} onChange={(e) => { const c = conf?.columns.find((x) => x.name === e.target.value); up({ hf_label_col: e.target.value, ...(c?.names ? { classes: c.names } : {}) }); }}>
+            {conf?.columns.map((c) => <option key={c.name} value={c.name}>{c.name} ({c.type})</option>)}</select></label>}
         </div>}
         {!st.secrets.huggingface && <p className="muted small">Gated or private datasets need your Hugging Face token (Connection tab).</p>}
       </>}
@@ -73,21 +83,25 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
           <button onClick={readKaggle} disabled={busy || !ds.kaggle_slug || !st.secrets.kaggle || !st.tools_ready}>Read files</button></div>
         {(!st.secrets.kaggle || !st.tools_ready) && <p className="muted small">Reading the file list needs the tools and your Kaggle token (Connection tab).</p>}
         {kg && <p className="muted small">{kg.files.toLocaleString()} files listed{kg.folders.length ? `; folders with one subfolder per class: ${kg.folders.map((f) => f.folder || "(top)").join(", ")}` : ""}.</p>}
-        <div className="form">
+        {ds.task === "segment" ? <div className="form">
+          <label>Images folder<input value={ds.kaggle_train_dir} onChange={(e) => up({ kaggle_train_dir: e.target.value.trim() })} placeholder="e.g. Image" /></label>
+          <label>Masks folder (same file names)<input value={ds.kaggle_mask_dir} onChange={(e) => up({ kaggle_mask_dir: e.target.value.trim() })} placeholder="e.g. Mask" /></label>
+          {kg && <p className="muted small wide">Folders seen: {[...new Set(kg.sample.map((f) => f.split("/").slice(0, -1).join("/")))].slice(0, 8).join(", ")}</p>}
+        </div> : <div className="form">
           <label>Training folder (one subfolder per class)
             {kg?.folders.length ? <select value={ds.kaggle_train_dir} onChange={(e) => { const f = kg.folders.find((x) => x.folder === e.target.value); up({ kaggle_train_dir: e.target.value, classes: f?.classes ?? ds.classes }); }}>
               {kg.folders.map((f) => <option key={f.folder} value={f.folder}>{f.folder || "(top level)"} — {f.classes.length} classes</option>)}</select>
               : <input value={ds.kaggle_train_dir} onChange={(e) => up({ kaggle_train_dir: e.target.value.trim() })} placeholder="e.g. data/train" />}</label>
           <label>Test folder (optional)<input value={ds.kaggle_test_dir} onChange={(e) => up({ kaggle_test_dir: e.target.value.trim() })} placeholder="empty = 10% of the training images" /></label>
-        </div>
+        </div>}
       </>}
 
-      {ds.source !== "builtin" && <div className="form">
+      {(ds.source !== "builtin" || ds.resize) && <div className="form">
         <label>Image height<input type="number" min={8} max={1024} value={ds.image_size[0]} onChange={(e) => up({ image_size: [Number(e.target.value), ds.image_size[1]] })} /></label>
         <label>Image width<input type="number" min={8} max={1024} value={ds.image_size[1]} onChange={(e) => up({ image_size: [ds.image_size[0], Number(e.target.value)] })} /></label>
         <label>Channels<select value={ds.channels} onChange={(e) => up({ channels: Number(e.target.value) })}><option value={1}>1 (grey)</option><option value={3}>3 (colour)</option></select></label>
-        <label className="wide">Class names, one per line, in label order ({ds.classes.length})
-          <ClassBox classes={ds.classes} onChange={(classes) => up({ classes })} /></label>
+        {ds.source !== "builtin" && <label className="wide">{ds.task === "segment" ? "Classes, one per line (mask pixel value 0 = first line; with two classes any non-zero pixel is the second)" : "Class names, one per line, in label order"} ({ds.classes.length})
+          <ClassBox classes={ds.classes} onChange={(classes) => up({ classes })} /></label>}
       </div>}
       {problems.map((p) => <div key={p} className="msg warn">{p}</div>)}
     </div>

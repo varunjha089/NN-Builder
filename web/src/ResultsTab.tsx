@@ -18,11 +18,15 @@ export function ResultsTab({ runId }: { runId: string | null }) {
   return (
     <div className="page">
       <h2>Results of run {runId}</h2>
+      {r.task === "segment" && <p className="muted small">"Test accuracy" is the share of pixels classified correctly; mean IoU (overlap of predicted and true areas per class) is the usual segmentation measure.</p>}
       <div className="row cards">
         <div className="card"><div className="muted">Test accuracy</div><div className="big">{(r.test_acc * 100).toFixed(2)}%</div></div>
+        {r.miou != null && <div className="card"><div className="muted">Mean IoU</div><div className="big">{(r.miou * 100).toFixed(2)}%</div></div>}
         {r.test_loss != null && <div className="card"><div className="muted">Test loss</div><div className="big">{Number(r.test_loss).toFixed(4)}</div></div>}
         <button onClick={() => api.runReveal(runId)}>Show files (model.pt, train.py, results.json)</button>
       </div>
+      {r.iou && <table className="grid"><tbody><tr><th>Class</th><th className="num">IoU</th></tr>
+        {r.iou.map((v: number, i: number) => <tr key={i}><td>{classes[i]}</td><td className="num">{(v * 100).toFixed(2)}%</td></tr>)}</tbody></table>}
       {conf.length > 0 && <>
         <h3>Confusion matrix (rows: true class, columns: predicted)</h3>
         <table className="grid cm"><tbody>
@@ -35,7 +39,12 @@ export function ResultsTab({ runId }: { runId: string | null }) {
           })}
         </tbody></table>
       </>}
-      {r.samples?.length > 0 && <><h3>Sample predictions</h3><div className="thumbs">
+      {r.task === "segment" && r.samples?.length > 0 && <><h3>Sample predictions (image · true mask · predicted mask)</h3><div className="thumbs">
+        {r.samples.map((s: any, i: number) => <div key={i} className="thumb seg"><div className="row">
+          <Img img={s.image} scale={Math.max(1, Math.round(96 / s.image[0].length))} /><Img img={s.truth} scale={Math.max(1, Math.round(96 / s.truth[0].length))} />
+          <Img img={s.pred} scale={Math.max(1, Math.round(96 / s.pred[0].length))} /></div><div>{(s.pixel_acc * 100).toFixed(1)}% of pixels right</div></div>)}
+      </div></>}
+      {r.task !== "segment" && r.samples?.length > 0 && <><h3>Sample predictions</h3><div className="thumbs">
         {r.samples.map((s: any, i: number) => <div key={i} className={`thumb ${s.pred !== s.label ? "wrong" : ""}`} title={`true: ${classes[s.label]}`}>
           <Img img={s.image} scale={Math.max(1, Math.round(64 / s.image[0].length))} /><div>{String(classes[s.pred] ?? s.pred).slice(0, 12)} {(s.prob * 100).toFixed(0)}%</div></div>)}
       </div></>}

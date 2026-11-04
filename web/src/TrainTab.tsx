@@ -3,9 +3,9 @@ import { useEffect, useRef, useState } from "react";
 import { api, errText, type AppState, type RunStatus, type TrainSettings } from "./api";
 import { Chart } from "./Preview";
 
-export function TrainTab({ st, ok, train, setTrain, runId, openRun, toast, startJob, datasetSource }: {
+export function TrainTab({ st, ok, train, setTrain, runId, openRun, toast, startJob, datasetSource, datasetTask }: {
   st: AppState; ok: boolean; train: TrainSettings; setTrain: (t: TrainSettings) => void; runId: string | null; openRun: (id: string | null) => void;
-  toast: (m: string) => void; startJob: () => void; datasetSource: string;
+  toast: (m: string) => void; startJob: () => void; datasetSource: string; datasetTask: string;
 }) {
   const [targets, setTargets] = useState<{ name: string; kind: string; prepared?: boolean }[]>([]);
   const [target, setTarget] = useState("Kaggle");
@@ -65,6 +65,16 @@ export function TrainTab({ st, ok, train, setTrain, runId, openRun, toast, start
         <label>Optimizer<select value={train.optimizer} onChange={(e) => set({ optimizer: e.target.value })}><option value="adam">Adam</option><option value="sgd">SGD (momentum 0.9)</option></select></label>
         <label>Training images (0 = all)<input type="number" min={0} value={train.limit_train} onChange={(e) => set({ limit_train: Number(e.target.value) })} /></label>
         {kind !== "kaggle" && <label>End the run after (hours)<input type="number" min={0.1} max={72} step={0.5} value={train.max_hours} onChange={(e) => set({ max_hours: Number(e.target.value) })} /></label>}
+        <div className="wide aug"><strong>Data augmentation</strong> <span className="muted small">(training images only; segmentation: image and mask together)</span>
+          <div className="row">
+            <label className="chk"><input type="checkbox" checked={train.aug_hflip} onChange={(e) => set({ aug_hflip: e.target.checked })} />horizontal flip</label>
+            <label className="chk"><input type="checkbox" checked={train.aug_vflip} onChange={(e) => set({ aug_vflip: e.target.checked })} />vertical flip (aerial / satellite images)</label>
+            <label className="chk"><input type="checkbox" checked={train.aug_color} onChange={(e) => set({ aug_color: e.target.checked })} />brightness / contrast</label>
+            <label>rotation ±<input type="number" min={0} max={45} value={train.aug_rotate} onChange={(e) => set({ aug_rotate: Number(e.target.value) })} />°</label>
+            {datasetTask !== "segment" && <label>random crop, padding<input type="number" min={0} max={16} value={train.aug_crop} onChange={(e) => set({ aug_crop: Number(e.target.value) })} />px</label>}
+          </div>
+          {datasetSource === "builtin" && train.aug_hflip && datasetTask !== "segment" && <p className="muted small">Note: flipping digits (MNIST) changes their meaning; use flips for objects and photos.</p>}
+        </div>
         <label className="chk wide"><input type="checkbox" checked={train.amp} onChange={(e) => set({ amp: e.target.checked })} />Mixed precision on the GPU (faster on a T4)</label>
         {kind === "aws" && <label className="chk wide"><input type="checkbox" checked={train.stop_instance} onChange={(e) => set({ stop_instance: e.target.checked })} />Stop the EC2 instance when the run ends (saves money)</label>}
         {kind !== "kaggle" && needsToken && <label className="chk wide"><input type="checkbox" checked={copyTokens} onChange={(e) => setCopyTokens(e.target.checked)} />
@@ -92,9 +102,10 @@ export function TrainTab({ st, ok, train, setTrain, runId, openRun, toast, start
           { name: "batch loss", color: "#c7d2e0", thin: true, pts: bt.map((e) => [e.epoch - 1 + e.step / e.steps, e.loss]) },
           { name: "train", color: "#2f6fde", pts: ep.map((e) => [e.epoch, e.train_loss]) },
           { name: "validation", color: "#e76f51", pts: ep.map((e) => [e.epoch, e.val_loss]) }]} />
-        <Chart title="Accuracy" percent series={[
+        <Chart title={ep.some((e) => e.val_miou != null) ? "Pixel accuracy and mean IoU" : "Accuracy"} percent series={[
           { name: "train", color: "#2f6fde", pts: ep.map((e) => [e.epoch, e.train_acc]) },
-          { name: "validation", color: "#e76f51", pts: ep.map((e) => [e.epoch, e.val_acc]) }]} />
+          { name: "validation", color: "#e76f51", pts: ep.map((e) => [e.epoch, e.val_acc]) },
+          { name: "validation mIoU", color: "#2a9d8f", pts: ep.filter((e) => e.val_miou != null).map((e) => [e.epoch, e.val_miou]) }]} />
         <details><summary>Log</summary><pre className="log">{status.log.join("\n")}</pre></details>
       </div>}
 

@@ -112,6 +112,51 @@ async fn save_graph(st: State<'_, App>, graph: Graph) -> R<Value> {
 }
 
 #[tauri::command]
+async fn templates_list() -> R<Value> {
+    Ok(json!(nnb_core::templates::TEMPLATES))
+}
+
+/// replace the design with a famous architecture (the current design is kept as model.previous.json) and fit the dataset to it
+#[tauri::command]
+async fn template_apply(st: State<'_, App>, key: String) -> R<String> {
+    let p = project(&st)?;
+    let t = nnb_core::templates::get(&key).ok_or("Unknown architecture.")?;
+    let g = nnb_core::templates::build(&key).ok_or("Unknown architecture.")?;
+    let _ = std::fs::copy(p.dir.join("model.json"), p.dir.join("model.previous.json"));
+    p.save_graph(&g).map_err(e)?;
+    let mut d = p.dataset();
+    let mut notes = vec![format!("{} loaded (the previous design is saved as model.previous.json).", t.title)];
+    if t.task == "segment" {
+        if d.task != "segment" {
+            d.task = "segment".into();
+            notes.push("The dataset is now a segmentation dataset: choose one with masks in the Dataset tab.".into());
+        }
+        if d.source == "builtin" {
+            d.source = "huggingface".into();
+        }
+        if d.classes.len() < 2 {
+            d.classes = vec!["background".into(), "foreground".into()];
+        }
+    } else {
+        d.task = "classify".into();
+    }
+    let want = t.input;
+    if d.source == "builtin" {
+        let native = d.builtin_info().map(|b| b.shape).unwrap_or([1, 28, 28]);
+        d.resize = native != want;
+        if d.resize {
+            notes.push(format!("{} images will be resized to {}×{} with {} channel(s).", d.builtin, want[1], want[2], want[0]));
+        }
+    } else if d.input_shape() != want.to_vec() {
+        notes.push(format!("Images will be resized to {}×{}.", want[1], want[2]));
+    }
+    d.image_size = [want[1], want[2]];
+    d.channels = want[0];
+    p.save_dataset(&d).map_err(e)?;
+    Ok(notes.join(" "))
+}
+
+#[tauri::command]
 async fn save_dataset(st: State<'_, App>, dataset: Dataset) -> R<Value> {
     let p = project(&st)?;
     p.save_dataset(&dataset).map_err(e)?;
@@ -442,7 +487,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            app_state, project_new, project_open, set_projects_dir, project_load, save_graph, save_dataset, save_train, code, export_code,
+            app_state, templates_list, template_apply, project_new, project_open, set_projects_dir, project_load, save_graph, save_dataset, save_train, code, export_code,
             set_kaggle, set_hf, set_aws, clear_secret, test_kaggle, test_hf, test_aws, tools_install,
             machine_save, machine_delete, machine_test, machine_connect, machine_prepare, hf_info, kaggle_files,
             targets, run_start, runs_list, run_status, run_stop, run_fetch, run_results, run_reveal, job_status, open_url

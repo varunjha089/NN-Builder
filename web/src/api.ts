@@ -16,7 +16,7 @@ export interface Analysis {
 }
 
 export interface Dataset {
-  source: "builtin" | "huggingface" | "kaggle"; builtin: string;
+  source: "builtin" | "huggingface" | "kaggle"; task: "classify" | "segment"; resize: boolean; builtin: string; hf_mask_col: string; kaggle_mask_dir: string;
   hf_repo: string; hf_config: string; hf_train_split: string; hf_test_split: string; hf_image_col: string; hf_label_col: string;
   kaggle_slug: string; kaggle_train_dir: string; kaggle_test_dir: string;
   image_size: [number, number]; channels: number; classes: string[];
@@ -24,6 +24,7 @@ export interface Dataset {
 
 export interface TrainSettings {
   epochs: number; batch_size: number; lr: number; optimizer: string; seed: number; amp: boolean; limit_train: number; max_hours: number; stop_instance: boolean;
+  aug_hflip: boolean; aug_vflip: boolean; aug_crop: number; aug_rotate: number; aug_color: boolean;
 }
 
 export interface Machine {
@@ -51,7 +52,11 @@ export interface RunInfo { id: string; target: string; kind: string; created: st
 export interface RunStatus { id: string; state: string; info: RunInfo; events: Record<string, any>[]; next: number; log: string[]; has_results: boolean }
 export interface JobSnap { name: string; state: string; message: string; log: string[]; next: number; seconds: number }
 
+export interface Template { key: string; title: string; year: number; task: string; input: [number, number, number]; about: string }
+
 export const api = {
+  templates: () => invoke<Template[]>("templates_list"),
+  templateApply: (key: string) => invoke<string>("template_apply", { key }),
   state: () => invoke<AppState>("app_state"),
   projectNew: (name: string) => invoke<void>("project_new", { name }),
   projectOpen: (path: string) => invoke<void>("project_open", { path }),

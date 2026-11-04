@@ -5,20 +5,20 @@ import {
   type Connection, type Edge, type EdgeChange, type Node, type NodeChange, type NodeProps, MarkerType,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { api, fmt, errText, type Analysis, type AppState, type Graph, type NodeResult, type Params } from "./api";
+import { api, fmt, errText, type Analysis, type AppState, type Graph, type NodeResult, type Params, type Template } from "./api";
 import { SlidingPreview } from "./Preview";
 
 export const COLORS: Record<string, string> = {
   input: "#3b6fd8", conv2d: "#d9822b", dwconv2d: "#c96d1a", convtranspose2d: "#b5651d", pool2d: "#2a9d8f", global_pool: "#21867a", upsample: "#3c8d7f",
   batchnorm: "#8e5bb5", layernorm: "#7d4fa3", dropout: "#9c6ac6", flatten: "#9a8c1c", dense: "#4b5bb5", activation: "#6c7a89", add: "#c0392b",
-  concat: "#a93226", output: "#2e8b57",
+  concat: "#a93226", multiply: "#b03a5b", output: "#2e8b57", seg_output: "#1f7a4d",
 };
 const GROUPS: [string, string[]][] = [
   ["Image", ["conv2d", "dwconv2d", "pool2d", "global_pool", "flatten"]],
   ["Up-sampling", ["convtranspose2d", "upsample"]],
-  ["Dense", ["dense", "output"]],
+  ["Dense and outputs", ["dense", "output", "seg_output"]],
   ["Normalise / regularise", ["batchnorm", "layernorm", "dropout", "activation"]],
-  ["Branches", ["add", "concat"]],
+  ["Branches", ["add", "concat", "multiply"]],
 ];
 
 type LayerData = { kind: string; title: string; params: Params; result?: NodeResult; summary: string };
@@ -58,8 +58,9 @@ function LayerNode({ data, selected }: NodeProps<Node<LayerData>>) {
 }
 const nodeTypes = { layer: LayerNode };
 
-export function Design({ st, graph, setGraph, analysis, setAnalysis, toast }: {
+export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, reloadProject }: {
   st: AppState; graph: Graph; setGraph: (g: Graph) => void; analysis: Analysis | null; setAnalysis: (a: Analysis) => void; toast: (m: string) => void;
+  reloadProject: () => void;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
   const saveTimer = useRef<number>(0);
@@ -142,6 +143,49 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast }: {
   };
 
   const sel = graph.nodes.find((n) => n.id === selected) ?? null;
+
+  /** a skip connection from `src` to the selected node: a join (Add or Concat) is inserted after the selected node, and when the shapes do not
+   *  match a projection is added on the skip path (1×1 convolution with a stride for Add, pooling for Concat, Dense for vectors) */
+  const addSkip = (src: string, mode: "add" | "concat") => {
+    if (!sel || !analysis) return;
+    const t = analysis.nodes.find((r) => r.id === sel.id)?.out, s = analysis.nodes.find((r) => r.id === src)?.out;
+    if (!t || !s) return toast("Both blocks need a valid shape first.");
+    const id = Date.now().toString(36);
+    const nodes = graph.nodes.map((n) => (n.y > sel.y ? { ...n, y: n.y + 120 } : n));
+    let edges = graph.edges.map((e) => (e.source === sel.id ? { ...e, source: `j${id}` } : e));
+    const join = { id: `j${id}`, kind: mode, params: {}, x: sel.x, y: sel.y + 120 };
+    let from = src;
+    const extra: typeof graph.nodes = [];
+    if (t.length !== s.length) return toast("A skip connection must join two images or two vectors (not an image and a vector).");
+    if (t.length === 3) {
+      const [r1, r2] = [s[1] / t[1], s[2] / t[2]];
+      if (!Number.isInteger(r1) || !Number.isInteger(r2) || r1 < 1 || r2 < 1)
+        return toast(`The skip source is ${s[1]}×${s[2]} and the target ${t[1]}×${t[2]}: the source must be the same size or a whole multiple larger.`);
+      const needProj = mode === "add" ? s[0] !== t[0] || r1 > 1 || r2 > 1 : r1 > 1 || r2 > 1;
+      if (needProj) {
+        const pid = `p${id}`;
+        extra.push(mode === "add"
+          ? { id: pid, kind: "conv2d", params: { filters: t[0], kernel: [1, 1], stride: [r1, r2], padding: "valid", dilation: 1, activation: "none", bias: false }, x: sel.x + 280, y: sel.y }
+          : { id: pid, kind: "pool2d", params: { mode: "max", size: [r1, r2], stride: "size", padding: 0 }, x: sel.x + 280, y: sel.y });
+        edges = [...edges, { id: `e${id}p`, source: src, target: pid }];
+        from = pid;
+      }
+    } else if (mode === "add" && s[0] !== t[0]) {
+      const pid = `p${id}`;
+      extra.push({ id: pid, kind: "dense", params: { units: t[0], activation: "none" }, x: sel.x + 280, y: sel.y });
+      edges = [...edges, { id: `e${id}p`, source: src, target: pid }];
+      from = pid;
+    }
+    edges = [...edges, { id: `e${id}a`, source: sel.id, target: join.id }, { id: `e${id}b`, source: from, target: join.id }];
+    save({ nodes: [...nodes, ...extra, join], edges });
+    setSelected(join.id);
+    toast(extra.length ? `Skip connection added, with a ${extra[0].kind === "conv2d" ? "1×1 convolution" : extra[0].kind === "pool2d" ? "pooling" : "Dense"} to match the shapes.`
+      : "Skip connection added.");
+  };
+  // earlier blocks (in computation order) that can feed a skip connection into the selected one
+  const order = analysis?.nodes.filter((r) => r.out).map((r) => r.id) ?? [];
+  const candidates = sel && order.includes(sel.id) ? order.slice(0, order.indexOf(sel.id)).filter((id) => !graph.edges.some((e) => e.source === id && e.target === sel.id))
+    .map((id) => ({ id, label: `${order.indexOf(id)}. ${analysis!.nodes.find((r) => r.id === id)!.title} ${fmt(analysis!.nodes.find((r) => r.id === id)!.out)}` })) : [];
   const setParam = (key: string, v: unknown) => {
     if (!sel) return;
     save({ ...graph, nodes: graph.nodes.map((n) => (n.id === sel.id ? { ...n, params: { ...n.params, [key]: v } } : n)) });
@@ -151,6 +195,7 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast }: {
   return (
     <div className="design">
       <div className="palette">
+        <TemplatePicker toast={toast} onLoaded={reloadProject} />
         <p className="muted small">Click a block to add it below the selected one. Drag from a node's bottom dot to another node's top dot to connect (several arrows into Add / Concat). Select + Backspace deletes.</p>
         {GROUPS.map(([g, kinds]) => (
           <div key={g}><h4>{g}</h4>{kinds.map((k) => (
@@ -166,7 +211,8 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast }: {
           <MiniMap pannable zoomable nodeColor={(n) => COLORS[(n.data as LayerData).kind] ?? "#999"} />
         </ReactFlow>}
       </div>
-      <Inspector node={sel} result={sel ? results[sel.id] : undefined} analysis={analysis} st={st} setParam={setParam} setParams={setParams} />
+      <Inspector node={sel} result={sel ? results[sel.id] : undefined} analysis={analysis} st={st} setParam={setParam} setParams={setParams}
+        candidates={candidates} addSkip={addSkip} />
     </div>
   );
 }
@@ -205,9 +251,48 @@ const PRESETS: [string, Params][] = [
   ["7×7, stride 2 (ResNet stem)", { kernel: [7, 7], stride: [2, 2], padding: "same" }],
 ];
 
-function Inspector({ node, result, analysis, st, setParam, setParams }: {
+function TemplatePicker({ toast, onLoaded }: { toast: (m: string) => void; onLoaded: () => void }) {
+  const [list, setList] = useState<Template[]>([]);
+  const [key, setKey] = useState("");
+  useEffect(() => { api.templates().then(setList).catch(() => {}); }, []);
+  const t = list.find((x) => x.key === key);
+  const load = () => {
+    if (!t || !confirm(`Replace the current design with ${t.title}? (The current design is kept as model.previous.json in the project folder.)`)) return;
+    api.templateApply(t.key).then((m) => { toast(m); onLoaded(); }).catch((e) => toast(errText(e)));
+  };
+  return (
+    <div className="templates">
+      <h4>Famous architectures</h4>
+      <select value={key} onChange={(e) => setKey(e.target.value)}>
+        <option value="">choose…</option>
+        {list.map((x) => <option key={x.key} value={x.key}>{x.title} ({x.year}){x.task === "segment" ? " · segmentation" : ""}</option>)}
+      </select>
+      {t && <><p className="small muted">{t.about} Input {t.input[1]}×{t.input[2]}×{t.input[0]}.</p><button onClick={load}>Load {t.title}</button></>}
+    </div>
+  );
+}
+
+function SkipBox({ candidates, addSkip }: { candidates: { id: string; label: string }[]; addSkip: (src: string, mode: "add" | "concat") => void }) {
+  const [src, setSrc] = useState("");
+  const [mode, setMode] = useState<"add" | "concat">("add");
+  if (!candidates.length) return null;
+  return (
+    <div className="skip">
+      <h4>Skip connection</h4>
+      <p className="muted small">Join an earlier block's output to this block's output: Add (residual, ResNet) or Concat (DenseNet, U-Net). A projection is added when the shapes differ.</p>
+      <label>From<select value={src} onChange={(e) => setSrc(e.target.value)}><option value="">choose an earlier block…</option>
+        {candidates.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}</select></label>
+      <div className="row"><label className="chk"><input type="radio" checked={mode === "add"} onChange={() => setMode("add")} />Add</label>
+        <label className="chk"><input type="radio" checked={mode === "concat"} onChange={() => setMode("concat")} />Concat</label>
+        <button disabled={!src} onClick={() => { addSkip(src, mode); setSrc(""); }}>Add skip connection</button></div>
+    </div>
+  );
+}
+
+function Inspector({ node, result, analysis, st, setParam, setParams, candidates, addSkip }: {
   node: { id: string; kind: string; params: Params } | null; result?: NodeResult; analysis: Analysis | null; st: AppState;
   setParam: (k: string, v: unknown) => void; setParams: (p: Params) => void;
+  candidates: { id: string; label: string }[]; addSkip: (src: string, mode: "add" | "concat") => void;
 }) {
   if (!node) {
     return (
@@ -281,6 +366,8 @@ function Inspector({ node, result, analysis, st, setParam, setParams }: {
         {node.kind === "add" && <p className="muted">Adds two or more branches element by element (a residual connection): their shapes must be equal.</p>}
         {node.kind === "concat" && <p className="muted">Joins branches along channels (images: equal height and width) or features (vectors). The order of the arrows is the order of the channels.</p>}
         {node.kind === "output" && <p className="muted">One score per class of the dataset ({analysis?.classes ?? "?"}); the loss applies softmax.</p>}
+        {node.kind === "seg_output" && <p className="muted">A 1×1 convolution giving a score per class ({analysis?.classes ?? "?"}) for every pixel. Its size must equal the input (the masks).</p>}
+        {node.kind === "multiply" && <p className="muted">Multiplies two branches element by element: equal shapes, a one-channel map times an image (an attention gate: the map, after a sigmoid, weights every pixel), or one weight per channel (squeeze-and-excitation).</p>}
         {node.kind === "input" && <p className="muted">The images of the dataset (Dataset tab): {fmt(analysis?.input)}.</p>}
       </div>
       {result && <>
@@ -292,6 +379,7 @@ function Inspector({ node, result, analysis, st, setParam, setParams }: {
           <pre className="formula">{result.formula.join("\n")}</pre>
         </>}
         {result.rf && <p className="muted small">Receptive field: one output value here sees {result.rf[0]}×{result.rf[1]} input pixels.</p>}
+        {node.kind !== "input" && !node.kind.endsWith("output") && <SkipBox candidates={candidates} addSkip={addSkip} />}
         {(node.kind === "conv2d" || node.kind === "pool2d" || node.kind === "dwconv2d") && result.padding && result.stride && result.inputs[0] &&
           <SlidingPreview kind={node.kind} n={result.inputs[0][1]} k={n2(node.kind === "pool2d" ? p.size : p.kernel, node.kind === "pool2d" ? 2 : 3)[0]}
             s={result.stride[0]} p={result.padding[0]} d={node.kind === "conv2d" ? Number(p.dilation ?? 1) : 1} />}
