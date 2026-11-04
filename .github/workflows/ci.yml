@@ -1,0 +1,27 @@
+# Tests on every push. The shape engine is compared with real PyTorch here (on GitHub's machines), because the owner's Mac never runs PyTorch.
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Core tests
+        run: cargo test -p nnb-core
+      - name: Random designs
+        run: cargo run -q -p nnb-core --example dump_cases -- 300 > cases.json
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: PyTorch (CPU)
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Compare with PyTorch
+        run: python python/verify_shapes.py cases.json

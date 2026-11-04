@@ -1,0 +1,199 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this folder.
+
+## Status
+
+Version 0.1.0 (2026-11-04): first build of the plan below, as a Rust (Tauri 2) app with a React Flow canvas. Local git repository; no GitHub
+repository yet (ask the owner before creating one and whether it is public). Not yet tried against a real Kaggle account, college server or EC2
+instance: those flows are tested with stand-ins only. The earlier Python/Blockly app (0.1.1, 2026-11-03) is in the Trash.
+
+## Layout
+
+```
+Cargo.toml                 workspace: crates/core, app/src-tauri (version 0.1.0 in [workspace.package] and app/src-tauri/tauri.conf.json)
+crates/core/src/
+  model.rs                 Graph {nodes, edges}, KINDS, defaults(kind), arity, starter()
+  dataset.rs               Dataset (builtin | huggingface | kaggle; image_size, channels, classes), BUILTINS, input_shape, problems()
+  shapes.rs                analyze(graph, dataset) -> Analysis: computation order (Kahn), per-node in/out shapes, params, rf, padding/stride
+                           used, plain-words messages (status ok/warn/error/blocked/unconnected), edge shapes; parameter readers (int, pair, text)
+  codegen.rs               TrainSettings; model_code (Net with forward following the graph, LAYERS, EXPECTED); train_script = header (DATASET,
+                           TRAIN, CLASSES as Python literals) + model + python/harness.py (include_str!)
+  store.rs                 home() (NN_BUILDER_HOME), settings.json (projects, last_project, projects_dir, machines, prepared), Project (files)
+  remote.rs                Machine (ssh | aws) + clean() validation, ssh/rsync commands (ControlMaster ~/.ssh/nnb-%C, BatchMode), connect_command
+                           (one-time login), prepare_script (+ parse_prepare: GPUs, SLURM, systemd+linger, tmux, timeout, PyTorch), choose_launch,
+                           put_secret_script (file via stdin, chmod 600)
+  cloud.rs                 tools venv (settings/tools: kaggle + boto3), kaggle_test/files/push/status/output (CLI with env credentials and a
+                           private KAGGLE_CONFIG_DIR), class_folders, aws() (python/helpers/aws_ec2.py: describe/start/stop)
+  runs.rs                  start (Kaggle push | ssh/aws: aws_up, prepare if needed, optional token copy, run.sh with timeout + exit code +
+                           shutdown on AWS, rsync, launch via slurm/systemd/tmux/nohup), status (rate-limited polls: Kaggle 30 s, ssh 3 s;
+                           metrics appended by byte offset; fetch when ended), stop, fetch (AWS: start/copy/stop), listing, results
+  jobs.rs                  one background job with a log (Jobs), stream/capture for external commands
+crates/core/tests/         design.rs (shapes, codegen compiles with python3 -m py_compile, machine validation),
+                           flows.rs (whole ssh run and Kaggle run through stand-in ssh/rsync/python/kaggle scripts)
+crates/core/examples/dump_cases.rs   300 random designs -> JSON for python/verify_shapes.py (GitHub Actions only)
+python/harness.py          the training part of every train.py (data: torchvision / datasets / ImageFolder from Kaggle; one-batch check against
+                           EXPECTED; AMP; checkpoint.pt + resume; SIGTERM/SIGHUP = stop + save; metrics.jsonl + "NNB_EVENT" lines; results.json)
+python/helpers/aws_ec2.py  boto3 start/stop/describe (run with the tools venv; credentials in the environment for that call only)
+python/verify_shapes.py    PyTorch comparison (CI)
+app/src-tauri/src/main.rs  Tauri commands (thin: they call nnb-core), keychain (service "NN Builder": kaggle, huggingface, aws), Hugging Face
+                           datasets-server/whoami calls (ureq), native menu with a "Connection" menu (emits "open-tab")
+web/src/                   App.tsx (top bar: Project ▾, Design, Dataset, Code, Train, Results, and Connection set apart on the right; job panel;
+                           Code and Project tabs), Design.tsx (canvas, palette, inspector), Preview.tsx (sliding window, charts, images),
+                           DatasetTab, TrainTab, ResultsTab, ConnectionTab, api.ts (typed invoke wrappers)
+.github/workflows/ci.yml   core tests + PyTorch comparison on GitHub's machines
+```
+
+## Build, test, install (macOS)
+
+- Quit NN Builder (Cmd-Q). `cd web && npm ci && npm run build`; `cargo test -p nnb-core`; `cargo clippy -p nnb-core -p nn-builder-app` (no warnings);
+  `cd app && npm ci && npx tauri build`; replace `/Applications/NN Builder.app` with `target/release/bundle/macos/NN Builder.app`, then delete
+  the bundle output (one copy only).
+- Look at the window with a scratch settings folder: `open -n --env NN_BUILDER_HOME=<scratch> "target/release/bundle/macos/NN Builder.app"`
+  (starting the binary directly may give a process without a window).
+- The keychain items belong to the app; an unsigned rebuild may make macOS ask once to allow access to them again.
+
+## Rules for changes
+
+- A new block kind: model.rs (KINDS, defaults, arity), shapes.rs (step), codegen.rs (modules), Design.tsx (COLORS, GROUPS, summary, inspector
+  fields), dump_cases.rs (so CI compares it with PyTorch).
+- Never run PyTorch, train or download datasets on the Mac (tests included). No real Kaggle/AWS/SSH calls in tests: stand-ins only.
+- Remote commands only through remote.rs (validated fields, sh_quote, scripts on ssh stdin). Secrets only through the keychain and env/stdin.
+
+## What NN_Builder is
+
+A desktop app (Rust) for **designing** neural networks on a canvas. The Mac only designs: it never trains, never downloads datasets and needs
+no PyTorch. A finished design becomes a complete Python (PyTorch) training script, including loading a dataset from Kaggle or Hugging Face, and
+the app runs it automatically on a GPU somewhere else:
+
+- **Kaggle** (free GPU notebooks, through the Kaggle API),
+- **a college GPU server** (SSH, password or key),
+- **an AWS EC2 g4dn.xlarge** (NVIDIA T4 16 GB, 4 vCPU; SSH with a key file).
+
+One button ("Train on ..."): the app generates the code, uploads it, sets up the machine (once), starts the run, follows it, brings the results
+back and, on AWS, stops the instance. On the college server and AWS the run must not depend on the SSH connection: it keeps going when the
+Mac sleeps, the network drops or the app closes, and the app reconnects to it later.
+
+## Stack
+
+| Part | Choice | Why |
+|---|---|---|
+| Desktop app | Tauri 2 (Rust backend) | Same as CourseShelf (proven builds for macOS/Windows/Linux, own updater); a real installer, no browser-window launcher |
+| Canvas | Web UI in the Tauri window: React + TypeScript + React Flow (node graph) | A graph, not a block stack, so branching designs work: ResNet skips, U-Net, Inception, concatenation |
+| Shape check, code generation | Rust (no Python on the Mac) | Instant, offline; one engine for the shape check and the generated code |
+| Generated training code | Python 3.9+ with PyTorch + torchvision (+ `datasets` / `kaggle` packages as needed) | Runs on all three targets; fastest training (CUDA) |
+| Remote control | System `ssh`/`rsync` (OpenSSH) for college/AWS; Kaggle REST API; Hugging Face Hub API; AWS EC2 API (`aws-sdk-ec2` crate) | `~/.ssh/config`, agents, ProxyJump and host-key checks work as in the Terminal |
+| Secrets | macOS Keychain (Windows Credential Manager / Secret Service on other systems), via the `keyring` crate | Never in settings files, project files, generated code, logs or command lines |
+
+A from-scratch C++ engine is NOT part of the app: training speed comes from GPU kernels (CUDA/cuDNN), and the Mac does not
+train. It could come back later as an optional "export to C++" for teaching.
+
+## 1. The canvas
+
+- **Nodes** = layers: Input, Conv2D, Depthwise Conv2D, Pool (max/avg), Global pool, BatchNorm, LayerNorm, Dropout, Flatten, Dense, activations,
+  Add (residual), Concat, Upsample / ConvTranspose (U-Net), Output (classification head; later segmentation head).
+- **Edges** = tensors. Each edge shows its shape, e.g. `(64, 14, 14)`. A node with problems turns red (blocks Train) or yellow (warning), with the
+  reason in plain words on the node.
+- **Setting filters, kernel, stride, padding, pooling** (from the earlier plan, still valid): fields on the node; kernel and stride have a
+  "square" link (unlink for height × width); padding `same` / `valid` / a number; pool stride "same as pool size" unless unticked; dilation and
+  bias under "Advanced"; presets (3×3 keep size, 3×3 stride 2, 1×1, 5×5, 7×7 stride 2).
+- **Shape rule** (shown on click, with the node's own numbers): `out = floor((in + 2*padding - dilation*(kernel - 1) - 1) / stride) + 1`. `same`
+  with stride > 1: the app computes explicit padding (PyTorch refuses `padding="same"` there).
+- **Checks:** output size < 1, Dense without Flatten/Global pool, Add of different shapes, Concat with different heights/widths, class count
+  ≠ dataset classes, Output not last or missing (red); stride drops rows, stride skips pixels, a very large Dense after Flatten, even kernel with
+  `same` (yellow).
+- **Teaching aids:** the sliding-window animation for Conv/Pool, receptive field per node, a strip showing the image getting smaller and deeper.
+- **Templates:** LeNet-5, a small VGG, ResNet-18, U-Net, as starting points.
+- **Saved as** `model.json` (nodes, edges, positions) in the project folder; the Rust engine is the only reader/writer.
+
+## 2. From design to Python
+
+- The Rust engine turns the graph into a `train.py` with: the `nn.Module` (a `forward` that follows the graph), the dataset code (section 3), the
+  training loop (Adam/SGD, learning rate, batch size, epochs, mixed precision on CUDA), **a checkpoint every epoch and automatic resume**, and
+  `metrics.jsonl` (one JSON event per line: start, batch, epoch, done, stopped, error), `results.json` (test accuracy, confusion matrix, sample
+  predictions, first-layer filters, feature maps) and `model.pt`.
+- **First a one-batch check** on the GPU machine: load one batch, run forward + backward, compare the real shapes with the app's; on a mismatch
+  stop at once with a clear message (the Mac cannot test this itself).
+- **Correctness of the Rust shape engine:** GitHub Actions (not the Mac) compares it with a real PyTorch forward pass on many random graphs
+  (shapes and parameter counts) on every push. A red check there blocks a release.
+- The generated code is readable and also downloadable ("Export train.py" / a Jupyter notebook).
+
+## 3. Datasets (chosen on the Mac, downloaded only on the GPU machine)
+
+- **Hugging Face:** search and pick a dataset; the app reads its splits, features and first rows through the public datasets-server API (no
+  download) and lets you choose the image column and the label column (class names from the `ClassLabel` feature). Generated code:
+  `datasets.load_dataset(name, split=...)` + transforms. Gated/private datasets need a Hugging Face token on the target.
+- **Kaggle:** search and pick a dataset; the app reads its file list through the Kaggle API and recognises the common layouts (folder per class,
+  CSV of file + label). On Kaggle it is attached to the notebook directly; on college/AWS it is downloaded with the Kaggle API on the machine.
+- **Built-in:** MNIST, Fashion-MNIST, CIFAR-10 (torchvision downloads them on the machine).
+- The app shows the size before a run; the data is cached on the machine (`~/.nn_builder/data`) and not downloaded again.
+
+## 4. Where training runs
+
+### Kaggle GPU (no SSH)
+
+- The app pushes the generated script as a Kaggle notebook through the API (`kernels push` with metadata: GPU on, internet on, the dataset
+  attached), checks `kernels status` every minute, then downloads the outputs (`kernels output`: metrics, results, model).
+- Runs entirely on Kaggle's servers, so it is independent of the Mac by design.
+- Limits: about 30 GPU hours a week, about 12 hours per run, runs may queue; the account must be phone-verified for GPU and internet. Whether the
+  API can choose the GPU type (T4 ×2 or P100) must be checked. A gated Hugging Face dataset needs its token stored once by hand in the
+  notebook's Kaggle "Secrets" (the API cannot set secrets).
+
+### College GPU server (SSH)
+
+- **Machine settings** store only: host (or `~/.ssh/config` alias), user, port, key file path or "password", jump host, remote folder
+  (default `~/.nn_builder`), optional existing Python. Never a password or key contents.
+- **Password login:** the app opens a Terminal window once (`ssh -M -f -N`, ControlMaster); the user types the password there; all later
+  commands reuse that connection (`BatchMode`, never prompting). A key (`ssh-copy-id`) is recommended where allowed.
+- **Prepare (once):** check Python, GPUs (`nvidia-smi`), disk; make `~/.nn_builder/venv` and install PyTorch matching the driver (no sudo).
+- **A run:** `rsync` the run folder to `~/.nn_builder/runs/<id>/`, then start it detached. **Independence from SSH**, in order of preference
+  (the app detects what the server allows):
+  1. **SLURM** (`sbatch`) if the cluster has a job queue: the proper way on shared clusters;
+  2. `systemd-run --user` (survives logout only if "lingering" is enabled, which may need the administrator);
+  3. `tmux` / `nohup setsid` (some servers kill all of a user's processes at logout: the app tests this once in Prepare and warns).
+- Free GPU chosen from `nvidia-smi` (shared GPUs); `CUDA_VISIBLE_DEVICES` set for the run.
+- The app copies new `metrics.jsonl` lines every few seconds while open, re-attaches to running jobs by run id after a restart, and copies the
+  results back when the run ends. Checkpoints + resume cover a killed job.
+
+### AWS EC2 g4dn.xlarge (SSH with a key file)
+
+- **Automatic start/stop** with the EC2 API: the app starts the instance, waits for SSH, runs Prepare (first time) and the run, exactly as for the
+  college server (detached, independent of SSH).
+- **Cost safety:** the run ends with `sudo shutdown -h now` (the instance's shutdown behaviour must be "stop", not "terminate"), plus a maximum
+  run time set in the app. The app also shows the instance state and an estimated cost.
+- **Results while the instance is stopped:** next time the app opens it starts the instance, copies the results and stops it again; optionally
+  the run uploads `model.pt` and the results to a private Hugging Face repository so they are available without restarting it.
+- **Spot instances** (cheaper, can be interrupted): supported later; checkpoints + resume make an interruption harmless.
+- AWS key: an IAM access key allowed only `ec2:StartInstances`, `ec2:StopInstances`, `ec2:DescribeInstances` for that one instance. A new AWS
+  account must first get a G-instance vCPU quota (often 0 at the start).
+
+## 5. Secrets
+
+Kaggle API token, Hugging Face token, AWS access key: in the Keychain only. When a run needs one on a remote machine (Kaggle download on
+college/AWS, gated Hugging Face dataset, upload of results), it is written there as a file readable only by the user (`chmod 600`, e.g.
+`~/.kaggle/kaggle.json`, `~/.cache/huggingface/token`) through ssh stdin, never on a command line, and the app says so before the first time.
+Nothing secret is ever written into `train.py`, `model.json`, `metrics.jsonl`, logs or the repository.
+
+## Build order (each step usable on its own)
+
+1. Rust app: canvas, shape engine, checks, code generation, Export train.py; GitHub Actions comparison with PyTorch.
+2. Datasets: Hugging Face and Kaggle pickers and the generated loading code.
+3. **Kaggle runs** (no SSH, nothing to install: the quickest complete loop).
+4. College GPU over SSH: Prepare, detached runs (SLURM / systemd-run / tmux), reconnect, results.
+5. AWS g4dn: start/stop through the API, self-stop, cost display, results from a stopped instance.
+
+## Rules (from the workspace CLAUDE.md, apply once code exists)
+
+- Program and data are separate: projects live in folders the owner chooses; tests use scratch folders and never the owner's projects.
+- **The Mac never trains and never downloads datasets.** Tests on the Mac use the Rust engine only; anything needing PyTorch runs in GitHub
+  Actions. No real Kaggle/AWS/college runs in tests: stand-ins for `ssh`, `rsync`, the Kaggle API and the EC2 API.
+- No real cloud action (starting an EC2 instance, pushing a Kaggle notebook) without the owner asking.
+- Every feature gets a test; the shape engine keeps its PyTorch comparison green.
+- After each change: update this file, commit and push (once the repository exists), build and install, never lose user data.
+
+## Open questions for the owner (still open; the app handles every case: it detects SLURM etc.)
+
+1. Does the college server use SLURM (a job queue), or do you just ssh in and run?
+2. Does your AWS account already have a quota for g4dn (G and VT instances)? On-demand only, or also spot?
+3. Is your Kaggle account phone-verified (needed for GPU and internet in notebooks)?
+4. Public GitHub repository like CourseShelf and The Data Application?

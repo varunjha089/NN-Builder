@@ -1,0 +1,7 @@
+{
+  "name": "nn-builder-app",
+  "private": true,
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.4"
+  }
+}
