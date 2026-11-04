@@ -23,6 +23,9 @@ crates/core/src/
                            counted by hand; too big to train on a 16 GB T4, said in its description; CI builds it in PyTorch, ~4 GB RAM)
                            Demos with a built-in dataset switch it to the one that fits their input (CIFAR-10 for 3×32×32, MNIST for
                            1×28×28) instead of resizing another (apply_template in main.rs).
+                           Dataset → Read info (Hugging Face) keeps the chosen image/label columns when the dataset has them; else the
+                           class column named "label", else the one with most classes (the columns arrive sorted by name, so CIFAR-100's
+                           coarse_label would otherwise replace fine_label).
   dataset.rs               Dataset (builtin | huggingface | kaggle; task classify | segment; resize (built-in); hf_mask_col, kaggle_mask_dir;
                            image_size, channels, classes), BUILTINS, input_shape, problems()
   shapes.rs                analyze(graph, dataset) -> Analysis: computation order (Kahn), per-node in/out shapes, params, rf, padding/stride

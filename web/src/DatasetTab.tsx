@@ -16,8 +16,12 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
       const info = await api.hfInfo(ds.hf_repo);
       setHf(info);
       const c = info.configs[0];
-      const img = c.columns.find((x) => x.type === "Image")?.name ?? ds.hf_image_col;
-      const lab = c.columns.find((x) => x.type === "ClassLabel");
+      // keep the columns already chosen when the dataset has them; otherwise the first image column, and the class column named
+      // "label" or else the one with the most classes (the column list arrives sorted by name: cifar100 has coarse_label before fine_label)
+      const img = c.columns.find((x) => x.type === "Image" && x.name === ds.hf_image_col)?.name ?? c.columns.find((x) => x.type === "Image")?.name ?? ds.hf_image_col;
+      const labels = c.columns.filter((x) => x.type === "ClassLabel");
+      const lab = labels.find((x) => x.name === ds.hf_label_col) ?? labels.find((x) => x.name === "label")
+        ?? [...labels].sort((a, b) => (b.names?.length ?? 0) - (a.names?.length ?? 0))[0];
       const splits = c.splits.map((s) => s.name);
       up({ hf_config: info.configs.length > 1 ? c.name : "", hf_image_col: img, hf_label_col: lab?.name ?? ds.hf_label_col, classes: lab?.names ?? ds.classes,
         hf_train_split: splits.includes("train") ? "train" : splits[0] ?? "train", hf_test_split: splits.includes("test") ? "test" : splits.includes("validation") ? "validation" : "" });
