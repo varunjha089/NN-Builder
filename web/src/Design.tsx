@@ -355,6 +355,86 @@ function SkipBox({ candidates, addSkip }: { candidates: { id: string; label: str
   );
 }
 
+// ---------------------------------------------------------------- layer table, grouped into stages
+type Group = { name: string; rows: NodeResult[] };
+const rank = (r: NodeResult) => r.out?.length ?? 0;
+const hw = (s: number[]) => `${s[s.length - 2]}×${s[s.length - 1]}`;
+const WORST = ["ok", "warn", "blocked", "unconnected", "error"];
+
+/** Input; image stages by resolution (a pooling layer, and a Dropout after it, stay with the stage they pool); for tokens an Embedding
+ *  (with the patch convolution before it) and one group per encoder block (a block starts at a LayerNorm after the MLP's Add); the
+ *  classifier (rank 1) */
+export function groupLayers(nodes: NodeResult[]): Group[] {
+  const groups: (Group & { key: string })[] = [];
+  let stage = 0, block = 0;
+  for (const r of nodes.filter((r) => r.out)) {
+    const out = r.out!, cur = groups[groups.length - 1], prev = cur?.rows[cur.rows.length - 1];
+    let key: string;
+    if (r.kind === "input") key = "input";
+    else if (rank(r) >= 3) {
+      const inp = r.inputs[0];
+      key = r.kind === "dropout" && prev?.kind === "pool2d" && cur.key.startsWith("img") ? cur.key : `img ${hw(r.kind === "pool2d" && inp?.length >= 3 ? inp : out)}`;
+    } else if (rank(r) === 2) {
+      const starts = r.kind === "layernorm" && (prev?.kind === "cls_pos" || (prev?.kind === "add" && cur.rows.some((x) => x.kind === "dense")));
+      key = starts || !cur?.key.startsWith("tok") ? `tok ${groups.length}` : cur.key;
+    } else key = "head";
+    if (cur && cur.key === key) { cur.rows.push(r); continue; }
+    let name = "Input";
+    if (key.startsWith("img")) {
+      const up = prev && rank(prev) >= 3 && out[out.length - 1] > prev.out![prev.out!.length - 1];
+      name = `Stage ${++stage} · ${key.slice(4)}${up ? " ↑" : ""}`;
+    } else if (key.startsWith("tok")) name = "Tokens";
+    else if (key === "head") name = r.kind === "token_pool" || nodes.some((n) => n.kind === "output") ? "Classifier" : "Dense";
+    groups.push({ key, name, rows: [r] });
+  }
+  for (const g of groups) if (g.key.startsWith("tok")) {
+    g.name = g.rows.some((r) => r.kind === "attention") ? `Encoder block ${++block}` : g.rows.some((r) => r.kind === "to_tokens") ? "Embedding" : "Final norm";
+  }
+  const e = groups.findIndex((g) => g.name === "Embedding");
+  if (e > 1 && groups[e - 1].key.startsWith("img")) { groups[e].rows.unshift(...groups[e - 1].rows); groups.splice(e - 1, 1); }
+  return groups;
+}
+
+/** "Conv2D ×3, Pool" */
+function contents(rows: NodeResult[]): string {
+  const parts: [string, number][] = [];
+  for (const r of rows) {
+    const last = parts[parts.length - 1];
+    if (last && last[0] === r.title) last[1]++; else parts.push([r.title, 1]);
+  }
+  return parts.map(([t, n]) => (n > 1 ? `${t} ×${n}` : t)).join(", ");
+}
+
+function LayerTable({ nodes }: { nodes: NodeResult[] }) {
+  const groups = useMemo(() => groupLayers(nodes), [nodes]);
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const all = open.size === groups.length;
+  const flip = (name: string) => setOpen((o) => { const n = new Set(o); if (n.has(name)) n.delete(name); else n.add(name); return n; });
+  const rf = (r?: NodeResult) => (r?.rf ? `${r.rf[0]}×${r.rf[1]}` : "");
+  return (
+    <>
+      <div className="row"><span className="muted small grow">{groups.length} groups · {nodes.filter((r) => r.out).length} layers</span>
+        <button className="small" onClick={() => setOpen(all ? new Set() : new Set(groups.map((g) => g.name)))}>{all ? "Collapse all" : "Expand all"}</button></div>
+      <table className="grid small layers"><tbody>
+        <tr><th>Block</th><th>Out</th><th className="num">Params</th><th>RF</th></tr>
+        {groups.map((g) => {
+          const last = g.rows[g.rows.length - 1], single = g.rows.length === 1;
+          const worst = g.rows.reduce((w, r) => (WORST.indexOf(r.status) > WORST.indexOf(w) ? r.status : w), "ok");
+          const isOpen = open.has(g.name) && !single;
+          return [
+            <tr key={g.name} className={`ghead st-${worst} ${single ? "" : "click"}`} onClick={() => !single && flip(g.name)}>
+              <td><span className="caret">{single ? "" : isOpen ? "▾" : "▸"}</span><strong>{g.name}</strong>
+                <div className="muted gsub" title={contents(g.rows)}>{contents(g.rows)}</div></td>
+              <td>{fmt(last.out)}</td><td className="num">{g.rows.reduce((t, r) => t + r.params, 0).toLocaleString()}</td><td>{rf(last)}</td></tr>,
+            ...(isOpen ? g.rows.map((r) => <tr key={r.id} className={`gitem st-${r.status}`}><td>{r.title}</td><td>{fmt(r.out)}</td>
+              <td className="num">{r.params.toLocaleString()}</td><td>{rf(r)}</td></tr>) : []),
+          ];
+        })}
+      </tbody></table>
+    </>
+  );
+}
+
 function Inspector({ node, result, analysis, st, setParam, setParams, candidates, addSkip }: {
   node: { id: string; kind: string; params: Params } | null; result?: NodeResult; analysis: Analysis | null; st: AppState;
   setParam: (k: string, v: unknown) => void; setParams: (p: Params) => void;
@@ -369,11 +449,7 @@ function Inspector({ node, result, analysis, st, setParam, setParams, candidates
         {analysis?.problems.map((p) => <div key={p} className="msg error">{p}</div>)}
         {analysis?.ok && <div className="msg ok">The design is complete: every shape fits. Next: Dataset, then Train.</div>}
         <p className="muted">Click a block to set its filters, kernel, stride, padding or pooling, and to see how its output size is computed.</p>
-        <table className="grid small"><tbody>
-          <tr><th>Block</th><th>Out</th><th className="num">Params</th><th>RF</th></tr>
-          {analysis?.nodes.filter((r) => r.out).map((r) => <tr key={r.id} className={`st-${r.status}`}><td>{r.title}</td><td>{fmt(r.out)}</td>
-            <td className="num">{r.params.toLocaleString()}</td><td>{r.rf ? `${r.rf[0]}×${r.rf[1]}` : ""}</td></tr>)}
-        </tbody></table>
+        {analysis && <LayerTable nodes={analysis.nodes} />}
       </div>
     );
   }

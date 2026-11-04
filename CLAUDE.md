@@ -54,7 +54,9 @@ app/src-tauri/src/main.rs  Tauri commands (thin: they call nnb-core), keychain (
 web/src/                   Design.tsx: the canvas reads left to right (handles left/right; arrange() = a column per depth; designs saved in the
                            old top-to-bottom view are arranged once when opened); it also has the "Famous architectures" picker (template_apply keeps the old design as model.previous.json and
                            fits the dataset) and the skip-connection tool (inserts Add/Concat after the selected block, with a 1×1 strided
-                           convolution / pooling / Dense projection when shapes differ);
+                           convolution / pooling / Dense projection when shapes differ); the layer table (nothing selected) is grouped
+                           by groupLayers(): Input, image stages by resolution (pool + a following Dropout stay in their stage), Embedding
+                           and Encoder block k for transformers, Classifier; collapsible, with parameter subtotals;
                            App.tsx (the Projects page starts with demo cards: project_from_template creates "<Architecture> demo" with it loaded);
                            App.tsx (top bar: Project ▾, Design, Dataset, Code, Train, Results, and Connection set apart on the right; job panel;
                            Code and Project tabs), Design.tsx (canvas, palette, inspector), Preview.tsx (sliding window, charts, images),
