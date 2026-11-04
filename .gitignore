@@ -8,3 +8,5 @@ app/src-tauri/gen/
 runs/
 kaggle.json
 *.pem
+__pycache__/
+*.pyc
