@@ -21,6 +21,8 @@ crates/core/src/
                            MSG-Former (msg_former: multi-scale dilated convolutions + squeeze-and-excitation gate + residual, then
                            Transformer encoders; 466,522 params, counted by hand in the test) and ViT-g/14 (vit_g14, 1,011,216,522 params,
                            counted by hand; too big to train on a 16 GB T4, said in its description; CI builds it in PyTorch, ~4 GB RAM)
+                           Demos with a built-in dataset switch it to the one that fits their input (CIFAR-10 for 3×32×32, MNIST for
+                           1×28×28) instead of resizing another (apply_template in main.rs).
   dataset.rs               Dataset (builtin | huggingface | kaggle; task classify | segment; resize (built-in); hf_mask_col, kaggle_mask_dir;
                            image_size, channels, classes), BUILTINS, input_shape, problems()
   shapes.rs                analyze(graph, dataset) -> Analysis: computation order (Kahn), per-node in/out shapes, params, rf, padding/stride
@@ -89,6 +91,11 @@ doc/nn_builder_manual.tex  the user manual (LaTeX, plain thebibliography, no bib
                            reference, dataset/code/connection/train/results, spot handling, the 15 demos (numbers from the app),
                            troubleshooting; nn_builder_manual.pdf is committed next to it. Build: cd doc && latexmk -pdf
                            nn_builder_manual.tex. Keep it in step with features (new blocks, demos, settings, menus) and recompile.
+                           doc/figures/*.jpg: screenshots (1440×900 window, JPEG). Take them from a copy started with a neutral
+                           NN_BUILDER_HOME (e.g. /Users/Shared/nnb-screens with projects_dir "~/NN_Builder_Projects", auto_update false) so
+                           no user name, path or real project shows; never the Connection tab (it shows Keychain account names).
+                           The MSG-Former section (sec:msg) has the layer table, parameter and compute breakdowns and ablations: if the
+                           template changes, update those numbers (templates test pins the total).
 ```
 
 ## Build, test, install (macOS)

@@ -178,6 +178,15 @@ fn apply_template(p: &Project, key: &str) -> R<String> {
         d.task = "classify".into();
     }
     let want = t.input;
+    // a built-in set that fits the architecture as it is (CIFAR-10 for 32×32 colour, MNIST for 28×28 grey) instead of resizing another one
+    if d.source == "builtin" && t.task != "segment" {
+        if let Some(fit) = BUILTINS.iter().find(|b| b.shape == want && (b.key == "cifar10" || b.key == "mnist")) {
+            if d.builtin != fit.key && BUILTINS.iter().find(|b| b.key == d.builtin).map(|b| b.shape) != Some(want) {
+                notes.push(format!("Dataset: {} (made for this input size).", fit.label));
+                d.builtin = fit.key.into();
+            }
+        }
+    }
     if d.source == "builtin" {
         let native = d.builtin_info().map(|b| b.shape).unwrap_or([1, 28, 28]);
         d.resize = native != want;

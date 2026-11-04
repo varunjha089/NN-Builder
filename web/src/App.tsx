@@ -266,7 +266,7 @@ function ProjectTab({ st, toast, opened, reload }: { st: AppState; toast: (m: st
           <button key={t.key} className="demo" onClick={() => fromDemo(t)} title={t.about}>
             <span className="dtitle"><strong>{t.title}</strong><span className="muted small">{t.year}</span>
               {t.task === "segment" && <span className="pill">segmentation</span>}</span>
-            <p className="small muted">{(() => { const parts = t.about.split(". "); return (/et al$| & /.test(parts[0]) ? parts[1] : parts[0]).replace(/\.$/, ""); })()}.</p>
+            <p className="small muted">{(() => { const parts = t.about.split(". "); return (/\bet al\b| & /.test(parts[0]) ? parts[1] : parts[0]).replace(/\.$/, ""); })()}.</p>
             <span className="dfoot"><span className="muted">input {t.input[1]}×{t.input[2]}×{t.input[0]}</span><span className="go">Open →</span></span>
           </button>
         ))}

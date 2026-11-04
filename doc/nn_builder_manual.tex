@@ -12,6 +12,8 @@
 \usepackage{array}
 \usepackage{enumitem}
 \usepackage{xcolor}
+\usepackage{graphicx}
+\graphicspath{{figures/}}
 \usepackage{tikz}
 \usetikzlibrary{positioning,arrows.meta,fit,calc}
 \usepackage{caption}
@@ -33,6 +35,8 @@
 \newcommand{\kbd}[1]{\mbox{\fboxsep=1.5pt\fbox{\footnotesize\texttt{#1}}}}
 \newcommand{\file}[1]{\texttt{#1}}
 \newcommand{\shape}[1]{$(#1)$}
+% a screenshot of the application: \screenshot{file}{caption}{label}
+\newcommand{\screenshot}[3]{\begin{figure}[htbp]\centering\includegraphics[width=\linewidth]{#1}\caption{#2}\label{#3}\end{figure}}
 \newcommand{\note}[1]{\par\smallskip\noindent\fcolorbox{nnaccent!60}{nnaccent!6}{\parbox{\dimexpr\linewidth-2\fboxsep-2\fboxrule}{\small #1}}\par\smallskip}
 
 \tikzset{
@@ -160,7 +164,12 @@ teal, normalisation violet, Dense blue, joins red, outputs green, transformer bl
 split into three separate panels (blocks on the left, canvas in the middle, inspector on the right). Their background colours are chosen in
 \ui{Settings} $\rightarrow$ \ui{Night panel colours}: six presets (Midnight, Deep purple, Ocean, Carbon, Forest, Crimson) or a colour
 picker per panel, with a live preview; a warning appears for colours so light that neon text becomes hard to read. The theme, the panel
-colours and the automatic-update switch are all on the Settings page.
+colours and the automatic-update switch are all on the Settings page (Figure~\ref{fig:settings}); Figure~\ref{fig:day} shows the
+day theme.
+
+\screenshot{08_settings}{Settings: the theme, the six presets and a colour picker per panel for the night Design screen, a live preview,
+and the automatic-update switch.}{fig:settings}
+\screenshot{09_design_day}{The Design screen in the day theme (MSG-Former, fitted to the canvas; the layer table on the right).}{fig:day}
 
 %=====================================================================================================================================
 \section{Projects}
@@ -173,6 +182,8 @@ A \emph{project} is a folder. The Projects page has two cards side by side:
   \item \ui{Open}: the projects used before, each with its folder, and a field to open any project folder by its path.
 \end{itemize}
 Every change is saved as it is made; there is no ``save'' step for a normal project.
+
+\screenshot{01_projects}{The Projects page (night theme): New project and Open side by side, then the demo architectures as tiles.}{fig:projects}
 
 \subsection{Demo architectures are unsaved until you save them}
 Below the two cards, \ui{Start from a demo architecture} shows the fifteen demos as tiles (the section folds with its arrow). Clicking a
@@ -213,6 +224,9 @@ A design can also be exported on its own (\ui{File} $\rightarrow$ \ui{Export Des
         sliding-window animation (convolution and pooling), and the skip-connection tool. With nothing selected: the whole design's
         parameter count, its problems, and the layer table.
 \end{description}
+
+\screenshot{02_design_lenet}{The Design screen with LeNet-5: blocks on the left, the network on the canvas (every arrow labelled with its
+tensor shape, every block with its output and parameters), and on the right the whole design's summary and the grouped layer table.}{fig:design}
 
 \subsection{Working with blocks}
 \begin{itemize}
@@ -463,6 +477,9 @@ intersection over union (mIoU) of the classes.
 Only the \emph{description} of a dataset is read on the design computer; the images are downloaded on the GPU machine when training starts
 (and cached there in \file{\textasciitilde/.nn\_builder/data}).
 
+\screenshot{05_dataset}{The Dataset tab with built-in CIFAR-10, as MSG-Former opens (the demo picks the built-in set that fits its
+input, so nothing is resized).}{fig:dataset}
+
 \subsection{Built-in datasets}
 MNIST (handwritten digits, $1\times28\times28$)~\cite{lecun1998gradient}, Fashion-MNIST (clothing, $1\times28\times28$)~\cite{xiao2017fashion}
 and CIFAR-10 (photos, $3\times32\times32$)~\cite{krizhevsky2009cifar}, ten classes each, downloaded by torchvision on the GPU machine.
@@ -515,6 +532,9 @@ The \ui{Code} tab shows the complete \file{train.py}; \ui{Copy} and \ui{Export t
         error) and finally \file{model.pt} (the weights) and \file{results.json} (test accuracy, confusion matrix, sample predictions,
         feature maps, first-layer filters, and per-class IoU for segmentation).
 \end{enumerate}
+\screenshot{06_code}{The Code tab: the generated \file{train.py} (here the start of MSG-Former's: the settings as Python literals and the
+transformer modules).}{fig:code}
+
 Signals: \texttt{TERM}/\texttt{INT} end the run cleanly (the model and results are still saved); on EC2, \texttt{USR1} means ``AWS is
 taking the instance back'' (checkpoint and exit to be resumed) and \texttt{USR2} means ``checkpoint now'' (Section~\ref{sec:spot}).
 
@@ -593,6 +613,9 @@ Data augmentation & horizontal / vertical flip, random crop after padding, rotat
 Copy my token to the machine & needed for Kaggle data on a server/EC2 and for gated Hugging Face data\\
 \bottomrule
 \end{longtable}
+
+\screenshot{07_train}{The Train tab: where to train, the main settings, augmentation, and the list of runs. Settings for SSH and EC2
+machines (time limit, checkpoint interval, automatic resumes, stopping the instance) appear when such a machine is chosen.}{fig:train}
 
 \subsection{Following a run}
 \ui{Train on \ldots} starts a background task whose log appears at the bottom right. The run card then shows the state (starting,
@@ -954,10 +977,29 @@ up-sampled decoder features, which already have the skip's size.
 
 %-------------------------------------------------------------------------------------------------------------------------------------
 \subsection{MSG-Former: an NN Builder original}
-\textbf{Idea.} A small hybrid that is not from a paper, combining three published ideas: multi-scale context from dilated convolutions
-(as in dilated networks~\cite{yu2015dilated} and Inception~\cite{szegedy2014going}), channel attention from squeeze-and-excitation~\cite{hu2017senet},
-and global reasoning with Transformer encoders~\cite{vaswani2017attention,dosovitskiy2020vit}. Convolutions first find local texture at
-several scales; attention relates distant parts of the image last.
+\label{sec:msg}
+
+MSG-Former (\emph{Multi-Scale Gated transFormer}) is the one demo that does not come from a paper: it was designed for NN Builder as a
+small, fast network for 32$\times$32 colour images that combines three published ideas in one design. It is an untested proposal, not a
+benchmark result: every number below (shapes, parameters, receptive fields, compute) is exact, but how well it classifies is for its
+first training runs to show.
+
+\subsubsection{The idea}
+Convolutional networks and transformers are good at different things. A convolution looks at a small neighbourhood and is very efficient
+at finding local texture and edges, but needs many layers before one output can relate two distant parts of the image. Self-attention
+relates every position to every other in one step, but on raw pixels it is expensive and, without the built-in assumptions of
+convolutions, needs much more data~\cite{dosovitskiy2020vit,touvron2020deit}. MSG-Former therefore works in two phases:
+\begin{enumerate}
+  \item \textbf{Local, multi-scale, gated} (32$\times$32 and 16$\times$16 pixels): convolution stages that look at three scales at once,
+        weigh their channels by how useful they are, and keep a residual path;
+  \item \textbf{Global} (an 8$\times$8 grid): the feature map becomes 64 tokens, and two Transformer encoder blocks let every region
+        attend to every other before the class token makes the prediction.
+\end{enumerate}
+The same convolution-first, attention-later order is used by hybrid models such as the ResNet--ViT hybrid of the ViT
+paper~\cite{dosovitskiy2020vit}, CoAtNet~\cite{dai2021coatnet} and MobileViT~\cite{mehta2021mobilevit}; MSG-Former's own contribution is the
+form of its convolution stage.
+
+\subsubsection{The multi-scale gated residual block}
 
 \begin{figure}[htbp]\centering
 \begin{tikzpicture}[x=22mm, y=10mm]
@@ -975,19 +1017,199 @@ several scales; attention relates distant parts of the image last.
   \draw[arr] (f.north) |- (se.west); \draw[arr] (se.south -| m.north) -- (m.north);
   \draw[arr] (m) -- (add);
   \draw[arr] (x.south) -- ++(0,-14mm) -| (add.south);
-  \node[font=\scriptsize, fill=white, inner sep=1pt] at (3, -1.4) {1$\times$1 convolution shortcut};
+  \node[font=\scriptsize, fill=white, inner sep=1pt] at (3, -1.4) {1$\times$1 convolution shortcut (+ SiLU after the Add)};
 \end{tikzpicture}
-\caption{A multi-scale gated residual block of MSG-Former (each 3$\times$3 branch with BatchNorm and SiLU; the gate weights every channel).}
+\caption{The multi-scale gated residual block. Each 3$\times$3 branch is Conv2D (no bias) $\rightarrow$ BatchNorm $\rightarrow$ SiLU; the
+fuse is a 1$\times$1 Conv2D $\rightarrow$ BatchNorm $\rightarrow$ ReLU; the gate is Global pool $\rightarrow$ Dense ($C/4$, ReLU)
+$\rightarrow$ Dense ($C$, sigmoid).}
+\label{fig:msgblock}
 \end{figure}
 
-\textbf{As built.} Stem: Conv2D 32 3$\times$3 + BN + ReLU. Two multi-scale gated residual blocks (32 then 64 filters per branch, fused to
-64 then 128 channels), each followed by 2$\times$2 max pooling (32 $\rightarrow$ 16 $\rightarrow$ 8). The 8$\times$8 map becomes 64
-tokens of 128; Class token + position; two encoder blocks (4 heads, MLP 256, dropout 0.1); LayerNorm, class token, Dropout 0.2, output.
-466\,522 parameters, counted by hand and pinned in the application's tests; the PyTorch comparison on GitHub builds it as well.
+For an input $x$ with $C_{\text{in}}$ channels, a branch width $b$ and an output width $C$, the block computes
+\begin{align}
+  u_r &= \operatorname{SiLU}\bigl(\operatorname{BN}(W_r \ast_r x)\bigr), \qquad r \in \{1, 2, 3\}\quad(\ast_r:\ \text{3$\times$3 convolution with dilation } r),\\
+  v &= \operatorname{ReLU}\bigl(\operatorname{BN}(W_f \ast [u_1; u_2; u_3])\bigr) \qquad (\text{1$\times$1 fuse of the $3b$ concatenated channels to } C),\\
+  g &= \sigma\bigl(W_2\, \operatorname{ReLU}(W_1\, \operatorname{GAP}(v) + c_1) + c_2\bigr) \in (0,1)^{C},\\
+  y &= \operatorname{SiLU}\bigl(g \odot v + W_s \ast x\bigr) \qquad (W_s:\ \text{1$\times$1 shortcut, } C_{\text{in}} \rightarrow C).
+\end{align}
+Each part has a reason:
+\begin{description}
+  \item[Three dilations, same cost.] A 3$\times$3 kernel with dilation $r$ covers $(2r+1)\times(2r+1)$ pixels with the same nine weights:
+        3$\times$3, 5$\times$5 and 7$\times$7 here~\cite{yu2015dilated}. The block sees fine detail and wider context at the same
+        resolution and the price of three ordinary 3$\times$3 convolutions, like an Inception module~\cite{szegedy2014going} without
+        the cost of large kernels, or the atrous spatial pyramid of DeepLab~\cite{chen2017deeplabv3} inside a classifier. Mixing the
+        rates 1, 2 and 3 (rather than only large ones) keeps every pixel covered and avoids the ``gridding'' gaps that stacked dilated
+        convolutions can leave~\cite{wang2017hdc}.
+  \item[1$\times$1 fuse.] Concatenation gives $3b$ channels; the 1$\times$1 convolution mixes the scales and sets the block's width.
+  \item[Squeeze-and-excitation gate.] Global average pooling summarises each channel over the whole image; two small Dense layers
+        (reduction 4) turn that summary into one weight in $(0,1)$ per channel, and Multiply scales the channels with it, so the block can
+        emphasise the scales and features that matter for this image~\cite{hu2017senet}. The original SE networks use reduction 16;
+        with 64 and 128 channels, 4 keeps the bottleneck from becoming too narrow (16 and 32 units).
+  \item[Residual shortcut.] As in ResNet~\cite{he2015resnet}, the block learns a correction to its input; because the channel count
+        changes (32 $\rightarrow$ 64, 64 $\rightarrow$ 128), the shortcut is a 1$\times$1 projection.
+  \item[SiLU.] A smooth activation~\cite{ramachandran2017swish} in the branches and after the sum; the fuse keeps ReLU.
+\end{description}
 
-\textbf{Training it.} CIFAR-10 with flips and crops, Adam 0.001, 30--60 epochs; it trains in minutes on a T4. Whether it beats the Small
-CNN or ViT-Tiny is an open question: it is a design to experiment with (remove the gate, change the dilations, add a block) rather than
-a tested result.
+\subsubsection{The whole network}
+
+\begin{figure}[htbp]\centering
+\begin{tikzpicture}[node distance=2.6mm, every node/.append style={font=\scriptsize\sffamily}]
+  \node[blk, fill=nnin!15, align=center] (in) {Input\\3$\times$32$\times$32};
+  \node[blk, fill=nnconv!15, right=of in, align=center] (stem) {Stem\\3$\times$3, 32};
+  \node[blk, fill=nnconv!25, right=of stem, align=center] (b1) {MSG block\\32$\rightarrow$64};
+  \node[blk, fill=nnpool!15, right=of b1, align=center] (p1) {Pool\\16$^2$};
+  \node[blk, fill=nnconv!25, right=of p1, align=center] (b2) {MSG block\\64$\rightarrow$128};
+  \node[blk, fill=nnpool!15, right=of b2, align=center] (p2) {Pool\\8$^2$};
+  \node[blk, fill=nntok!15, right=of p2, align=center] (tk) {64 tokens\\+ class, pos.};
+  \node[blk, fill=nnatt!15, right=of tk, align=center] (enc) {Encoder\\$\times$2};
+  \node[blk, fill=nnout!15, right=of enc, align=center] (out) {LN, class\\token, Output};
+  \foreach \a/\b in {in/stem,stem/b1,b1/p1,p1/b2,b2/p2,p2/tk,tk/enc,enc/out} \draw[arr] (\a) -- (\b);
+\end{tikzpicture}
+\caption{MSG-Former from left to right: local multi-scale stages at 32$\times$32 and 16$\times$16, then global attention on an 8$\times$8 grid.}
+\label{fig:msgall}
+\end{figure}
+
+\screenshot{04_design_msg_zoom}{MSG-Former on the canvas, zoomed in on the first block: the stem's activation feeds the three dilated
+3$\times$3 convolutions (dilation 1, 2, 3, each with BatchNorm and SiLU) and, at the bottom, the 1$\times$1 shortcut; the branches meet in
+Concat (96 channels). Every arrow shows its tensor shape.}{fig:msgcanvas}
+
+\screenshot{03_design_msg}{The whole design opened from the demo: 72 blocks, 466\,522 parameters, ``ready''. The layer table groups them
+as Input, Stage~1 $\cdot$ 32$\times$32, Stage~2 $\cdot$ 16$\times$16, Embedding, Encoder block 1 and 2, Final norm and Classifier, each
+with its output, parameters and receptive field.}{fig:msgtable}
+
+Table~\ref{tab:msglayers} lists every layer as the application computes it (with 10 classes). The receptive field (RF) is given in
+input pixels.
+
+{\small
+\begin{longtable}{@{}p{1.8cm}p{5.5cm}lrr@{}}
+\caption{MSG-Former layer by layer.}\label{tab:msglayers}\\
+\toprule
+\textbf{Stage} & \textbf{Layer} & \textbf{Output} & \textbf{Parameters} & \textbf{RF}\\
+\midrule\endfirsthead
+\toprule
+\textbf{Stage} & \textbf{Layer} & \textbf{Output} & \textbf{Parameters} & \textbf{RF}\\
+\midrule\endhead
+Input & image & 3$\times$32$\times$32 & 0 & 1\\
+Stem & Conv2D 32, 3$\times$3, no bias; BatchNorm; ReLU & 32$\times$32$\times$32 & 864 + 64 & 3\\
+Block 1 & branch $r=1$: Conv2D 32 3$\times$3; BatchNorm; SiLU & 32$\times$32$\times$32 & 9\,216 + 64 & 5\\
+ & branch $r=2$: Conv2D 32 3$\times$3 dilation 2; BatchNorm; SiLU & 32$\times$32$\times$32 & 9\,216 + 64 & 7\\
+ & branch $r=3$: Conv2D 32 3$\times$3 dilation 3; BatchNorm; SiLU & 32$\times$32$\times$32 & 9\,216 + 64 & 9\\
+ & Concat & 96$\times$32$\times$32 & 0 & 9\\
+ & fuse: Conv2D 64 1$\times$1; BatchNorm; ReLU & 64$\times$32$\times$32 & 6\,144 + 128 & 9\\
+ & gate: Global pool; Dense 16 ReLU; Dense 64 sigmoid & 64 & 1\,040 + 1\,088 & \\
+ & Multiply (gate $\times$ fused map) & 64$\times$32$\times$32 & 0 & \\
+ & shortcut: Conv2D 64 1$\times$1, no bias & 64$\times$32$\times$32 & 2\,048 & \\
+ & Add; SiLU & 64$\times$32$\times$32 & 0 & \\
+ & Pool max 2$\times$2 & 64$\times$16$\times$16 & 0 & 10\\
+Block 2 & branches $r=1,2,3$: Conv2D 64 3$\times$3; BatchNorm; SiLU & 3 $\times$ 64$\times$16$\times$16 & 3 $\times$ (36\,864 + 128) & 14, 18, 22\\
+ & Concat & 192$\times$16$\times$16 & 0 & 22\\
+ & fuse: Conv2D 128 1$\times$1; BatchNorm; ReLU & 128$\times$16$\times$16 & 24\,576 + 256 & 22\\
+ & gate: Global pool; Dense 32 ReLU; Dense 128 sigmoid & 128 & 4\,128 + 4\,224 & \\
+ & Multiply; shortcut Conv2D 128 1$\times$1; Add; SiLU & 128$\times$16$\times$16 & 8\,192 & \\
+ & Pool max 2$\times$2 & 128$\times$8$\times$8 & 0 & 24\\
+Embedding & To tokens (patches): every cell of the 8$\times$8 map & 64$\times$128 & 0 & \\
+ & Class token + position embeddings & 65$\times$128 & 8\,448 & \\
+Encoder 1 & LayerNorm; Self-attention (4 heads, dropout 0.1); Dropout; Add & 65$\times$128 & 256 + 66\,048 & global\\
+ & LayerNorm; Dense 256 GELU; Dropout; Dense 128; Dropout; Add & 65$\times$128 & 256 + 33\,024 + 32\,896 & \\
+Encoder 2 & the same & 65$\times$128 & 132\,480 & \\
+Head & LayerNorm; Token pool (class token); Dropout 0.2; Output & 10 & 256 + 1\,290 & \\
+\midrule
+ & \textbf{Total} & & \textbf{466\,522} & \\
+\bottomrule
+\end{longtable}}
+
+\paragraph{Where the parameters are.}
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}Xrr@{}}
+\toprule
+\textbf{Part} & \textbf{Parameters} & \textbf{Share}\\
+\midrule
+Stem & 928 & 0.2\%\\
+Block 1 (branches 27\,840, fuse 6\,272, gate 2\,128, shortcut 2\,048) & 38\,288 & 8.2\%\\
+Block 2 (branches 110\,976, fuse 24\,832, gate 8\,352, shortcut 8\,192) & 152\,352 & 32.7\%\\
+Class token and positions & 8\,448 & 1.8\%\\
+Two encoder blocks (attention 66\,048, MLP 65\,920, norms 512 each) & 264\,960 & 56.8\%\\
+Final LayerNorm and output & 1\,546 & 0.3\%\\
+\midrule
+Total & 466\,522 & 100\%\\
+\bottomrule
+\end{tabularx}
+\end{center}
+These counts were derived by hand, agree with the application's engine, are pinned in its automatic tests, and are confirmed against a
+real PyTorch build of the network on every change (the comparison on GitHub, Section~\ref{sec:math}).
+
+\paragraph{Where the computation is.}
+Counting multiply--accumulate operations (MACs) of the convolutions, the Dense layers and attention for one 32$\times$32 image (BatchNorm,
+activations and pooling are negligible):
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}Xr@{}}
+\toprule
+\textbf{Part} & \textbf{MACs per image}\\
+\midrule
+Stem ($9\cdot3\cdot32\cdot32^2$) & 0.88 M\\
+Block 1: branches $3\cdot(9\cdot32\cdot32\cdot32^2)$ 28.3 M, fuse 6.3 M, shortcut 2.1 M & 36.7 M\\
+Block 2: branches $3\cdot(9\cdot64\cdot64\cdot16^2)$ 28.3 M, fuse 6.3 M, shortcut 2.1 M & 36.7 M\\
+Encoders: per block projections $4Nd^2$ 4.3 M, attention $2N^2d$ 1.1 M, MLP $2Nd\cdot256$ 4.3 M ($N=65$, $d=128$) & 19.2 M\\
+\midrule
+Total & about 93.5 M\\
+\bottomrule
+\end{tabularx}
+\end{center}
+About 94 million multiply--accumulates (roughly 0.19 GFLOP) per image: the convolution stages do about 80\% of the work with about 41\% of
+the parameters, the encoders the reverse (21\% of the work, 57\% of the parameters). Because pooling halves the image before block 2 while
+the width doubles, both blocks cost almost exactly the same. Attention is cheap here because there are only 65 tokens: its $N^2$ term is
+1.1 M MACs per block. Training costs about three times the forward pass, so one epoch of CIFAR-10 (50\,000 images) is roughly
+$1.4\times10^{13}$ MACs, a few minutes on a T4.
+
+\paragraph{Receptive field.}
+Before the transformer each token sees a 24$\times$24 pixel region of the 32$\times$32 image (the RF column of
+Table~\ref{tab:msglayers}), and neighbouring tokens are 4 pixels apart, so their regions overlap heavily. The first encoder block then makes
+the receptive field global: every token, and the class token, can draw on every part of the image.
+
+\subsubsection{Training it}
+\begin{enumerate}
+  \item Open MSG-Former from the Projects page and save it (\kbd{Cmd+S}). It opens with built-in CIFAR-10 at its own size.
+  \item Train tab: Adam, learning rate 0.001 (0.0005 if the loss is unstable), batch 128, 30--60 epochs; augmentation: horizontal flip
+        and random crop with 4 pixels of padding (transformer layers in particular profit from augmentation~\cite{steiner2021howtotrain}).
+  \item Train on Kaggle or any GPU: by a rough estimate it needs about 1 GB of GPU memory at batch 128 (mostly the activations of the two
+        convolution stages kept for the backward pass), so even small GPUs are enough.
+  \item Compare with the Small CNN (551\,018 parameters, convolution only) and ViT-Tiny (1\,806\,538 parameters, attention only), trained
+        with the same settings, in the Runs table.
+\end{enumerate}
+
+\subsubsection{Experiments to run (ablations)}
+Each is a small edit on the canvas, and together they show which part of the design earns its place:
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}lXr@{}}
+\toprule
+& \textbf{Change on the canvas} & \textbf{Parameters}\\
+\midrule
+A & Remove both gates (delete Global pool, the two Dense layers and Multiply; connect the fuse to Add) & 456\,042\\
+B & All dilations 1 (three identical-scale branches) & 466\,522\\
+C & No transformer: Global pool after the second pooling, then Output & 192\,858\\
+D & A third encoder block & 598\,970\\
+E & Token pool \emph{mean} instead of the class token & 466\,522\\
+F & Wider: branch filters 64 and 128 & larger\\
+\bottomrule
+\end{tabularx}
+\end{center}
+(Counts for A, C and D follow from the tables above: A removes $2\,128+8\,352$; C removes the embedding, encoders, final norm and the
+128-input head and adds a 128-input head; D adds one encoder block of 132\,480. The application shows the exact count after each edit.)
+If B matches the full model, the multi-scale branches are not helping on this data; if C matches it, the attention is not; and so on.
+
+\subsubsection{Adapting it}
+\begin{itemize}
+  \item \textbf{Larger images} (for example 64$\times$64 or 224$\times$224): add a stride-2 stem (or a third block with pooling) so that
+        the grid reaching the transformer stays around 8$\times$8 to 14$\times$14; otherwise the number of tokens, and the $N^2$ attention
+        cost, grows with the image.
+  \item \textbf{More classes:} only the output layer changes ($128\cdot K + K$ parameters).
+  \item \textbf{Segmentation:} the two convolution stages can serve as an encoder in a U-Net-style design, with ConvTranspose2D decoders
+        and skips from the blocks.
+\end{itemize}
+
+\subsubsection{Status}
+The design, its shapes and its parameter count are verified (by hand, by the application's engine and against PyTorch). Its accuracy is
+not: no training results exist yet. Treat it as a starting point for experiments, and record the results of the comparisons above.
 
 %=====================================================================================================================================
 \section{Troubleshooting}
@@ -1050,10 +1272,14 @@ a tested result.
 
 \bibitem{ba2016layernorm} J.~L. Ba, J.~R. Kiros and G.~E. Hinton. Layer normalization. 2016.
   \href{https://arxiv.org/abs/1607.06450}{arXiv:1607.06450}.
+\bibitem{chen2017deeplabv3} L.-C. Chen, G.~Papandreou, F.~Schroff and H.~Adam. Rethinking atrous convolution for semantic image
+  segmentation. 2017. \href{https://arxiv.org/abs/1706.05587}{arXiv:1706.05587}.
 \bibitem{chen2016checkpoint} T.~Chen, B.~Xu, C.~Zhang and C.~Guestrin. Training deep nets with sublinear memory cost. 2016.
   \href{https://arxiv.org/abs/1604.06174}{arXiv:1604.06174}.
 \bibitem{cubuk2018autoaugment} E.~D. Cubuk, B.~Zoph, D.~Man\'e, V.~Vasudevan and Q.~V. Le. AutoAugment: learning augmentation policies
   from data. 2018. \href{https://arxiv.org/abs/1805.09501}{arXiv:1805.09501}.
+\bibitem{dai2021coatnet} Z.~Dai, H.~Liu, Q.~V. Le and M.~Tan. CoAtNet: marrying convolution and attention for all data sizes. 2021.
+  \href{https://arxiv.org/abs/2106.04803}{arXiv:2106.04803}.
 \bibitem{dosovitskiy2020vit} A.~Dosovitskiy et al. An image is worth 16x16 words: Transformers for image recognition at scale. 2020.
   \href{https://arxiv.org/abs/2010.11929}{arXiv:2010.11929}.
 \bibitem{dumoulin2016guide} V.~Dumoulin and F.~Visin. A guide to convolution arithmetic for deep learning. 2016.
@@ -1095,6 +1321,8 @@ a tested result.
   \href{https://arxiv.org/abs/1711.05101}{arXiv:1711.05101}.
 \bibitem{luo2017erf} W.~Luo, Y.~Li, R.~Urtasun and R.~Zemel. Understanding the effective receptive field in deep convolutional neural
   networks. 2017. \href{https://arxiv.org/abs/1701.04128}{arXiv:1701.04128}.
+\bibitem{mehta2021mobilevit} S.~Mehta and M.~Rastegari. MobileViT: light-weight, general-purpose, and mobile-friendly Vision
+  Transformer. 2021. \href{https://arxiv.org/abs/2110.02178}{arXiv:2110.02178}.
 \bibitem{micikevicius2017mixed} P.~Micikevicius et al. Mixed precision training. 2017.
   \href{https://arxiv.org/abs/1710.03740}{arXiv:1710.03740}.
 \bibitem{oktay2018attention} O.~Oktay et al. Attention U-Net: learning where to look for the pancreas. 2018.
@@ -1122,6 +1350,8 @@ a tested result.
   \href{https://arxiv.org/abs/2012.12877}{arXiv:2012.12877}.
 \bibitem{vaswani2017attention} A.~Vaswani et al. Attention is all you need. 2017.
   \href{https://arxiv.org/abs/1706.03762}{arXiv:1706.03762}.
+\bibitem{wang2017hdc} P.~Wang et al. Understanding convolution for semantic segmentation. 2017.
+  \href{https://arxiv.org/abs/1702.08502}{arXiv:1702.08502}.
 \bibitem{xiao2017fashion} H.~Xiao, K.~Rasul and R.~Vollgraf. Fashion-MNIST: a novel image dataset for benchmarking machine learning
   algorithms. 2017. \href{https://arxiv.org/abs/1708.07747}{arXiv:1708.07747}.
 \bibitem{xiong2020prenorm} R.~Xiong et al. On layer normalization in the Transformer architecture. 2020.

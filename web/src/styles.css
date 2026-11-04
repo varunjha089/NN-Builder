@@ -124,11 +124,12 @@ button.section-head.fold { background: none; border: 0; padding: 0; width: 100%;
 .section-head.fold:hover h3 { text-decoration: underline; text-underline-offset: 3px; }
 .updatebar { display: flex; gap: 10px; align-items: center; padding: 7px 14px; background: var(--info); border-bottom: 1px solid var(--line); flex-shrink: 0; }
 table.layers .ghead td { border-top: 1px solid var(--line); }
-table.layers .gsub { font-size: 10.5px; font-weight: 400; color: var(--muted); margin-left: 14px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+table.layers .gsub { font-size: 10.5px; font-weight: 400; color: var(--muted); margin-left: 14px; max-width: 128px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 table.layers .gsub .kc { font-weight: 500; }
 table.layers .caret { display: inline-block; width: 14px; color: var(--muted); }
 table.layers .gitem td:first-child { padding-left: 20px; }
 table.layers .gitem td { font-size: 11px; }
+table.layers td:nth-child(n+2), table.layers th:nth-child(n+2) { white-space: nowrap; font-size: 11px; padding-left: 4px; padding-right: 4px; }
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: flex-start; justify-content: center; padding-top: 90px; z-index: 70; }
 .modal .card { width: 420px; max-width: 92vw; }
 .kc { color: var(--c); font-weight: 600; }
