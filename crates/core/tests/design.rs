@@ -219,6 +219,9 @@ fn every_template_is_valid_and_compiles() {
     assert_eq!(p("vgg16"), 134_301_514); // torchvision VGG-16 with 10 classes
     assert_eq!(p("resnet18"), 11_181_642); // torchvision ResNet-18 with 10 classes
     assert_eq!(p("vit_b16"), 85_806_346); // torchvision vit_b_16 (86,567,656 with 1000 classes) with a 10-class head
+    // MSG-Former, counted by hand: stem 928, gated blocks 38,288 + 152,352, class token + positions 8,448, 2 encoders 264,960,
+    // final LayerNorm 256, head 1,290
+    assert_eq!(p("msg_former"), 466_522);
 }
 
 #[test]

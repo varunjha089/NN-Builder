@@ -17,7 +17,9 @@ crates/core/src/
                            token_pool: shapes of rank 2 = (tokens, dimension)), defaults(kind), arity, starter()
   templates.rs             famous architectures (LeNet-5, small CIFAR CNN, AlexNet, VGG-16, GoogLeNet, ResNet-18, MobileNet v1, small DenseNet,
                            Transformer encoder on image rows, ViT-Base/16, ViT-Tiny, U-Net, Attention U-Net): TEMPLATES (key, title, year, task,
-                           input, about), build(key) with a left-to-right layout (a column per depth)
+                           input, about), build(key) with a left-to-right layout (a column per depth); plus one original design,
+                           MSG-Former (msg_former: multi-scale dilated convolutions + squeeze-and-excitation gate + residual, then
+                           Transformer encoders; 466,522 params, counted by hand in the test)
   dataset.rs               Dataset (builtin | huggingface | kaggle; task classify | segment; resize (built-in); hf_mask_col, kaggle_mask_dir;
                            image_size, channels, classes), BUILTINS, input_shape, problems()
   shapes.rs                analyze(graph, dataset) -> Analysis: computation order (Kahn), per-node in/out shapes, params, rf, padding/stride

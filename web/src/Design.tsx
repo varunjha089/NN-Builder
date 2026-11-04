@@ -361,13 +361,18 @@ const rank = (r: NodeResult) => r.out?.length ?? 0;
 const hw = (s: number[]) => `${s[s.length - 2]}×${s[s.length - 1]}`;
 const WORST = ["ok", "warn", "blocked", "unconnected", "error"];
 
-/** Input; image stages by resolution (a pooling layer, and a Dropout after it, stay with the stage they pool); for tokens an Embedding
+/** Input; image stages by resolution (a pooling layer, a Dropout after it, and vector layers inside a stage such as a squeeze-and-
+ *  excitation gate stay with their stage); for tokens an Embedding
  *  (with the patch convolution before it) and one group per encoder block (a block starts at a LayerNorm after the MLP's Add); the
  *  classifier (rank 1) */
 export function groupLayers(nodes: NodeResult[]): Group[] {
   const groups: (Group & { key: string })[] = [];
   let stage = 0, block = 0;
-  for (const r of nodes.filter((r) => r.out)) {
+  const rows = nodes.filter((r) => r.out);
+  // vectors before the last image/token layer belong to their stage (a squeeze-and-excitation gate), not to the head
+  let lastWide = -1;
+  rows.forEach((r, i) => { if (rank(r) >= 2) lastWide = i; });
+  for (const [i, r] of rows.entries()) {
     const out = r.out!, cur = groups[groups.length - 1], prev = cur?.rows[cur.rows.length - 1];
     let key: string;
     if (r.kind === "input") key = "input";
@@ -377,7 +382,7 @@ export function groupLayers(nodes: NodeResult[]): Group[] {
     } else if (rank(r) === 2) {
       const starts = r.kind === "layernorm" && (prev?.kind === "cls_pos" || (prev?.kind === "add" && cur.rows.some((x) => x.kind === "dense")));
       key = starts || !cur?.key.startsWith("tok") ? `tok ${groups.length}` : cur.key;
-    } else key = "head";
+    } else key = i < lastWide && cur ? cur.key : "head";
     if (cur && cur.key === key) { cur.rows.push(r); continue; }
     let name = "Input";
     if (key.startsWith("img")) {
@@ -391,7 +396,7 @@ export function groupLayers(nodes: NodeResult[]): Group[] {
     g.name = g.rows.some((r) => r.kind === "attention") ? `Encoder block ${++block}` : g.rows.some((r) => r.kind === "to_tokens") ? "Embedding" : "Final norm";
   }
   const e = groups.findIndex((g) => g.name === "Embedding");
-  if (e > 1 && groups[e - 1].key.startsWith("img")) { groups[e].rows.unshift(...groups[e - 1].rows); groups.splice(e - 1, 1); }
+  if (e > 1 && groups[e - 1].key.startsWith("img") && groups[e - 1].rows.length === 1) { groups[e].rows.unshift(...groups[e - 1].rows); groups.splice(e - 1, 1); }
   return groups;
 }
 

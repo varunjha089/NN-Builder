@@ -45,6 +45,8 @@ pub const TEMPLATES: &[Template] = &[
         about: "Ronneberger et al. An encoder (two 3×3 convolutions + max pooling, 32→256 filters) and a decoder (2×2 transposed convolution, Concat with the encoder's skip connection, two 3×3 convolutions), ending with a 1×1 convolution giving a class for every pixel. Padding 'same' keeps sizes equal (the paper crops instead)." },
     Template { key: "attention_unet", title: "Attention U-Net", year: 2018, task: "segment", input: [3, 128, 128],
         about: "Oktay et al. U-Net with attention gates on the skip connections: the decoder signal and the skip features are each projected by a 1×1 convolution, added, passed through ReLU, a 1×1 convolution and a sigmoid, and the resulting map multiplies the skip features before the Concat." },
+    Template { key: "msg_former", title: "MSG-Former (NN Builder original)", year: 2026, task: "classify", input: [3, 32, 32],
+        about: "An out-of-the-box hybrid, not from a paper. Each convolution stage looks at three scales at once (3×3 convolutions with dilation 1, 2 and 3 side by side, joined with Concat), mixes them with a 1×1 convolution, then a squeeze-and-excitation gate (global pool → Dense → sigmoid) multiplies every channel by how useful it is, with a residual shortcut around the block. After two such stages the 8×8 feature map becomes 64 tokens for two Transformer encoder blocks, so the network sees local texture at several scales first and global relations last. About 0.47 million parameters; trains quickly on CIFAR-10." },
 ];
 
 struct B {
@@ -310,6 +312,41 @@ pub fn build(key: &str) -> Option<Graph> {
             let n = b.add("layernorm", json!({}), &[&h]);
             let p = b.add("token_pool", json!({"mode": "cls"}), &[&n]);
             b.add("output", json!({}), &[&p]);
+        }
+        "msg_former" => {
+            // multi-scale gated residual block: three dilations side by side, 1×1 fuse, squeeze-and-excitation gate, shortcut
+            let block = |b: &mut B, x: &str, branch: usize, out: usize| {
+                let scales: Vec<String> = [1, 2, 3].iter().map(|&dil| {
+                    let c = b.add("conv2d", json!({"filters": branch, "kernel": [3, 3], "stride": [1, 1], "padding": "same", "dilation": dil,
+                        "activation": "none", "bias": false}), &[x]);
+                    let n = b.add("batchnorm", json!({}), &[&c]);
+                    b.add("activation", json!({"fn": "silu"}), &[&n])
+                }).collect();
+                let refs: Vec<&str> = scales.iter().map(String::as_str).collect();
+                let cat = b.add("concat", json!({}), &refs);
+                let fused = b.cbr(&cat, out, 1, 1);
+                let squeeze = b.add("global_pool", json!({"mode": "avg"}), &[&fused]);
+                let s1 = b.add("dense", json!({"units": out / 4, "activation": "relu"}), &[&squeeze]);
+                let gate = b.add("dense", json!({"units": out, "activation": "sigmoid"}), &[&s1]);
+                let gated = b.add("multiply", json!({}), &[&fused, &gate]);
+                let short = b.add("conv2d", json!({"filters": out, "kernel": [1, 1], "padding": "valid", "activation": "none", "bias": false}), &[x]);
+                let sum = b.add("add", json!({}), &[&gated, &short]);
+                b.add("activation", json!({"fn": "silu"}), &[&sum])
+            };
+            let stem = b.cbr(&x, 32, 3, 1);
+            let s1 = block(&mut b, &stem, 32, 64);
+            let p1 = b.maxpool(&s1, 2, 2, 0);
+            let s2 = block(&mut b, &p1, 64, 128);
+            let p2 = b.maxpool(&s2, 2, 2, 0);
+            let t = b.add("to_tokens", json!({"mode": "patches"}), &[&p2]);
+            let mut h = b.add("cls_pos", json!({"cls": true}), &[&t]);
+            for _ in 0..2 {
+                h = b.encoder(&h, 128, 4, 256, 0.1);
+            }
+            let n = b.add("layernorm", json!({}), &[&h]);
+            let p = b.add("token_pool", json!({"mode": "cls"}), &[&n]);
+            let d = b.add("dropout", json!({"rate": 0.2}), &[&p]);
+            b.add("output", json!({}), &[&d]);
         }
         "unet" | "attention_unet" => {
             let attention = key == "attention_unet";
