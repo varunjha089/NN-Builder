@@ -1,7 +1,7 @@
 //! Files: the settings folder (NN_BUILDER_HOME, else ~/Library/Application Support/NN Builder), settings.json, and project folders.
 //! A project = project.json, model.json (the graph), dataset.json, train.json and runs/. Projects live wherever the owner chooses.
-//! A demo opens as the one draft (settings folder/draft): nothing is written to the projects folder until it is saved (save_as),
-//! and the next demo replaces it.
+//! A demo opens as the one draft (settings folder/draft): nothing is written to the projects folder until it is saved (save_as).
+//! An unsaved draft is discarded when another project or demo is opened or created, and when the app quits or starts.
 
 use crate::codegen::TrainSettings;
 use crate::dataset::Dataset;
@@ -96,13 +96,6 @@ impl Project {
     pub fn is_draft(&self) -> bool {
         self.dir == draft_dir()
     }
-    /// a draft changed since it was opened (design, dataset or training settings differ from draft-origin.json)
-    pub fn draft_edited(&self) -> bool {
-        self.is_draft() && read_json::<Value>(&self.dir.join("draft-origin.json")).is_none_or(|o| o != self.contents())
-    }
-    fn contents(&self) -> Value {
-        json!({"graph": self.graph(), "dataset": self.dataset(), "train": self.train()})
-    }
 }
 
 /// the one unsaved project: a demo opened from the Projects page or File → New from Demo
@@ -154,23 +147,31 @@ fn init(dir: &Path, name: &str, draft: bool) -> Result<Project> {
 pub fn create(name: &str, location: Option<&Path>) -> Result<Project> {
     let name = name.trim();
     let dir = new_dir(name, location)?;
+    discard_draft()?;
     let pr = init(&dir, name, false)?;
     remember(&dir)?;
     Ok(pr)
 }
 
-/// start the draft afresh (the previous draft is replaced; the caller asks first when it was edited). `fill` sets it up (a template);
-/// what it holds afterwards counts as unedited.
+/// start the draft afresh (an unsaved draft is replaced); `fill` sets it up (a template)
 pub fn create_draft(name: &str, fill: impl FnOnce(&Project) -> Result<()>) -> Result<Project> {
+    discard_draft()?;
+    let pr = init(&draft_dir(), name.trim(), true)?;
+    fill(&pr)?;
+    save_setting("last_project", json!(draft_dir().to_string_lossy()))?;
+    Ok(pr)
+}
+
+/// throw the unsaved draft away (it is app scratch, not a project); last_project no longer points at it
+pub fn discard_draft() -> Result<()> {
     let dir = draft_dir();
     if dir.exists() {
-        std::fs::remove_dir_all(&dir).context("could not clear the previous unsaved demo")?;
+        std::fs::remove_dir_all(&dir).context("could not remove the unsaved demo")?;
     }
-    let pr = init(&dir, name.trim(), true)?;
-    fill(&pr)?;
-    write_json(&dir.join("draft-origin.json"), &pr.contents())?;
-    save_setting("last_project", json!(dir.to_string_lossy()))?;
-    Ok(pr)
+    if settings()["last_project"].as_str() == Some(&*dir.to_string_lossy()) {
+        save_setting("last_project", Value::Null)?;
+    }
+    Ok(())
 }
 
 /// the draft becomes a real project in the projects folder (moved, or copied when that is on another disk)
@@ -187,7 +188,6 @@ pub fn save_as(draft: &Project, name: &str, location: Option<&Path>) -> Result<P
         copy_dir(&draft.dir, &dir)?;
         std::fs::remove_dir_all(&draft.dir)?;
     }
-    let _ = std::fs::remove_file(dir.join("draft-origin.json"));
     let mut meta: Value = read_json(&dir.join("project.json")).unwrap_or_else(|| json!({"app": "NN Builder"}));
     meta["name"] = json!(name);
     if let Some(m) = meta.as_object_mut() {
@@ -226,6 +226,7 @@ pub fn open(path: &Path) -> Result<Project> {
         save_setting("last_project", json!(draft_dir().to_string_lossy()))?;
         return Ok(Project { dir: draft_dir() });
     }
+    discard_draft()?;
     remember(&dir)?;
     Ok(Project { dir })
 }

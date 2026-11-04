@@ -151,7 +151,7 @@ export default function App() {
       <header>
         <strong className="brand">NN Builder</strong>
         <button className={`tab proj ${tab === "project" ? "on" : ""}`} onClick={() => setTab("project")}>{st.project ? st.project.name : "No project"} ▾</button>
-        {st.project?.draft && <><span className="pill stopped" title="A demo: nothing is in your projects folder until you save it">not saved</span>
+        {st.project?.draft && <><span className="pill stopped" title="Discarded when you open another demo or project, or quit, unless you save it">not saved</span>
           <button className="small primary" onClick={() => setSaving(true)}>Save…</button></>}
         <nav>{st.project && tabs.map(([t, label]) => <button key={t} className={`tab ${tab === t ? "on" : ""}`} onClick={() => setTab(t)}>{label}</button>)}</nav>
         <span className="grow" />
@@ -238,16 +238,13 @@ function ProjectTab({ st, toast, opened, reload }: { st: AppState; toast: (m: st
       <table className="grid"><tbody>
         {st.projects.map((p) => <tr key={p.path}><td>{p.name}</td><td className="muted small">{p.path}</td>
           <td>{p.exists ? <button onClick={() => api.projectOpen(p.path).then(opened).catch((e) => toast(errText(e)))}>Open</button> : "missing"}</td></tr>)}
-        {st.draft && <tr><td>{st.draft.name} <span className="pill stopped">not saved{st.draft.edited ? ", changed" : ""}</span></td>
-          <td className="muted small">opened demo: kept only until the next demo, or until you save it (⌘S)</td>
-          <td><button onClick={() => api.projectOpen(st.draft!.path).then(opened).catch((e) => toast(errText(e)))}>Open</button></td></tr>}
-        {!st.projects.length && !st.draft && <tr><td className="muted">No projects yet.</td></tr>}
+        {!st.projects.length && <tr><td className="muted">No projects yet.</td></tr>}
       </tbody></table>
       <p className="row"><input className="grow" value={path} onChange={(e) => setPath(e.target.value)} placeholder="folder of a project (contains project.json)" />
         <button onClick={() => api.projectOpen(path).then(opened).catch((e) => toast(errText(e)))}>Open folder</button></p>
       <h3>Start from a demo architecture</h3>
       <p className="muted small">Opens the network on the canvas as an unsaved project: nothing is written to your projects folder until you save it
-        (Save… or ⌘S), and the next demo replaces it. Every demo is also in the Design tab under "Famous architectures".</p>
+        (Save… or ⌘S). Unsaved, it is discarded when you open another demo or project, or quit. Every demo is also in the Design tab under "Famous architectures".</p>
       <div className="demos">
         {demos.map((t) => (
           <div key={t.key} className="demo">

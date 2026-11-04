@@ -395,18 +395,23 @@ export function groupLayers(nodes: NodeResult[]): Group[] {
   return groups;
 }
 
-/** "Conv2D ×3, Pool" */
-function contents(rows: NodeResult[]): string {
-  const parts: [string, number][] = [];
+/** "Conv2D ×3, Pool": runs of the same block, each with its kind */
+function contents(rows: NodeResult[]): { title: string; kind: string; n: number }[] {
+  const parts: { title: string; kind: string; n: number }[] = [];
   for (const r of rows) {
     const last = parts[parts.length - 1];
-    if (last && last[0] === r.title) last[1]++; else parts.push([r.title, 1]);
+    if (last && last.title === r.title) last.n++; else parts.push({ title: r.title, kind: r.kind, n: 1 });
   }
-  return parts.map(([t, n]) => (n > 1 ? `${t} ×${n}` : t)).join(", ");
+  return parts;
 }
+const contentsText = (rows: NodeResult[]) => contents(rows).map((p) => (p.n > 1 ? `${p.title} ×${p.n}` : p.title)).join(", ");
 
 function LayerTable({ nodes }: { nodes: NodeResult[] }) {
   const groups = useMemo(() => groupLayers(nodes), [nodes]);
+  const color = useKindColor();
+  /** a block's name in its kind's colour (as on the canvas), with ✕ / ⚠ when it has a problem */
+  const kc = (kind: string, text: string, status = "ok") => <span className="kc" style={{ "--c": color(kind) } as CSSProperties}>{text}{status === "error" ? " ✕" : status === "warn" ? " ⚠" : ""}</span>;
+  const mark = (st: string) => (st === "error" || st === "warn" ? `st-${st}` : "");
   const [open, setOpen] = useState<Set<string>>(new Set());
   const all = open.size === groups.length;
   const flip = (name: string) => setOpen((o) => { const n = new Set(o); if (n.has(name)) n.delete(name); else n.add(name); return n; });
@@ -422,11 +427,13 @@ function LayerTable({ nodes }: { nodes: NodeResult[] }) {
           const worst = g.rows.reduce((w, r) => (WORST.indexOf(r.status) > WORST.indexOf(w) ? r.status : w), "ok");
           const isOpen = open.has(g.name) && !single;
           return [
-            <tr key={g.name} className={`ghead st-${worst} ${single ? "" : "click"}`} onClick={() => !single && flip(g.name)}>
-              <td><span className="caret">{single ? "" : isOpen ? "▾" : "▸"}</span><strong>{g.name}</strong>
-                <div className="muted gsub" title={contents(g.rows)}>{contents(g.rows)}</div></td>
+            <tr key={g.name} className={`ghead ${mark(worst)} ${single ? "" : "click"}`} onClick={() => !single && flip(g.name)}>
+              <td><span className="caret">{single ? "" : isOpen ? "▾" : "▸"}</span>
+                {single ? <strong>{kc(last.kind, g.name, worst)}</strong> : <strong>{g.name}{worst === "error" ? " ✕" : worst === "warn" ? " ⚠" : ""}</strong>}
+                {!single && <div className="gsub" title={contentsText(g.rows)}>{contents(g.rows).map((p, i) =>
+                  <span key={i}>{i ? ", " : ""}{kc(p.kind, p.n > 1 ? `${p.title} ×${p.n}` : p.title)}</span>)}</div>}</td>
               <td>{fmt(last.out)}</td><td className="num">{g.rows.reduce((t, r) => t + r.params, 0).toLocaleString()}</td><td>{rf(last)}</td></tr>,
-            ...(isOpen ? g.rows.map((r) => <tr key={r.id} className={`gitem st-${r.status}`}><td>{r.title}</td><td>{fmt(r.out)}</td>
+            ...(isOpen ? g.rows.map((r) => <tr key={r.id} className={`gitem ${mark(r.status)}`}><td>{kc(r.kind, r.title, r.status)}</td><td>{fmt(r.out)}</td>
               <td className="num">{r.params.toLocaleString()}</td><td>{rf(r)}</td></tr>) : []),
           ];
         })}

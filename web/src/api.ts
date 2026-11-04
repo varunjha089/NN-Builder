@@ -38,8 +38,6 @@ export interface Prepared {
 export interface AppState {
   version: string; home: string; projects: { path: string; name: string; exists: boolean }[]; projects_dir: string;
   project: { name: string; path: string; draft: boolean } | null; tools_ready: boolean;
-  /** the unsaved demo, when there is one */
-  draft: { name: string; path: string; edited: boolean } | null;
   secrets: { kaggle: string | null; huggingface: boolean; aws: string | null };
   machines: { machine: Machine; prepared: Prepared | null }[];
   builtins: { key: string; label: string; shape: number[]; classes: string[] }[];

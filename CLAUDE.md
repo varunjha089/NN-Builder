@@ -25,8 +25,9 @@ crates/core/src/
   codegen.rs               TrainSettings (incl. augmentation aug_*); model_code (Net with forward following the graph, LAYERS, EXPECTED); train_script = header (DATASET,
                            TRAIN, CLASSES as Python literals) + model + python/harness.py (include_str!)
   store.rs                 home() (NN_BUILDER_HOME), settings.json (projects, last_project, projects_dir, machines, prepared), Project (files);
-                           the draft: a demo opens as the one unsaved project in <settings>/draft (create_draft replaces it; draft_edited
-                           compares with draft-origin.json; not in the projects list); save_as moves it into the projects folder
+                           the draft: a demo opens as the one unsaved project in <settings>/draft (not in the projects list); save_as moves
+                           it into the projects folder; discard_draft throws an unsaved one away: on the next demo (create_draft), on
+                           create/open of a project, and when the app quits (RunEvent::Exit) or starts
   remote.rs                Machine (ssh | aws) + clean() validation, ssh/rsync commands (ControlMaster ~/.ssh/nnb-%C, BatchMode), connect_command
                            (one-time login), prepare_script (+ parse_prepare: GPUs, SLURM, systemd+linger, tmux, timeout, PyTorch), choose_launch,
                            put_secret_script (file via stdin, chmod 600)
@@ -58,10 +59,11 @@ web/src/                   Design.tsx: the canvas reads left to right (handles l
                            fits the dataset) and the skip-connection tool (inserts Add/Concat after the selected block, with a 1×1 strided
                            convolution / pooling / Dense projection when shapes differ); the layer table (nothing selected) is grouped
                            by groupLayers(): Input, image stages by resolution (pool + a following Dropout stay in their stage), Embedding
-                           and Encoder block k for transformers, Classifier; collapsible, with parameter subtotals;
+                           and Encoder block k for transformers, Classifier; collapsible, with parameter subtotals; every block name in
+                           its kind's colour (COLORS, neon at night), status colour only for warnings/errors;
                            App.tsx (demo cards on the Projects page and File → New from Demo open "<Architecture> demo" as the draft: nothing
-                           in the projects folder until Save… / File → Save Project… ⌘S (project_save_as); an edited draft is replaced only
-                           after a Discard/Cancel dialog; runs refuse a draft);
+                           in the projects folder until Save… / File → Save Project… ⌘S (project_save_as); unsaved, it is discarded
+                           without asking (the owner's choice); runs refuse a draft);
                            App.tsx (top bar: Project ▾, Design, Dataset, Code, Train, Results, and Connection set apart on the right; job panel;
                            Code and Project tabs), Design.tsx (canvas, palette, inspector), Preview.tsx (sliding window, charts, images),
                            DatasetTab, TrainTab, ResultsTab, ConnectionTab, api.ts (typed invoke wrappers)
