@@ -44,7 +44,13 @@ python/harness.py          the training part of every train.py (data: torchvisio
 python/helpers/aws_ec2.py  boto3 start/stop/describe (run with the tools venv; credentials in the environment for that call only)
 python/verify_shapes.py    PyTorch comparison (CI)
 app/src-tauri/src/main.rs  Tauri commands (thin: they call nnb-core), keychain (service "NN Builder": kaggle, huggingface, aws), Hugging Face
-                           datasets-server/whoami calls (ureq), native menu with a "Connection" menu (emits "open-tab")
+                           datasets-server/whoami calls (ureq), the menu bar (build_menu / on_menu): App (About, Check for Updates…), File (New
+                           Project ⌘N, Open Project… ⌘O with a folder dialog, New from Demo ▸, Import/Export Design… (model.json, dialogs from
+                           tauri-plugin-dialog), Export train.py ⌘E, Show Project in Finder ⇧⌘R), Edit (Undo ⌘Z / Redo ⇧⌘Z of the design,
+                           Cut/Copy/Paste/Select All, Arrange ⌘L), View, Connection, Window. Dialog actions run in Rust and emit
+                           "project-changed" / "toast"; the rest is emitted as "menu" (id) to the window. Undo/Redo: App.tsx keeps snapshots
+                           (Design calls remember(prev) before each change; changes within 0.6 s are one step; in a text field the menu
+                           items undo the typing instead)
 web/src/                   Design.tsx: the canvas reads left to right (handles left/right; arrange() = a column per depth; designs saved in the
                            old top-to-bottom view are arranged once when opened); it also has the "Famous architectures" picker (template_apply keeps the old design as model.previous.json and
                            fits the dataset) and the skip-connection tool (inserts Add/Concat after the selected block, with a 1×1 strided

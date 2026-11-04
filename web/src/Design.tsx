@@ -97,9 +97,11 @@ export function isVertical(g: Graph): boolean {
   return g.edges.length > 0 && v > g.edges.length / 2;
 }
 
-export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, reloadProject }: {
+export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, reloadProject, remember }: {
   st: AppState; graph: Graph; setGraph: (g: Graph) => void; analysis: Analysis | null; setAnalysis: (a: Analysis) => void; toast: (m: string) => void;
   reloadProject: () => void;
+  /** called with the design as it was, before every change (for Undo) */
+  remember: (prev: Graph) => void;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
   // designs saved in the earlier top-to-bottom view are turned left to right once
@@ -116,10 +118,11 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, relo
   const defaults = useMemo(() => Object.fromEntries(st.kinds.map((k) => [k.kind, k.defaults])), [st.kinds]);
 
   const save = useCallback((g: Graph) => {
+    remember(graph);
     setGraph(g);
     window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => api.saveGraph(g).then(setAnalysis).catch((e) => toast(errText(e))), 200);
-  }, [setGraph, setAnalysis, toast]);
+  }, [setGraph, setAnalysis, toast, remember, graph]);
 
   const results = useMemo(() => Object.fromEntries((analysis?.nodes ?? []).map((r) => [r.id, r])), [analysis]);
   // React Flow keeps its own node state (it needs each node's measured size); the design (graph) is synced into it

@@ -16,7 +16,8 @@ use nnb_core::store::{self, Project};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::menu::{Menu, MenuItem, Submenu};
+use tauri::menu::{Menu, MenuBuilder, MenuItem, Submenu, SubmenuBuilder};
+use tauri_plugin_dialog::DialogExt;
 use tauri::{Emitter, Manager, State};
 
 const SERVICE: &str = "NN Builder";
@@ -129,7 +130,11 @@ async fn template_apply(st: State<'_, App>, key: String) -> R<String> {
 /// a new project that starts with a famous architecture (named after it; " 2", " 3" ... when that name is taken)
 #[tauri::command]
 async fn project_from_template(st: State<'_, App>, key: String) -> R<String> {
-    let t = nnb_core::templates::get(&key).ok_or("Unknown architecture.")?;
+    new_from_template(&st, &key)
+}
+
+fn new_from_template(st: &App, key: &str) -> R<String> {
+    let t = nnb_core::templates::get(key).ok_or("Unknown architecture.")?;
     let base = store::default_projects_dir();
     let mut name = format!("{} demo", t.title.split(" (").next().unwrap_or(t.title));
     let mut n = 1;
@@ -138,7 +143,7 @@ async fn project_from_template(st: State<'_, App>, key: String) -> R<String> {
         name = format!("{} demo {n}", t.title.split(" (").next().unwrap_or(t.title));
     }
     let p = store::create(&name, None).map_err(e)?;
-    let msg = apply_template(&p, &key)?;
+    let msg = apply_template(&p, key)?;
     let _ = std::fs::remove_file(p.dir.join("model.previous.json"));
     *st.project.lock().unwrap() = Some(p);
     Ok(format!("Project \"{name}\" created. {}", msg.split_once(". ").map(|x| x.1).unwrap_or("")))
@@ -556,29 +561,154 @@ async fn open_url(url: String) -> R<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------- menus
+fn item(h: &tauri::AppHandle, id: &str, text: &str, accel: Option<&str>) -> tauri::Result<MenuItem<tauri::Wry>> {
+    MenuItem::with_id(h, id, text, true, accel)
+}
+
+/// App menu, File, Edit (undo/redo of the design), View, Connection, Window
+fn build_menu(h: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let app_menu = SubmenuBuilder::new(h, "NN Builder")
+        .about(None)
+        .separator()
+        .item(&item(h, "check-update", "Check for Updates…", None)?)
+        .separator()
+        .services()
+        .separator()
+        .hide()
+        .hide_others()
+        .show_all()
+        .separator()
+        .quit()
+        .build()?;
+    let demos = Submenu::with_id(h, "demos", "New from Demo", true)?;
+    for t in nnb_core::templates::TEMPLATES {
+        demos.append(&item(h, &format!("demo:{}", t.key), &format!("{} ({})", t.title, t.year), None)?)?;
+    }
+    let file = SubmenuBuilder::new(h, "File")
+        .item(&item(h, "new-project", "New Project…", Some("CmdOrCtrl+N"))?)
+        .item(&item(h, "open-project", "Open Project…", Some("CmdOrCtrl+O"))?)
+        .item(&demos)
+        .separator()
+        .item(&item(h, "import-design", "Import Design…", None)?)
+        .item(&item(h, "export-design", "Export Design…", None)?)
+        .item(&item(h, "export-code", "Export train.py…", Some("CmdOrCtrl+E"))?)
+        .separator()
+        .item(&item(h, "reveal-project", "Show Project in Finder", Some("CmdOrCtrl+Shift+R"))?)
+        .separator()
+        .close_window()
+        .build()?;
+    let edit = SubmenuBuilder::new(h, "Edit")
+        .item(&item(h, "undo", "Undo", Some("CmdOrCtrl+Z"))?)
+        .item(&item(h, "redo", "Redo", Some("CmdOrCtrl+Shift+Z"))?)
+        .separator()
+        .cut()
+        .copy()
+        .paste()
+        .select_all()
+        .separator()
+        .item(&item(h, "arrange", "Arrange Left to Right", Some("CmdOrCtrl+L"))?)
+        .build()?;
+    let view = SubmenuBuilder::new(h, "View").fullscreen().build()?;
+    let conn = SubmenuBuilder::new(h, "Connection")
+        .item(&item(h, "connection", "Open Connection", Some("CmdOrCtrl+Shift+K"))?)
+        .item(&item(h, "tools", "Install Tools (kaggle, boto3)…", None)?)
+        .item(&item(h, "check-update-2", "Check for Updates…", None)?)
+        .build()?;
+    let window = SubmenuBuilder::new(h, "Window").minimize().maximize().separator().close_window().build()?;
+    MenuBuilder::new(h).items(&[&app_menu, &file, &edit, &view, &conn, &window]).build()
+}
+
+fn toast(h: &tauri::AppHandle, msg: impl Into<String>) {
+    let _ = h.emit("toast", msg.into());
+}
+
+/// file and project actions run here (they need dialogs); the rest is handed to the window as a "menu" event
+fn on_menu(h: &tauri::AppHandle, id: &str) {
+    let st = h.state::<App>();
+    match id {
+        "check-update" | "check-update-2" => {
+            let _ = h.emit("check-update", ());
+        }
+        "connection" | "tools" => {
+            let _ = h.emit("open-tab", "connection");
+        }
+        "open-project" => {
+            let h2 = h.clone();
+            h.dialog().file().set_title("Open an NN Builder project (the folder with project.json)").pick_folder(move |f| {
+                let Some(path) = f.and_then(|f| f.into_path().ok()) else { return };
+                match store::open(&path) {
+                    Ok(p) => {
+                        *h2.state::<App>().project.lock().unwrap() = Some(p);
+                        let _ = h2.emit("project-changed", ());
+                    }
+                    Err(err) => toast(&h2, err.to_string()),
+                }
+            });
+        }
+        "import-design" => {
+            let Some(p) = st.project.lock().unwrap().clone() else { return toast(h, "Open or create a project first.") };
+            let h2 = h.clone();
+            h.dialog().file().set_title("Import a design (model.json)").add_filter("Design", &["json"]).pick_file(move |f| {
+                let Some(path) = f.and_then(|f| f.into_path().ok()) else { return };
+                let res = std::fs::read_to_string(&path).map_err(e).and_then(|t| serde_json::from_str::<Graph>(&t).map_err(|x| format!("Not an NN Builder design: {x}")))
+                    .and_then(|g| {
+                        if !g.nodes.iter().any(|n| n.kind == "input") {
+                            return Err("Not an NN Builder design (it has no Input block).".to_string());
+                        }
+                        let _ = std::fs::copy(p.dir.join("model.json"), p.dir.join("model.previous.json"));
+                        p.save_graph(&g).map_err(e)
+                    });
+                match res {
+                    Ok(()) => {
+                        let _ = h2.emit("project-changed", ());
+                        toast(&h2, "Design imported (the previous one is kept as model.previous.json).");
+                    }
+                    Err(err) => toast(&h2, err),
+                }
+            });
+        }
+        "export-design" => {
+            let Some(p) = st.project.lock().unwrap().clone() else { return toast(h, "Open or create a project first.") };
+            let h2 = h.clone();
+            h.dialog().file().set_title("Export the design").set_file_name(format!("{}_design.json", p.name().replace(['/', '\\'], "_"))).add_filter("Design", &["json"])
+                .save_file(move |f| {
+                    let Some(path) = f.and_then(|f| f.into_path().ok()) else { return };
+                    match serde_json::to_string_pretty(&p.graph()).map_err(e).and_then(|t| std::fs::write(&path, t).map_err(e)) {
+                        Ok(()) => toast(&h2, format!("Design saved to {}", path.display())),
+                        Err(err) => toast(&h2, err),
+                    }
+                });
+        }
+        "reveal-project" => match st.project.lock().unwrap().clone() {
+            Some(p) => reveal(&p.dir.join("project.json")),
+            None => toast(h, "Open or create a project first."),
+        },
+        d if d.starts_with("demo:") => match new_from_template(&st, &d[5..]) {
+            Ok(msg) => {
+                let _ = h.emit("project-changed", ());
+                toast(h, msg);
+            }
+            Err(err) => toast(h, err),
+        },
+        other => {
+            let _ = h.emit("menu", other.to_string());
+        }
+    }
+    if let Some(w) = h.get_webview_window("main") {
+        let _ = w.set_focus();
+    }
+}
+
 fn main() {
     let app = App { project: Mutex::new(store::last_project()), jobs: Jobs::default(), update_after: Default::default() };
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(app)
         .setup(|app| {
-            // the standard menus (Edit gives copy/paste in text fields) plus a "Connection" menu
-            let menu = Menu::default(app.handle())?;
-            let open = MenuItem::with_id(app, "connection", "Open Connection", true, Some("CmdOrCtrl+Shift+K"))?;
-            let tools = MenuItem::with_id(app, "tools", "Install Tools (kaggle, boto3)…", true, None::<&str>)?;
-            let upd = MenuItem::with_id(app, "check-update", "Check for Updates…", true, None::<&str>)?;
-            let conn = Submenu::with_items(app, "Connection", true, &[&open, &tools, &upd])?;
-            menu.insert(&conn, 3)?;
+            let menu = build_menu(app.handle())?;
             app.set_menu(menu)?;
-            app.on_menu_event(|app, ev| {
-                if ev.id() == "check-update" {
-                    let _ = app.emit("check-update", ());
-                } else if ev.id() == "connection" || ev.id() == "tools" {
-                    let _ = app.emit("open-tab", "connection");
-                    if let Some(w) = app.get_webview_window("main") {
-                        let _ = w.set_focus();
-                    }
-                }
-            });
+            app.on_menu_event(|app, ev| on_menu(app, ev.id().as_ref()));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

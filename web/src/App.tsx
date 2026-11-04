@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, errText, type Analysis, type AppState, type Dataset, type Graph, type JobSnap, type Template, type TrainSettings, type UpdateCheck } from "./api";
-import { Design } from "./Design";
+import { Design, arrange } from "./Design";
 import { DatasetTab } from "./DatasetTab";
 import { TrainTab } from "./TrainTab";
 import { ResultsTab } from "./ResultsTab";
@@ -24,6 +24,23 @@ export default function App() {
   const [jobLog, setJobLog] = useState<string[]>([]);
   const [update, setUpdate] = useState<UpdateCheck["release"] | null>(null);
   const timers = useRef<Record<string, number>>({});
+  // Undo / Redo of the design: snapshots before each change; changes in quick succession (typing a number) count as one step
+  const past = useRef<Graph[]>([]), future = useRef<Graph[]>([]), lastPush = useRef(0);
+  const graphRef = useRef<Graph | null>(null);
+  graphRef.current = graph;
+  const remember = useCallback((prev: Graph) => {
+    const now = Date.now();
+    if (now - lastPush.current > 600 || past.current.length === 0) {
+      past.current.push(prev);
+      if (past.current.length > 100) past.current.shift();
+    }
+    lastPush.current = now;
+    future.current = [];
+  }, []);
+  const applyGraph = useCallback((g: Graph) => {
+    setGraph(g);
+    api.saveGraph(g).then(setAnalysis).catch(() => {});
+  }, []);
 
   const toast = useCallback((m: string) => {
     setMsg(m);
@@ -37,12 +54,14 @@ export default function App() {
     return s;
   }, []);
 
-  const loadProject = useCallback(async () => {
+  const loadProject = useCallback(async (keepHistory = false) => {
+    if (keepHistory && graphRef.current) { lastPush.current = 0; remember(graphRef.current); }
+    else { past.current = []; future.current = []; }
     const p = await api.load();
     setGraph(p.graph); setAnalysis(p.analysis); setDsState(p.dataset); setDsProblems(p.dataset_problems); setTrainState(p.train);
     const runs = await api.runs();
     setRunId(runs[0]?.id ?? null);
-  }, []);
+  }, [remember]);
 
   useEffect(() => {
     reload().then((s) => (s.project ? loadProject() : setTab("project"))).catch((e) => toast(errText(e)));
@@ -55,7 +74,10 @@ export default function App() {
         else toast(`You're up to date: NN Builder ${u?.current ?? ""} is the newest version.`);
       }).catch((e) => toast(errText(e)));
     });
-    return () => { un.then((f) => f()); un2.then((f) => f()); };
+    const un3 = listen<string>("menu", (e) => menuRef.current(e.payload));
+    const un4 = listen<string>("toast", (e) => toast(e.payload));
+    const un5 = listen("project-changed", () => { reload().then(() => loadProject()).then(() => setTab("design")).catch((err) => toast(errText(err))); });
+    return () => { [un, un2, un3, un4, un5].forEach((u) => u.then((f) => f())); };
   }, [reload, loadProject, toast]);
 
   const setDs = (d: Dataset) => {
@@ -87,6 +109,30 @@ export default function App() {
     tick();
   }, [reload, toast]);
 
+  const typing = () => { const a = document.activeElement; return !!a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT"); };
+  /** menu items handled in the window (File / Edit) */
+  const menuRef = useRef<(id: string) => void>(() => {});
+  menuRef.current = (id: string) => {
+    const g = graphRef.current;
+    if (id === "undo" || id === "redo") {
+      if (typing()) { document.execCommand(id); return; }
+      const [from, to] = id === "undo" ? [past.current, future.current] : [future.current, past.current];
+      const target = from.pop();
+      if (!target || !g) { toast(id === "undo" ? "Nothing to undo." : "Nothing to redo."); return; }
+      to.push(g);
+      lastPush.current = 0;
+      applyGraph(target);
+      if (tab !== "design") setTab("design");
+    } else if (id === "arrange" && g) {
+      remember(g); applyGraph(arrange(g)); setTab("design");
+    } else if (id === "new-project") {
+      setTab("project");
+      window.setTimeout(() => document.getElementById("newProjectName")?.focus(), 50);
+    } else if (id === "export-code") {
+      api.exportCode().then((p) => toast(`Saved ${p}`)).catch((err) => toast(errText(err)));
+    }
+  };
+
   if (!st) return <div className="page muted">Loading…</div>;
   const ok = !!analysis?.ok && dsProblems.length === 0;
   const tabs: [Tab, string][] = [["design", "Design"], ["dataset", "Dataset"], ["code", "Code"], ["train", "Train"], ["results", "Results"]];
@@ -113,7 +159,7 @@ export default function App() {
       <main>
         {tab === "project" && <ProjectTab st={st} toast={toast} opened={async () => { await reload(); await loadProject(); setTab("design"); }} reload={reload} />}
         {tab === "design" && graph && <Design st={st} graph={graph} setGraph={setGraph} analysis={analysis} setAnalysis={setAnalysis} toast={toast}
-          reloadProject={() => { reload(); loadProject(); }} />}
+          reloadProject={() => { reload(); loadProject(true); }} remember={remember} />}
         {tab === "dataset" && ds && <DatasetTab st={st} ds={ds} setDs={setDs} problems={dsProblems} toast={toast} />}
         {tab === "code" && <CodeTab toast={toast} />}
         {tab === "train" && train && <TrainTab st={st} ok={ok} train={train} setTrain={setTrain} runId={runId} openRun={setRunId} toast={toast} startJob={startJob} datasetSource={ds?.source ?? "builtin"} datasetTask={ds?.task ?? "classify"} />}
@@ -155,7 +201,7 @@ function ProjectTab({ st, toast, opened, reload }: { st: AppState; toast: (m: st
     <div className="page">
       <h2>Projects</h2>
       <h3>New project</h3>
-      <p className="row"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="name" />
+      <p className="row"><input id="newProjectName" value={name} onChange={(e) => setName(e.target.value)} placeholder="name" />
         <button className="primary" onClick={() => api.projectNew(name).then(() => { setName(""); opened(); }).catch((e) => toast(errText(e)))}>Create</button></p>
       <p className="muted small">Made in {st.projects_dir} <button className="small" onClick={() => { const d = prompt("Folder for new projects:", st.projects_dir); if (d) api.setProjectsDir(d).then(reload); }}>change</button></p>
       <h3>Open</h3>

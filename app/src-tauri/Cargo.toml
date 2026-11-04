@@ -17,3 +17,4 @@ anyhow = "1"
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
 ureq = { version = "3", features = ["json"] }
 sha2 = "0.10"
+tauri-plugin-dialog = "2"

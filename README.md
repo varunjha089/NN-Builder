@@ -22,6 +22,8 @@ Version 0.2.0 · MIT licence · Rust (Tauri 2) + React; the generated training c
     small for the window, Dense without Flatten, Add of different shapes, Concat of different sizes, a loop, no Output; yellow: a stride that
     drops rows or skips pixels, a huge Dense layer). Click a block for the formula with its numbers, its receptive field and an animation of
     the window sliding over the padded input.
+- **Menus:** File (New Project, Open Project…, New from Demo, Import / Export Design, Export train.py, Show Project in Finder) and
+  Edit (Undo / Redo of every design change, Arrange Left to Right).
 - **Dataset tab:** classification or **segmentation** (images + masks; pixel accuracy and mean IoU). Built-in (MNIST, Fashion-MNIST, CIFAR-10), **Hugging Face** (reads the dataset's splits, columns and class names through
   the public datasets-server API, nothing is downloaded) or **Kaggle** (reads the file list through the Kaggle API and finds the folder with one
   subfolder per class; for segmentation an images folder and a masks folder). Images are resized and converted to grey or colour as you choose
