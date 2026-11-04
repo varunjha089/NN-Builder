@@ -489,7 +489,8 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
             }
             // on tokens, Dense acts on every token (the last dimension)
             r.params = (*x.last().unwrap() as u64 + 1) * units as u64;
-            if k == "dense" && r.params > BIG_DENSE {
+            // the warning is about Flatten -> huge Dense; a transformer MLP on tokens is large by design
+            if k == "dense" && !is2 && r.params > BIG_DENSE {
                 warn(r, &format!("This Dense layer has {} parameters: try Global pool instead of Flatten before it.", r.params));
             }
             if is2 { vec![x[0], units] } else { vec![units] }

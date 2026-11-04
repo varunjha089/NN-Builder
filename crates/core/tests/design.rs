@@ -225,6 +225,12 @@ fn every_template_is_valid_and_compiles() {
     // ViT-g/14, counted by hand: 40 blocks × 25,250,176 (attention 4d²+4d, MLP 2·d·6144 + 6144 + d, two LayerNorms) + patch convolution
     // 829,312 + class token and 257 positions 363,264 + final LayerNorm 2,816 + head 14,090
     assert_eq!(p("vit_g14"), 1_011_216_522);
+    // a transformer's MLP layers are large by design: no "large Dense after Flatten" warning on tokens (VGG's first Dense still warns)
+    let warns = |k: &str| analyze(&nnb_core::templates::build(k).unwrap(), &dataset_for(nnb_core::templates::get(k).unwrap())).nodes.iter()
+        .filter(|n| n.status == "warn" && n.messages.iter().any(|m| m.contains("instead of Flatten"))).count();
+    assert_eq!(warns("vit_g14"), 0);
+    assert_eq!(warns("vit_b16"), 0);
+    assert!(warns("vgg16") > 0);
 }
 
 #[test]
