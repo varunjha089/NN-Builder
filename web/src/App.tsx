@@ -154,6 +154,18 @@ function ProjectTab({ st, toast, opened, reload }: { st: AppState; toast: (m: st
   return (
     <div className="page">
       <h2>Projects</h2>
+      <h3>New project</h3>
+      <p className="row"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="name" />
+        <button className="primary" onClick={() => api.projectNew(name).then(() => { setName(""); opened(); }).catch((e) => toast(errText(e)))}>Create</button></p>
+      <p className="muted small">Made in {st.projects_dir} <button className="small" onClick={() => { const d = prompt("Folder for new projects:", st.projects_dir); if (d) api.setProjectsDir(d).then(reload); }}>change</button></p>
+      <h3>Open</h3>
+      <table className="grid"><tbody>
+        {st.projects.map((p) => <tr key={p.path}><td>{p.name}</td><td className="muted small">{p.path}</td>
+          <td>{p.exists ? <button onClick={() => api.projectOpen(p.path).then(opened).catch((e) => toast(errText(e)))}>Open</button> : "missing"}</td></tr>)}
+        {!st.projects.length && <tr><td className="muted">No projects yet.</td></tr>}
+      </tbody></table>
+      <p className="row"><input className="grow" value={path} onChange={(e) => setPath(e.target.value)} placeholder="folder of a project (contains project.json)" />
+        <button onClick={() => api.projectOpen(path).then(opened).catch((e) => toast(errText(e)))}>Open folder</button></p>
       <h3>Start from a demo architecture</h3>
       <p className="muted small">Creates a new project with the network already on the canvas; change it from there. Every demo is also in the Design tab under "Famous architectures".</p>
       <div className="demos">
@@ -167,18 +179,6 @@ function ProjectTab({ st, toast, opened, reload }: { st: AppState; toast: (m: st
           </div>
         ))}
       </div>
-      <h3>New project</h3>
-      <p className="row"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="name" />
-        <button className="primary" onClick={() => api.projectNew(name).then(() => { setName(""); opened(); }).catch((e) => toast(errText(e)))}>Create</button></p>
-      <p className="muted small">Made in {st.projects_dir} <button className="small" onClick={() => { const d = prompt("Folder for new projects:", st.projects_dir); if (d) api.setProjectsDir(d).then(reload); }}>change</button></p>
-      <h3>Open</h3>
-      <table className="grid"><tbody>
-        {st.projects.map((p) => <tr key={p.path}><td>{p.name}</td><td className="muted small">{p.path}</td>
-          <td>{p.exists ? <button onClick={() => api.projectOpen(p.path).then(opened).catch((e) => toast(errText(e)))}>Open</button> : "missing"}</td></tr>)}
-        {!st.projects.length && <tr><td className="muted">No projects yet.</td></tr>}
-      </tbody></table>
-      <p className="row"><input className="grow" value={path} onChange={(e) => setPath(e.target.value)} placeholder="folder of a project (contains project.json)" />
-        <button onClick={() => api.projectOpen(path).then(opened).catch((e) => toast(errText(e)))}>Open folder</button></p>
       <p className="muted small">NN Builder {st.version} · settings in {st.home}. This Mac only designs; training runs on Kaggle, a college GPU or AWS.</p>
       <AutoUpdate />
     </div>
