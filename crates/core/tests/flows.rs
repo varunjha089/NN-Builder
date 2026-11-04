@@ -125,6 +125,26 @@ fn remote_and_kaggle_runs() {
     assert!(std::fs::read_to_string(b.join("hosts.log")).unwrap().contains("student@gpu01.example.edu"));
     assert!(runs::listing(&pr)[0]["test_acc"].as_f64() == Some(0.9));
 
+    // ---- the same machine launching with tmux (when tmux is installed here): the run path must be quoted right
+    if std::process::Command::new("tmux").arg("-V").output().map(|o| o.status.success()).unwrap_or(false) {
+        let mut m2 = m.clone();
+        m2.launch = "tmux".into();
+        remote::save_machine(m2).unwrap();
+        std::thread::sleep(Duration::from_millis(1100));
+        let id = runs::start(&pr, "college", "", &Creds::default(), false, &log).unwrap_or_else(|e| panic!("{e}\n{:?}", lines.lock().unwrap()));
+        assert_eq!(runs::info(&pr.runs_dir().join(&id)).launch, "tmux");
+        let mut state = String::new();
+        for _ in 0..40 {
+            std::thread::sleep(Duration::from_millis(1100));
+            state = runs::status(&pr, &id, 0, &Creds::default()).unwrap().state;
+            if !["starting", "running"].contains(&state.as_str()) {
+                break;
+            }
+        }
+        assert_eq!(state, "done", "tmux run");
+        assert!(pr.runs_dir().join(&id).join("results.json").exists());
+    }
+
     // ---- Kaggle with a stand-in kaggle CLI in the tools folder
     let tools_bin = settings.join("tools/bin");
     std::fs::create_dir_all(&tools_bin).unwrap();

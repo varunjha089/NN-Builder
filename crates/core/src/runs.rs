@@ -293,7 +293,7 @@ fn start_remote(pr: &Project, d: &Path, info: &mut RunInfo, m: &mut Machine, t: 
     let launch = match method.as_str() {
         "slurm" => format!("cd {rpath} && J=$(sbatch --parsable --job-name=nnb-{id} --output=slurm.out --gres=gpu:1 --time={hours}:00:00 run.sh) && echo \"NNB_JOB $J\"", id = info.id),
         "systemd" => format!("systemd-run --user --unit=nnb-{id} --collect --working-directory={rpath} bash {rpath}/run.sh >/dev/null 2>&1 && echo NNB_JOB nnb-{id}", id = info.id),
-        "tmux" => format!("tmux new-session -d -s nnb-{id} \"bash {rpath}/run.sh\" && echo NNB_JOB nnb-{id}", id = info.id),
+        "tmux" => format!("cd {rpath} && tmux new-session -d -s nnb-{id} -c \"$PWD\" 'bash run.sh' && echo NNB_JOB nnb-{id}", id = info.id),
         _ => format!("cd {rpath} && S=''; command -v setsid >/dev/null 2>&1 && S=setsid; (nohup $S bash run.sh >/dev/null 2>&1 < /dev/null &); \
                       for i in 1 2 3 4 5 6 7 8 9 10; do [ -s pid.txt ] && break; sleep 0.5; done; echo \"NNB_JOB $(cat pid.txt)\""),
     };

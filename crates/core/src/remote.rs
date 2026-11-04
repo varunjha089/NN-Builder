@@ -247,11 +247,14 @@ pub fn sh_quote(s: &str) -> String {
 /// short socket path (Unix sockets are limited to ~104 characters)
 pub fn control_path() -> String {
     let d = PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".ssh");
-    let _ = std::fs::create_dir_all(&d);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o700));
+    if !d.exists() {
+        // only a folder the app makes gets its permissions set; an existing ~/.ssh is left as it is
+        let _ = std::fs::create_dir_all(&d);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o700));
+        }
     }
     d.join("nnb-%C").to_string_lossy().into()
 }

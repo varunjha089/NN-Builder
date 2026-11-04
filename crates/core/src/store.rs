@@ -46,7 +46,11 @@ pub fn settings() -> Value {
     read_json(&home().join("settings.json")).unwrap_or_else(|| json!({}))
 }
 
+/// settings.json is read, changed and written by several threads (window, background jobs): one at a time
+static SETTINGS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub fn save_setting(key: &str, value: Value) -> Result<()> {
+    let _guard = SETTINGS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut s = settings();
     s.as_object_mut().context("settings.json is not an object")?.insert(key.into(), value);
     write_json(&home().join("settings.json"), &s)

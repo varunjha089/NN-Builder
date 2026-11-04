@@ -160,7 +160,7 @@ def kaggle_root():
         os.makedirs(root, exist_ok=True)
         exe = os.path.join(os.path.dirname(sys.executable), "kaggle")
         emit("info", message=f"downloading {DATASET['kaggle_slug']} from Kaggle")
-        r = subprocess.run([exe if os.path.exists(exe) else "kaggle", "datasets", "download", "-d", DATASET["kaggle_slug"], "-p", root, "--unzip"],
+        r = subprocess.run([exe if os.path.exists(exe) else "kaggle", "datasets", "download", DATASET["kaggle_slug"], "-p", root, "--unzip"],
                            capture_output=True, text=True)
         if r.returncode != 0:
             raise SystemExit("DATA: Kaggle download failed (is the Kaggle token on this machine? Connection tab): " + (r.stderr or r.stdout)[-500:])

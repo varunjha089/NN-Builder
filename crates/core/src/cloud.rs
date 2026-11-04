@@ -90,7 +90,11 @@ pub fn kaggle_files(c: &KaggleCreds, slug: &str) -> Result<Vec<(String, String)>
     if !slug.chars().all(|ch| ch.is_ascii_alphanumeric() || "-_./".contains(ch)) || slug.matches('/').count() != 1 {
         bail!("Kaggle dataset: owner/name");
     }
-    let (code, out) = capture(kaggle(c)?.args(["datasets", "files", slug, "--csv", "--page-size", "1000"]), None);
+    let (mut code, mut out) = capture(kaggle(c)?.args(["datasets", "files", slug, "--csv", "--page-size", "1000"]), None);
+    if code != 0 {
+        // older / newer CLIs differ in the paging option
+        (code, out) = capture(kaggle(c)?.args(["datasets", "files", slug, "--csv"]), None);
+    }
     if code != 0 {
         bail!("Kaggle: {}", last_line(&out));
     }
@@ -148,7 +152,7 @@ pub fn kaggle_push(c: &KaggleCreds, dir: &Path, title: &str, dataset_slug: Optio
     std::fs::copy(dir.join("train.py"), push_dir.join("train.py")).context("train.py missing")?;
     store::write_json(&push_dir.join("kernel-metadata.json"), &meta)?;
     let (code, out) = capture(kaggle(c)?.args(["kernels", "push", "-p"]).arg(&push_dir), None);
-    if code != 0 || out.to_lowercase().contains("error") {
+    if code != 0 || !out.to_lowercase().contains("successfully pushed") {
         bail!("Kaggle push failed: {}", last_line(&out));
     }
     Ok(reference)
