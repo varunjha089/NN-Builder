@@ -18,7 +18,8 @@ import traceback
 
 ON_KAGGLE = bool(os.environ.get("KAGGLE_KERNEL_RUN_TYPE"))
 OUT = os.getcwd() if ON_KAGGLE else os.path.dirname(os.path.abspath(__file__))
-DATA = os.environ.get("NNB_DATA") or ("/kaggle/working/data" if ON_KAGGLE else os.path.join(os.path.expanduser("~"), ".nn_builder", "data"))
+# on Kaggle the data goes outside /kaggle/working, which is the notebook's output (downloaded by the app when the run ends)
+DATA = os.environ.get("NNB_DATA") or ("/tmp/nnb_data" if ON_KAGGLE else os.path.join(os.path.expanduser("~"), ".nn_builder", "data"))
 TASK = DATASET.get("task", "classify")
 SEG = TASK == "segment"
 AUG = TRAIN.get("aug", {})
@@ -560,6 +561,12 @@ def main():
     with open(os.path.join(OUT, "results.json"), "w", encoding="utf-8") as f:
         json.dump(res, f)
     emit("stopped" if stopped else "done", test_acc=round(val_acc, 5), **({"miou": round(miou, 5)} if SEG else {}))
+    if ON_KAGGLE:
+        # a Kaggle run is never resumed: the checkpoint would only make the output the app downloads bigger
+        try:
+            os.remove(ck_path)
+        except OSError:
+            pass
 
 
 if __name__ == "__main__":

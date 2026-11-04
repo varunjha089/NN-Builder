@@ -679,6 +679,8 @@ fn kaggle_fetch(c: &KaggleCreds, d: &Path, info: &mut RunInfo) -> Result<()> {
             .unwrap_or(raw);
         std::fs::write(d.join("log.txt"), text)?;
     }
+    // the files that matter are copied into the run folder; the download itself is not kept
+    let _ = std::fs::remove_dir_all(&out);
     info.fetched = true;
     save(d, info)
 }

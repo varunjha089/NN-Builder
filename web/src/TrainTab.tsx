@@ -102,6 +102,9 @@ export function TrainTab({ st, ok, train, setTrain, runId, openRun, toast, start
           <button onClick={() => api.runReveal(status.id)}>Show files</button>
         </div>
         {status.info.note && <p className="muted small">{status.info.note}</p>}
+        {status.info.kind === "kaggle" && running && <p className="muted small">Started {status.info.created} · Kaggle checked every 30 s
+          {status.info.last_poll ? `, last at ${new Date(status.info.last_poll * 1000).toLocaleTimeString()}` : ""}: when it reports the notebook
+          finished, the results are downloaded and shown here.</p>}
         {!status.info.reachable && running && <div className="msg warn">The machine does not answer right now; the run goes on there and the app will catch up.</div>}
         {check && <div className="msg ok">{check.message}</div>}
         {errEv && <div className="msg error">{errEv.message}</div>}

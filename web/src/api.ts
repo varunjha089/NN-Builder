@@ -49,7 +49,7 @@ export interface AppState {
 export interface ProjectData { name: string; path: string; graph: Graph; dataset: Dataset; train: TrainSettings; analysis: Analysis; dataset_problems: string[] }
 
 export interface RunInfo { id: string; target: string; kind: string; created: string; status: string; epochs: number; dataset: string; url: string; note: string;
-  error: string; reachable: boolean; launch: string; job: string; host: string; spot: boolean; resumed_from: string; superseded_by: string; cancel: boolean }
+  error: string; reachable: boolean; launch: string; job: string; host: string; spot: boolean; resumed_from: string; superseded_by: string; cancel: boolean; last_poll: number }
 export interface RunStatus { id: string; state: string; info: RunInfo; events: Record<string, any>[]; next: number; log: string[]; has_results: boolean;
   /** train.py's last "checkpoint" event, and the copy on this Mac (when the machine keeps one) */
   checkpoint: Record<string, any> | null; mirror: { stamp?: string; copied?: string; bytes?: number; checkpoint?: Record<string, any>; error?: string } | null }
