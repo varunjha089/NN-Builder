@@ -12,12 +12,14 @@ export const COLORS: Record<string, string> = {
   input: "#3b6fd8", conv2d: "#d9822b", dwconv2d: "#c96d1a", convtranspose2d: "#b5651d", pool2d: "#2a9d8f", global_pool: "#21867a", upsample: "#3c8d7f",
   batchnorm: "#8e5bb5", layernorm: "#7d4fa3", dropout: "#9c6ac6", flatten: "#9a8c1c", dense: "#4b5bb5", activation: "#6c7a89", add: "#c0392b",
   concat: "#a93226", multiply: "#b03a5b", output: "#2e8b57", seg_output: "#1f7a4d",
+  to_tokens: "#0f766e", cls_pos: "#0e7490", attention: "#7c3aed", token_pool: "#0369a1",
 };
 const GROUPS: [string, string[]][] = [
   ["Image", ["conv2d", "dwconv2d", "pool2d", "global_pool", "flatten"]],
   ["Up-sampling", ["convtranspose2d", "upsample"]],
   ["Dense and outputs", ["dense", "output", "seg_output"]],
   ["Normalise / regularise", ["batchnorm", "layernorm", "dropout", "activation"]],
+  ["Transformer", ["to_tokens", "cls_pos", "attention", "token_pool"]],
   ["Branches", ["add", "concat", "multiply"]],
 ];
 
@@ -37,6 +39,10 @@ function summary(kind: string, p: Params): string {
     case "dropout": return `rate ${p.rate}`;
     case "dense": return `${p.units} units · ${p.activation}`;
     case "activation": return `${p.fn}`;
+    case "to_tokens": return p.mode === "rows" ? "rows as tokens" : "pixels/patches as tokens";
+    case "cls_pos": return p.cls === false ? "position embedding" : "class token + position embedding";
+    case "attention": return `${p.heads} heads${Number(p.dropout) > 0 ? ` · dropout ${p.dropout}` : ""}`;
+    case "token_pool": return p.mode === "mean" ? "mean of tokens" : "class token";
     default: return "";
   }
 }
@@ -47,22 +53,64 @@ function LayerNode({ data, selected }: NodeProps<Node<LayerData>>) {
   const border = st === "error" ? "#c62828" : st === "warn" ? "#d08a00" : st === "blocked" || st === "unconnected" ? "#9aa3ae" : "#d5dae1";
   return (
     <div className={`layer ${selected ? "sel" : ""}`} style={{ borderColor: border, opacity: st === "unconnected" ? 0.6 : 1 }}>
-      {data.kind !== "input" && <Handle type="target" position={Position.Top} />}
+      {data.kind !== "input" && <Handle type="target" position={Position.Left} />}
       <div className="lh" style={{ background: COLORS[data.kind] }}>{data.title}{st === "error" ? " ✕" : st === "warn" ? " ⚠" : ""}</div>
       {data.summary && <div className="ls">{data.summary}</div>}
       <div className="lo">{r?.out ? `→ ${fmt(r.out)}` : st === "unconnected" ? "not connected" : st === "blocked" ? "fix the layer above" : r?.messages[0]?.slice(0, 70) ?? ""}
         {r && r.params > 0 ? <span className="lp"> · {r.params.toLocaleString()} params</span> : null}</div>
-      {data.kind !== "output" && <Handle type="source" position={Position.Bottom} />}
+      {!data.kind.endsWith("output") && <Handle type="source" position={Position.Right} />}
     </div>
   );
 }
 const nodeTypes = { layer: LayerNode };
+
+const STEP_X = 300, STEP_Y = 150;
+
+/** left-to-right layout: a column per depth (longest path from the Input), branches stacked in their column */
+export function arrange(g: Graph): Graph {
+  const depth: Record<string, number> = {};
+  const indeg: Record<string, number> = Object.fromEntries(g.nodes.map((n) => [n.id, 0]));
+  g.edges.forEach((e) => { if (e.target in indeg) indeg[e.target]++; });
+  const queue = g.nodes.filter((n) => indeg[n.id] === 0).map((n) => n.id);
+  queue.forEach((id) => (depth[id] = 0));
+  for (let i = 0; i < queue.length; i++) {
+    const id = queue[i];
+    for (const e of g.edges.filter((e) => e.source === id)) {
+      depth[e.target] = Math.max(depth[e.target] ?? 0, depth[id] + 1);
+      if (--indeg[e.target] === 0) queue.push(e.target);
+    }
+  }
+  const cols: Record<number, string[]> = {};
+  g.nodes.forEach((n) => { const d = depth[n.id] ?? 0; (cols[d] ??= []).push(n.id); });
+  const widest = Math.max(1, ...Object.values(cols).map((c) => c.length));
+  const pos: Record<string, [number, number]> = {};
+  Object.entries(cols).forEach(([d, ids]) => ids.forEach((id, i) => {
+    pos[id] = [60 + Number(d) * STEP_X, 60 + ((widest - ids.length) * STEP_Y) / 2 + i * STEP_Y];
+  }));
+  return { ...g, nodes: g.nodes.map((n) => ({ ...n, x: pos[n.id][0], y: pos[n.id][1] })) };
+}
+
+/** a design drawn top to bottom (from before the left-to-right view): most arrows point down */
+export function isVertical(g: Graph): boolean {
+  const at = Object.fromEntries(g.nodes.map((n) => [n.id, n]));
+  const v = g.edges.filter((e) => at[e.source] && at[e.target] && Math.abs(at[e.target].y - at[e.source].y) > Math.abs(at[e.target].x - at[e.source].x)).length;
+  return g.edges.length > 0 && v > g.edges.length / 2;
+}
 
 export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, reloadProject }: {
   st: AppState; graph: Graph; setGraph: (g: Graph) => void; analysis: Analysis | null; setAnalysis: (a: Analysis) => void; toast: (m: string) => void;
   reloadProject: () => void;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
+  // designs saved in the earlier top-to-bottom view are turned left to right once
+  useEffect(() => {
+    if (isVertical(graph)) {
+      const g = arrange(graph);
+      setGraph(g);
+      api.saveGraph(g).then(setAnalysis).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const saveTimer = useRef<number>(0);
   const titles = useMemo(() => Object.fromEntries(st.kinds.map((k) => [k.kind, k.title])), [st.kinds]);
   const defaults = useMemo(() => Object.fromEntries(st.kinds.map((k) => [k.kind, k.defaults])), [st.kinds]);
@@ -121,9 +169,11 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, relo
 
   /** add a block: below the selected one (and connected to it), or at the bottom of the design */
   const addBlock = (kind: string) => {
-    const base = graph.nodes.find((n) => n.id === selected) ?? [...graph.nodes].sort((a, b) => b.y - a.y)[0];
+    const base = graph.nodes.find((n) => n.id === selected) ?? [...graph.nodes].sort((a, b) => b.x - a.x)[0];
     const id = `n${Date.now().toString(36)}`;
-    const node = { id, kind, params: structuredClone(defaults[kind] ?? {}) as Params, x: base ? base.x + (selected ? 0 : 0) : 80, y: base ? base.y + 110 : 40 };
+    const right = [...graph.nodes].sort((a, b) => b.x - a.x)[0];
+    const anchor = selected ? base : right;
+    const node = { id, kind, params: structuredClone(defaults[kind] ?? {}) as Params, x: anchor ? anchor.x + STEP_X : 60, y: anchor ? anchor.y : 80 };
     const edges = [...graph.edges];
     if (base && base.kind !== "output") {
       // insert between the selected node and its (single) successor
@@ -131,7 +181,7 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, relo
       if (selected && outs.length === 1) {
         const next = outs[0];
         edges.splice(edges.indexOf(next), 1, { id: `e${id}a`, source: base.id, target: id }, { id: `e${id}b`, source: id, target: next.target });
-        const shifted = graph.nodes.map((n) => (n.y > base.y ? { ...n, y: n.y + 110 } : n));
+        const shifted = graph.nodes.map((n) => (n.x > base.x ? { ...n, x: n.x + STEP_X } : n));
         save({ nodes: [...shifted, node], edges });
         setSelected(id);
         return;
@@ -151,9 +201,9 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, relo
     const t = analysis.nodes.find((r) => r.id === sel.id)?.out, s = analysis.nodes.find((r) => r.id === src)?.out;
     if (!t || !s) return toast("Both blocks need a valid shape first.");
     const id = Date.now().toString(36);
-    const nodes = graph.nodes.map((n) => (n.y > sel.y ? { ...n, y: n.y + 120 } : n));
+    const nodes = graph.nodes.map((n) => (n.x > sel.x ? { ...n, x: n.x + STEP_X } : n));
     let edges = graph.edges.map((e) => (e.source === sel.id ? { ...e, source: `j${id}` } : e));
-    const join = { id: `j${id}`, kind: mode, params: {}, x: sel.x, y: sel.y + 120 };
+    const join = { id: `j${id}`, kind: mode, params: {}, x: sel.x + STEP_X, y: sel.y };
     let from = src;
     const extra: typeof graph.nodes = [];
     if (t.length !== s.length) return toast("A skip connection must join two images or two vectors (not an image and a vector).");
@@ -165,14 +215,14 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, relo
       if (needProj) {
         const pid = `p${id}`;
         extra.push(mode === "add"
-          ? { id: pid, kind: "conv2d", params: { filters: t[0], kernel: [1, 1], stride: [r1, r2], padding: "valid", dilation: 1, activation: "none", bias: false }, x: sel.x + 280, y: sel.y }
-          : { id: pid, kind: "pool2d", params: { mode: "max", size: [r1, r2], stride: "size", padding: 0 }, x: sel.x + 280, y: sel.y });
+          ? { id: pid, kind: "conv2d", params: { filters: t[0], kernel: [1, 1], stride: [r1, r2], padding: "valid", dilation: 1, activation: "none", bias: false }, x: sel.x, y: sel.y + 160 }
+          : { id: pid, kind: "pool2d", params: { mode: "max", size: [r1, r2], stride: "size", padding: 0 }, x: sel.x, y: sel.y + 160 });
         edges = [...edges, { id: `e${id}p`, source: src, target: pid }];
         from = pid;
       }
     } else if (mode === "add" && s[0] !== t[0]) {
       const pid = `p${id}`;
-      extra.push({ id: pid, kind: "dense", params: { units: t[0], activation: "none" }, x: sel.x + 280, y: sel.y });
+      extra.push({ id: pid, kind: "dense", params: { units: t[0], activation: "none" }, x: sel.x, y: sel.y + 160 });
       edges = [...edges, { id: `e${id}p`, source: src, target: pid }];
       from = pid;
     }
@@ -196,7 +246,8 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, relo
     <div className="design">
       <div className="palette">
         <TemplatePicker toast={toast} onLoaded={reloadProject} />
-        <p className="muted small">Click a block to add it below the selected one. Drag from a node's bottom dot to another node's top dot to connect (several arrows into Add / Concat). Select + Backspace deletes.</p>
+        <button className="arrange" onClick={() => save(arrange(graph))}>Arrange left to right</button>
+        <p className="muted small">Click a block to add it after the selected one. Drag from a block's right dot to another block's left dot to connect (several arrows into Add / Concat / Multiply). Select + Backspace deletes.</p>
         {GROUPS.map(([g, kinds]) => (
           <div key={g}><h4>{g}</h4>{kinds.map((k) => (
             <button key={k} className="pal" style={{ borderLeftColor: COLORS[k] }} onClick={() => addBlock(k)}>{titles[k]}</button>
@@ -321,8 +372,8 @@ function Inspector({ node, result, analysis, st, setParam, setParams, candidates
       <div className="fields">
         {node.kind === "conv2d" && <>
           <Num label="Filters (output channels)" value={p.filters} onChange={(v) => setParam("filters", v)} />
-          <Pair label="Kernel" value={p.kernel} onChange={(v) => setParam("kernel", v)} />
-          <Pair label="Stride" value={p.stride} max={8} def={1} onChange={(v) => setParam("stride", v)} />
+          <Pair label="Kernel" value={p.kernel} max={32} onChange={(v) => setParam("kernel", v)} />
+          <Pair label="Stride" value={p.stride} max={32} def={1} onChange={(v) => setParam("stride", v)} />
           <Sel label="Padding" value={padVal} options={pads} onChange={padSet} />
           <Sel label="Dilation" value={p.dilation ?? 1} options={[["1", "1"], ["2", "2"], ["3", "3"]]} onChange={(v) => setParam("dilation", Number(v))} />
           <Sel label="Activation" value={p.activation} options={acts} onChange={(v) => setParam("activation", v)} />
@@ -332,14 +383,14 @@ function Inspector({ node, result, analysis, st, setParam, setParams, candidates
         {node.kind === "dwconv2d" && <>
           <Num label="Channel multiplier" value={p.multiplier} max={8} onChange={(v) => setParam("multiplier", v)} />
           <Pair label="Kernel" value={p.kernel} onChange={(v) => setParam("kernel", v)} />
-          <Pair label="Stride" value={p.stride} max={8} def={1} onChange={(v) => setParam("stride", v)} />
+          <Pair label="Stride" value={p.stride} max={32} def={1} onChange={(v) => setParam("stride", v)} />
           <Sel label="Padding" value={padVal} options={pads} onChange={padSet} />
           <Sel label="Activation" value={p.activation} options={acts} onChange={(v) => setParam("activation", v)} />
         </>}
         {node.kind === "convtranspose2d" && <>
           <Num label="Filters" value={p.filters} onChange={(v) => setParam("filters", v)} />
           <Pair label="Kernel" value={p.kernel} def={2} onChange={(v) => setParam("kernel", v)} />
-          <Pair label="Stride" value={p.stride} max={8} def={2} onChange={(v) => setParam("stride", v)} />
+          <Pair label="Stride" value={p.stride} max={32} def={2} onChange={(v) => setParam("stride", v)} />
           <Num label="Padding" value={p.padding} min={0} max={5} onChange={(v) => setParam("padding", v)} />
           <Num label="Output padding" value={p.output_padding} min={0} max={3} onChange={(v) => setParam("output_padding", v)} />
           <Sel label="Activation" value={p.activation} options={acts} onChange={(v) => setParam("activation", v)} />
@@ -348,7 +399,7 @@ function Inspector({ node, result, analysis, st, setParam, setParams, candidates
           <Sel label="Mode" value={p.mode} options={[["max", "Max"], ["avg", "Average"]]} onChange={(v) => setParam("mode", v)} />
           <Pair label="Pool size" value={p.size} max={8} def={2} onChange={(v) => setParam("size", v)} />
           <label className="chk"><input type="checkbox" checked={p.stride === "size"} onChange={(e) => setParam("stride", e.target.checked ? "size" : n2(p.size, 2))} />stride = pool size</label>
-          {p.stride !== "size" && <Pair label="Stride" value={p.stride} max={8} def={2} onChange={(v) => setParam("stride", v)} />}
+          {p.stride !== "size" && <Pair label="Stride" value={p.stride} max={32} def={2} onChange={(v) => setParam("stride", v)} />}
           <Sel label="Padding" value={p.padding ?? 0} options={[["0", "0"], ["1", "1"], ["2", "2"]]} onChange={(v) => setParam("padding", Number(v))} />
         </>}
         {node.kind === "global_pool" && <Sel label="Mode" value={p.mode} options={[["avg", "Average"], ["max", "Max"]]} onChange={(v) => setParam("mode", v)} />}
@@ -361,6 +412,17 @@ function Inspector({ node, result, analysis, st, setParam, setParams, candidates
           <Num label="Units" value={p.units} max={1 << 20} onChange={(v) => setParam("units", v)} />
           <Sel label="Activation" value={p.activation} options={acts} onChange={(v) => setParam("activation", v)} />
         </>}
+        {node.kind === "to_tokens" && <>
+          <Sel label="Tokens" value={p.mode} options={[["patches", "every pixel (patch) is a token (ViT: after a patch convolution)"], ["rows", "every image row is a token"]]} onChange={(v) => setParam("mode", v)} />
+          <p className="muted">(channels, height, width) → patches: (height×width tokens, channels); rows: (height tokens, channels×width).</p>
+        </>}
+        {node.kind === "cls_pos" && <label className="chk"><input type="checkbox" checked={p.cls !== false} onChange={(e) => setParam("cls", e.target.checked)} />add a learnable class token in front</label>}
+        {node.kind === "attention" && <>
+          <Num label="Heads" value={p.heads} max={64} onChange={(v) => setParam("heads", v)} />
+          <Num label="Dropout" value={p.dropout} min={0} max={0.9} step={0.05} onChange={(v) => setParam("dropout", v)} />
+          <p className="muted">Every token looks at every other token (multi-head self-attention). The token dimension must divide evenly by the number of heads. Parameters: 4·d² + 4·d.</p>
+        </>}
+        {node.kind === "token_pool" && <Sel label="Use" value={p.mode} options={[["cls", "the class token (ViT)"], ["mean", "the mean of all tokens"]]} onChange={(v) => setParam("mode", v)} />}
         {node.kind === "activation" && <Sel label="Function" value={p.fn} options={acts.filter(([a]) => a !== "none")} onChange={(v) => setParam("fn", v)} />}
         {node.kind === "layernorm" && <p className="muted">On an image it normalises over (channels, height, width) (GroupNorm with one group); on a vector, over its features.</p>}
         {node.kind === "add" && <p className="muted">Adds two or more branches element by element (a residual connection): their shapes must be equal.</p>}

@@ -13,9 +13,11 @@ instance: those flows are tested with stand-ins only. The earlier Python/Blockly
 ```
 Cargo.toml                 workspace: crates/core, app/src-tauri (version 0.1.0 in [workspace.package] and app/src-tauri/tauri.conf.json)
 crates/core/src/
-  model.rs                 Graph {nodes, edges}, KINDS (incl. multiply, seg_output), defaults(kind), arity, starter()
+  model.rs                 Graph {nodes, edges}, KINDS (incl. multiply, seg_output, and for transformers to_tokens, cls_pos, attention,
+                           token_pool: shapes of rank 2 = (tokens, dimension)), defaults(kind), arity, starter()
   templates.rs             famous architectures (LeNet-5, small CIFAR CNN, AlexNet, VGG-16, GoogLeNet, ResNet-18, MobileNet v1, small DenseNet,
-                           U-Net, Attention U-Net): TEMPLATES (key, title, year, task, input, about), build(key) with a depth layout
+                           Transformer encoder on image rows, ViT-Base/16, ViT-Tiny, U-Net, Attention U-Net): TEMPLATES (key, title, year, task,
+                           input, about), build(key) with a left-to-right layout (a column per depth)
   dataset.rs               Dataset (builtin | huggingface | kaggle; task classify | segment; resize (built-in); hf_mask_col, kaggle_mask_dir;
                            image_size, channels, classes), BUILTINS, input_shape, problems()
   shapes.rs                analyze(graph, dataset) -> Analysis: computation order (Kahn), per-node in/out shapes, params, rf, padding/stride
@@ -43,7 +45,8 @@ python/helpers/aws_ec2.py  boto3 start/stop/describe (run with the tools venv; c
 python/verify_shapes.py    PyTorch comparison (CI)
 app/src-tauri/src/main.rs  Tauri commands (thin: they call nnb-core), keychain (service "NN Builder": kaggle, huggingface, aws), Hugging Face
                            datasets-server/whoami calls (ureq), native menu with a "Connection" menu (emits "open-tab")
-web/src/                   Design.tsx also has the "Famous architectures" picker (template_apply keeps the old design as model.previous.json and
+web/src/                   Design.tsx: the canvas reads left to right (handles left/right; arrange() = a column per depth; designs saved in the
+                           old top-to-bottom view are arranged once when opened); it also has the "Famous architectures" picker (template_apply keeps the old design as model.previous.json and
                            fits the dataset) and the skip-connection tool (inserts Add/Concat after the selected block, with a 1×1 strided
                            convolution / pooling / Dense projection when shapes differ);
                            App.tsx (top bar: Project ▾, Design, Dataset, Code, Train, Results, and Connection set apart on the right; job panel;
