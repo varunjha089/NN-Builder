@@ -10,3 +10,5 @@ kaggle.json
 *.pem
 __pycache__/
 *.pyc
+# MSG-Former paper draft: not published until its training runs are done
+/msg_former.pdf
