@@ -158,7 +158,8 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
 
     let mut results: HashMap<&str, NodeResult> = HashMap::new();
     let mut rfs: HashMap<&str, ([usize; 2], [usize; 2])> = HashMap::new();
-    let n_out = order.iter().filter(|id| g.node(id).map(|n| n.kind == "output").unwrap_or(false)).count();
+    let is_out = |k: &str| k == "output" || k == "seg_output";
+    let n_out = order.iter().filter(|id| g.node(id).map(|n| is_out(&n.kind)).unwrap_or(false)).count();
     let mut total = 0u64;
     for id in &order {
         let node = g.node(id).unwrap();
@@ -184,7 +185,24 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
                 r.status = "error".into();
             }
         }
-        if node.kind == "output" {
+        if is_out(&node.kind) {
+            if (node.kind == "seg_output") != (ds.task == "segment") {
+                err(&mut r, if ds.task == "segment" {
+                    "The dataset is a segmentation dataset (a class for every pixel): end with a Segmentation output instead of Output."
+                } else {
+                    "Segmentation output gives a class for every pixel, but the dataset is for classification: use Output, or choose a segmentation dataset."
+                });
+                r.out = None;
+            }
+            if node.kind == "seg_output" {
+                if let Some(o) = r.out.clone() {
+                    if o[1] != input_shape[1] || o[2] != input_shape[2] {
+                        err(&mut r, &format!("The masks are {}×{} but this output is {}×{}: the decoder must return to the input size (Upsample / ConvTranspose2D).",
+                            input_shape[1], input_shape[2], o[1], o[2]));
+                        r.out = None;
+                    }
+                }
+            }
             if n_out > 1 {
                 err(&mut r, "There is more than one Output block.");
                 r.out = None;
@@ -202,7 +220,11 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
         results.insert(id, r);
     }
     if inputs.len() == 1 && n_out == 0 {
-        problems.push("Add an Output block at the end, connected to the rest: it gives one score per class.".into());
+        problems.push(if ds.task == "segment" {
+            "Add a Segmentation output at the end, connected to the rest: it gives a class for every pixel.".into()
+        } else {
+            "Add an Output block at the end, connected to the rest: it gives one score per class.".into()
+        });
     }
     let mut nodes: Vec<NodeResult> = order.iter().map(|id| results.remove(id).unwrap()).collect();
     for n in &g.nodes {
@@ -419,6 +441,35 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
                 return None;
             }
             x.clone()
+        }
+        "multiply" => {
+            if ins.len() != 2 {
+                err(r, "Multiply takes exactly two inputs.");
+                return None;
+            }
+            let (a, b) = (&ins[0], &ins[1]);
+            if a == b {
+                a.clone()
+            } else if a.len() == 3 && b.len() == 3 && a[1] == b[1] && a[2] == b[2] && (a[0] == 1 || b[0] == 1) {
+                // a one-channel map (an attention gate) scales every channel
+                vec![a[0].max(b[0]), a[1], a[2]]
+            } else if a.len() == 3 && b.len() == 1 && b[0] == a[0] {
+                a.clone()
+            } else if b.len() == 3 && a.len() == 1 && a[0] == b[0] {
+                b.clone()
+            } else {
+                err(r, &format!("Multiply needs equal shapes, a one-channel map of the same size (attention gate), or one weight per channel; got {} and {}.",
+                    fmt(a), fmt(b)));
+                return None;
+            }
+        }
+        "seg_output" => {
+            if !is3 {
+                need3(r);
+                return None;
+            }
+            r.params = (x[0] as u64 + 1) * classes.max(1) as u64;
+            vec![classes.max(1), x[1], x[2]]
         }
         "concat" => {
             if ins.iter().any(|s| s.len() != x.len()) {

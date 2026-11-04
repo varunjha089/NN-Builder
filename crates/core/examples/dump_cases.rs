@@ -62,5 +62,14 @@ fn main() {
             json!({"case": i, "ok": false})
         });
     }
+    // the famous architectures too, at the input they were made for (2 classes for segmentation)
+    for t in nnb_core::templates::TEMPLATES {
+        let g = nnb_core::templates::build(t.key).unwrap();
+        let ds = Dataset { source: "huggingface".into(), task: t.task.into(), hf_repo: "x/y".into(), image_size: [t.input[1], t.input[2]], channels: t.input[0],
+            classes: if t.task == "segment" { vec!["a".into(), "b".into()] } else { (0..10).map(|i| i.to_string()).collect() }, ..Default::default() };
+        let a = analyze(&g, &ds);
+        assert!(a.ok, "template {}", t.key);
+        cases.push(json!({"case": t.key, "ok": true, "code": model_code(&g, &a).unwrap(), "input": a.input, "params": a.total_params}));
+    }
     println!("{}", serde_json::to_string(&cases).unwrap());
 }

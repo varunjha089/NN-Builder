@@ -2,6 +2,7 @@
 # Above this line: DATASET, TRAIN, CLASSES, EXPECTED, LAYERS and the Net class, written by the app from the design.
 # Writes (next to this script, or in /kaggle/working on Kaggle): metrics.jsonl (one JSON event per line; also printed as "NNB_EVENT ..."),
 # checkpoint.pt (every epoch; a restarted run resumes from it), model.pt and results.json at the end.
+# Tasks: "classify" (one label per image) and "segment" (a class for every pixel; images + masks).
 import glob
 import json
 import os
@@ -15,9 +16,13 @@ import traceback
 ON_KAGGLE = bool(os.environ.get("KAGGLE_KERNEL_RUN_TYPE"))
 OUT = os.getcwd() if ON_KAGGLE else os.path.dirname(os.path.abspath(__file__))
 DATA = os.environ.get("NNB_DATA") or ("/kaggle/working/data" if ON_KAGGLE else os.path.join(os.path.expanduser("~"), ".nn_builder", "data"))
+TASK = DATASET.get("task", "classify")
+SEG = TASK == "segment"
+AUG = TRAIN.get("aug", {})
 STOP = False
 STATS = {"mnist": ((0.1307,), (0.3081,)), "fashion_mnist": ((0.2860,), (0.3530,)),
          "cifar10": ((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616))}
+IMAGE_EXT = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff")
 
 
 def emit(event, **data):
@@ -33,24 +38,53 @@ def on_stop(signum, frame):
     STOP = True
 
 
+def resized():
+    return DATASET["source"] != "builtin" or DATASET.get("resize")
+
+
 def stats():
-    if DATASET["source"] == "builtin":
+    if DATASET["source"] == "builtin" and not DATASET.get("resize"):
         return STATS[DATASET["builtin"]]
     c = DATASET["channels"]
+    if DATASET["source"] == "builtin":
+        m, s = STATS[DATASET["builtin"]]
+        return (tuple(m) * 3)[:c] if len(m) < c else m[:c], (tuple(s) * 3)[:c] if len(s) < c else s[:c]
     return (0.5,) * c, (0.5,) * c
 
 
 # ---------------------------------------------------------------- data
-def image_transform():
+def image_transform(train):
+    """resize / convert, then (training only) augmentation, then tensor + normalise"""
     from torchvision import transforms
     mean, std = stats()
     steps = []
-    if DATASET["source"] != "builtin":
+    if resized():
         h, w = DATASET["image_size"]
         steps.append(transforms.Lambda(lambda im: im.convert("L" if DATASET["channels"] == 1 else "RGB")))
         steps.append(transforms.Resize((h, w)))
+    if train and not SEG:               # segmentation: flips/rotation are applied to image and mask together in SegPairs
+        if AUG.get("crop"):
+            size = tuple(DATASET["image_size"]) if resized() else tuple(EXPECTED["input"][1:])
+            steps.append(transforms.RandomCrop(size, padding=int(AUG["crop"])))
+        if AUG.get("hflip"):
+            steps.append(transforms.RandomHorizontalFlip())
+        if AUG.get("vflip"):
+            steps.append(transforms.RandomVerticalFlip())
+        if AUG.get("rotate"):
+            steps.append(transforms.RandomRotation(float(AUG["rotate"])))
+    if train and AUG.get("color"):
+        steps.append(transforms.ColorJitter(0.2, 0.2, 0.2 if DATASET["channels"] == 3 or not resized() else 0.0))
     steps += [transforms.ToTensor(), transforms.Normalize(mean, std)]
     return transforms.Compose(steps)
+
+
+def to_pil(img):
+    from PIL import Image
+    if isinstance(img, Image.Image):
+        return img
+    if isinstance(img, str):
+        return Image.open(img)
+    return Image.fromarray(__import__("numpy").asarray(img))
 
 
 class HFImages(torch.utils.data.Dataset):
@@ -62,15 +96,55 @@ class HFImages(torch.utils.data.Dataset):
         return len(self.ds)
 
     def __getitem__(self, i):
-        from PIL import Image
         row = self.ds[i]
-        img = row[DATASET["hf_image_col"]]
-        if not isinstance(img, Image.Image):
-            img = Image.open(img) if isinstance(img, str) else Image.fromarray(__import__("numpy").asarray(img))
         label = row[DATASET["hf_label_col"]]
         if isinstance(label, str):
             label = self.names[label]
-        return self.tfm(img), int(label)
+        return self.tfm(to_pil(row[DATASET["hf_image_col"]])), int(label)
+
+
+class HFPairs:
+    """(image, mask) of a Hugging Face split, read one row at a time"""
+    def __init__(self, ds):
+        self.ds = ds
+
+    def __len__(self):
+        return len(self.ds)
+
+    def __getitem__(self, i):
+        row = self.ds[i]
+        return row[DATASET["hf_image_col"]], row[DATASET["hf_mask_col"]]
+
+
+class SegPairs(torch.utils.data.Dataset):
+    """image + mask pairs: anything indexable giving (image, mask), each a PIL image, a file path or an array"""
+    def __init__(self, pairs, train):
+        self.pairs, self.train = pairs, train
+        self.tfm = image_transform(train)
+
+    def __len__(self):
+        return len(self.pairs)
+
+    def __getitem__(self, i):
+        import numpy as np
+        from PIL import Image
+        from torchvision.transforms import functional as TF
+        img, mask = (to_pil(x) for x in self.pairs[i])
+        h, w = DATASET["image_size"]
+        mask = mask.convert("L").resize((w, h), Image.NEAREST)
+        img = img.convert("L" if DATASET["channels"] == 1 else "RGB").resize((w, h), Image.BILINEAR)
+        if self.train:
+            if AUG.get("hflip") and random.random() < 0.5:
+                img, mask = TF.hflip(img), TF.hflip(mask)
+            if AUG.get("vflip") and random.random() < 0.5:
+                img, mask = TF.vflip(img), TF.vflip(mask)
+            if AUG.get("rotate"):
+                a = random.uniform(-float(AUG["rotate"]), float(AUG["rotate"]))
+                img, mask = TF.rotate(img, a), TF.rotate(mask, a, interpolation=TF.InterpolationMode.NEAREST)
+        m = np.array(mask, dtype=np.int64)
+        if len(CLASSES) == 2 and m.max() > 1:
+            m = (m > 0).astype(np.int64)                    # binary masks stored as 0/255
+        return self.tfm(img), torch.from_numpy(m)
 
 
 def kaggle_root():
@@ -93,16 +167,55 @@ def kaggle_root():
     return root
 
 
+def kaggle_folder(root, sub):
+    p = os.path.join(root, sub) if sub else root
+    if os.path.isdir(p):
+        return p
+    found = [d for d in glob.glob(os.path.join(root, "**", sub), recursive=True) if os.path.isdir(d)] if sub else []
+    if not found:
+        raise SystemExit(f"DATA: the folder {sub!r} is not in the Kaggle dataset.")
+    return found[0]
+
+
+def kaggle_pairs(root):
+    """images and masks with the same name (masks may add _mask / _lab / _label, or use another extension)"""
+    idir, mdir = kaggle_folder(root, DATASET["kaggle_train_dir"]), kaggle_folder(root, DATASET["kaggle_mask_dir"])
+    masks = {}
+    for f in os.listdir(mdir):
+        stem, ext = os.path.splitext(f)
+        if ext.lower() in IMAGE_EXT:
+            for suffix in ("_mask", "_lab", "_label", "-mask", ""):
+                if suffix and stem.endswith(suffix):
+                    masks.setdefault(stem[: -len(suffix)], os.path.join(mdir, f))
+            masks.setdefault(stem, os.path.join(mdir, f))
+    pairs = []
+    for f in sorted(os.listdir(idir)):
+        stem, ext = os.path.splitext(f)
+        if ext.lower() in IMAGE_EXT and stem in masks:
+            pairs.append((os.path.join(idir, f), masks[stem]))
+    if not pairs:
+        raise SystemExit(f"DATA: no image in {DATASET['kaggle_train_dir']!r} has a mask with the same name in {DATASET['kaggle_mask_dir']!r}.")
+    return pairs
+
+
+def split(n, seed, part=0.1):
+    idx = list(range(n))
+    random.Random(seed).shuffle(idx)
+    k = max(1, int(n * part))
+    return idx[k:], idx[:k]
+
+
 def load_data(cfg):
-    from torch.utils.data import Subset, random_split
-    tfm = image_transform()
+    from torch.utils.data import Subset
     src = DATASET["source"]
-    g = torch.Generator().manual_seed(cfg["seed"])
+    train_t, test_t = image_transform(True), image_transform(False)
     if src == "builtin":
+        if SEG:
+            raise SystemExit("DATA: the built-in datasets are for classification.")
         from torchvision import datasets
         cls = {"mnist": datasets.MNIST, "fashion_mnist": datasets.FashionMNIST, "cifar10": datasets.CIFAR10}[DATASET["builtin"]]
         root = os.path.join(DATA, "torchvision")
-        train, test = cls(root, train=True, download=True, transform=tfm), cls(root, train=False, download=True, transform=tfm)
+        train, test = cls(root, train=True, download=True, transform=train_t), cls(root, train=False, download=True, transform=test_t)
     elif src == "huggingface":
         from datasets import load_dataset
         kw = {"cache_dir": os.path.join(DATA, "huggingface")}
@@ -113,27 +226,27 @@ def load_data(cfg):
         else:
             parts = tr.train_test_split(test_size=0.1, seed=cfg["seed"])
             tr, te = parts["train"], parts["test"]
-        train, test = HFImages(tr, tfm), HFImages(te, tfm)
-    else:
-        from torchvision.datasets import ImageFolder
-        root = kaggle_root()
-
-        def folder(sub):
-            p = os.path.join(root, sub) if sub else root
-            if not os.path.isdir(p):
-                found = [d for d in glob.glob(os.path.join(root, "**", sub), recursive=True) if os.path.isdir(d)] if sub else []
-                if not found:
-                    raise SystemExit(f"DATA: the folder {sub!r} is not in the Kaggle dataset.")
-                p = found[0]
-            return ImageFolder(p, transform=tfm)
-        full = folder(DATASET["kaggle_train_dir"])
-        if [c for c in full.classes] != list(CLASSES):
-            raise SystemExit(f"DATA: the class folders are {full.classes}, but the design expects {CLASSES}.")
-        if DATASET["kaggle_test_dir"]:
-            train, test = full, folder(DATASET["kaggle_test_dir"])
+        if SEG:
+            train, test = SegPairs(HFPairs(tr), True), SegPairs(HFPairs(te), False)
         else:
-            n_test = max(1, len(full) // 10)
-            train, test = random_split(full, [len(full) - n_test, n_test], generator=g)
+            train, test = HFImages(tr, train_t), HFImages(te, test_t)
+    else:
+        root = kaggle_root()
+        if SEG:
+            pairs = kaggle_pairs(root)
+            tr_i, te_i = split(len(pairs), cfg["seed"])
+            train, test = SegPairs([pairs[i] for i in tr_i], True), SegPairs([pairs[i] for i in te_i], False)
+        else:
+            from torchvision.datasets import ImageFolder
+            folder = kaggle_folder(root, DATASET["kaggle_train_dir"])
+            full_train, full_test = ImageFolder(folder, transform=train_t), ImageFolder(folder, transform=test_t)
+            if list(full_train.classes) != list(CLASSES):
+                raise SystemExit(f"DATA: the class folders are {full_train.classes}, but the design expects {CLASSES}.")
+            if DATASET["kaggle_test_dir"]:
+                train, test = full_train, ImageFolder(kaggle_folder(root, DATASET["kaggle_test_dir"]), transform=test_t)
+            else:
+                tr_i, te_i = split(len(full_train), cfg["seed"])
+                train, test = Subset(full_train, tr_i), Subset(full_test, te_i)
     if cfg.get("limit_train"):
         train = Subset(train, range(min(cfg["limit_train"], len(train))))
     return train, test
@@ -150,6 +263,8 @@ def one_batch_check(model, loader, device):
     if list(x.shape[1:]) != EXPECTED["input"]:
         raise SystemExit(f"CHECK: the images are {list(x.shape[1:])}, but the design's Input is {EXPECTED['input']}.")
     out = model(x)
+    if SEG and list(y.shape[1:]) != list(out.shape[2:]):
+        raise SystemExit(f"CHECK: the masks are {list(y.shape[1:])}, but the network outputs {list(out.shape[2:])}.")
     nn.functional.cross_entropy(out, y).backward()
     model.zero_grad(set_to_none=True)
     for h in hooks:
@@ -158,26 +273,29 @@ def one_batch_check(model, loader, device):
     if bad:
         raise SystemExit("CHECK: shapes differ from the design: " + "; ".join(bad[:5]))
     if int(y.max()) >= len(CLASSES):
-        raise SystemExit(f"CHECK: a label is {int(y.max())}, but there are only {len(CLASSES)} classes.")
+        raise SystemExit(f"CHECK: a label is {int(y.max())}, but there are only {len(CLASSES)} classes"
+                         + (" (mask pixel values must be class numbers 0, 1, 2, ...)" if SEG else "") + ".")
     emit("check", message="one batch passed: every layer has the shape the design shows", batch=list(x.shape))
 
 
 def evaluate(model, loader, device):
+    """loss, accuracy (per image, or per pixel for segmentation), confusion matrix, mean IoU (segmentation)"""
     model.eval()
-    loss_sum, correct, n = 0.0, 0, 0
     k = len(CLASSES)
-    confusion = [[0] * k for _ in range(k)]
+    loss_sum, n_items, cm = 0.0, 0, torch.zeros(k * k, dtype=torch.long)
     with torch.no_grad():
         for x, y in loader:
             x, y = x.to(device), y.to(device)
             out = model(x).float()
-            loss_sum += nn.functional.cross_entropy(out, y, reduction="sum").item()
+            loss_sum += nn.functional.cross_entropy(out, y).item() * len(y)
+            n_items += len(y)
             pred = out.argmax(1)
-            correct += int((pred == y).sum())
-            n += len(y)
-            for t, p in zip(y.tolist(), pred.tolist()):
-                confusion[t][p] += 1
-    return loss_sum / max(n, 1), correct / max(n, 1), confusion
+            cm += torch.bincount((y * k + pred).flatten().cpu(), minlength=k * k)
+    cm = cm.view(k, k)
+    acc = float(cm.diag().sum()) / max(1, int(cm.sum()))
+    iou = [float(cm[i, i]) / max(1, int(cm[i].sum() + cm[:, i].sum() - cm[i, i])) for i in range(k)]
+    present = [iou[i] for i in range(k) if int(cm[i].sum() + cm[:, i].sum()) > 0]
+    return loss_sum / max(n_items, 1), acc, cm.tolist(), (sum(present) / max(1, len(present))), iou
 
 
 def norm01(t):
@@ -189,7 +307,7 @@ def norm01(t):
 def small(t, limit=48):
     """an image tensor (C,H,W) shrunk to at most limit pixels a side, as nested lists with 3 decimals"""
     if t.shape[-1] > limit or t.shape[-2] > limit:
-        t = nn.functional.adaptive_avg_pool2d(t.unsqueeze(0), (min(limit, t.shape[-2]), min(limit, t.shape[-1])))[0]
+        t = nn.functional.interpolate(t.unsqueeze(0).float(), size=(min(limit, t.shape[-2]), min(limit, t.shape[-1])), mode="nearest")[0]
     return [[[round(float(v), 3) for v in row] for row in ch] for ch in t]
 
 
@@ -204,10 +322,10 @@ def pictures(model, test, device):
     hooks = [getattr(model, name).register_forward_hook(lambda m, i, o, name=name: maps.__setitem__(name, o.detach().cpu()))
              for name, _, conv in LAYERS if conv]
     mean, std = stats()
-    idx = list(range(min(16, len(test))))
+    idx = list(range(min(8 if SEG else 16, len(test))))
     xs = torch.stack([test[i][0] for i in idx]).to(device)
     with torch.no_grad():
-        prob = torch.softmax(model(xs).float(), 1).cpu()
+        out = model(xs).float()
     for h in hooks:
         h.remove()
     for name, label, conv in LAYERS:
@@ -215,10 +333,19 @@ def pictures(model, test, device):
             res["feature_maps"].append({"layer": label, "channels": int(maps[name].shape[1]),
                                         "maps": [small(norm01(c.unsqueeze(0)), 32)[0] for c in maps[name][0, :8]]})
     m_t, s_t = torch.tensor(mean).view(-1, 1, 1), torch.tensor(std).view(-1, 1, 1)
+    k = max(1, len(CLASSES) - 1)
     for j, i in enumerate(idx):
         img = (test[i][0] * s_t + m_t).clamp(0, 1)
-        p = int(prob[j].argmax())
-        res["samples"].append({"image": small(img), "label": int(test[i][1]), "pred": p, "prob": round(float(prob[j][p]), 3)})
+        if SEG:
+            pred = out[j].argmax(0).cpu()
+            truth = test[i][1]
+            res["samples"].append({"image": small(img, 64), "truth": small((truth.float() / k).unsqueeze(0), 64),
+                                   "pred": small((pred.float() / k).unsqueeze(0), 64),
+                                   "pixel_acc": round(float((pred == truth).float().mean()), 3)})
+        else:
+            prob = torch.softmax(out[j], 0).cpu()
+            p = int(prob.argmax())
+            res["samples"].append({"image": small(img), "label": int(test[i][1]), "pred": p, "prob": round(float(prob[p]), 3)})
     return res
 
 
@@ -239,7 +366,7 @@ def main():
     train, test = load_data(cfg)
     workers = cfg.get("num_workers", 2) if device.type == "cuda" else 0
     tl = DataLoader(train, batch_size=cfg["batch_size"], shuffle=True, num_workers=workers, pin_memory=device.type == "cuda")
-    vl = DataLoader(test, batch_size=256, shuffle=False, num_workers=workers)
+    vl = DataLoader(test, batch_size=64 if SEG else 256, shuffle=False, num_workers=workers)
     opt = (torch.optim.SGD(model.parameters(), lr=cfg["lr"], momentum=0.9) if cfg["optimizer"] == "sgd"
            else torch.optim.Adam(model.parameters(), lr=cfg["lr"]))
     amp = bool(cfg.get("amp", True)) and device.type == "cuda"
@@ -253,8 +380,8 @@ def main():
         start_epoch = ck["epoch"] + 1
         emit("resume", epoch=start_epoch)
     gpu = torch.cuda.get_device_name(0) if device.type == "cuda" else "cpu"
-    emit("start", device=str(device), gpu=gpu, torch=torch.__version__, python=sys.version.split()[0], params=n_params,
-         train_size=len(train), test_size=len(test), epochs=cfg["epochs"], amp=amp)
+    emit("start", device=str(device), gpu=gpu, torch=torch.__version__, python=sys.version.split()[0], params=n_params, task=TASK,
+         train_size=len(train), test_size=len(test), epochs=cfg["epochs"], amp=amp, augmentation={k: v for k, v in AUG.items() if v})
     if start_epoch == 1:
         one_batch_check(model, tl, device)
     steps = len(tl)
@@ -262,7 +389,7 @@ def main():
     stopped = False
     for epoch in range(start_epoch, cfg["epochs"] + 1):
         model.train()
-        t0, loss_sum, correct, n = time.time(), 0.0, 0, 0
+        t0, loss_sum, n, correct, units = time.time(), 0.0, 0, 0, 0
         for step, (x, y) in enumerate(tl, 1):
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
             opt.zero_grad(set_to_none=True)
@@ -273,26 +400,32 @@ def main():
             scaler.step(opt)
             scaler.update()
             loss_sum += loss.item() * len(y)
-            correct += int((out.argmax(1) == y).sum())
             n += len(y)
+            correct += int((out.argmax(1) == y).sum())
+            units += y.numel()
             if step % every == 0 or step == steps:
                 emit("batch", epoch=epoch, step=step, steps=steps, loss=round(loss.item(), 5))
             if STOP:
                 stopped = True
                 break
-        val_loss, val_acc, _ = evaluate(model, vl, device)
-        emit("epoch", epoch=epoch, train_loss=round(loss_sum / max(n, 1), 5), train_acc=round(correct / max(n, 1), 5),
-             val_loss=round(val_loss, 5), val_acc=round(val_acc, 5), seconds=round(time.time() - t0, 2), partial=stopped)
+        val_loss, val_acc, _, miou, _ = evaluate(model, vl, device)
+        ev = dict(epoch=epoch, train_loss=round(loss_sum / max(n, 1), 5), train_acc=round(correct / max(units, 1), 5),
+                  val_loss=round(val_loss, 5), val_acc=round(val_acc, 5), seconds=round(time.time() - t0, 2), partial=stopped)
+        if SEG:
+            ev["val_miou"] = round(miou, 5)
+        emit("epoch", **ev)
         torch.save({"model": model.state_dict(), "opt": opt.state_dict(), "epoch": epoch}, ck_path)
         if stopped:
             break
-    val_loss, val_acc, confusion = evaluate(model, vl, device)
+    val_loss, val_acc, confusion, miou, iou = evaluate(model, vl, device)
     torch.save(model.state_dict(), os.path.join(OUT, "model.pt"))
-    res = {"test_acc": val_acc, "test_loss": val_loss, "classes": CLASSES, "confusion": confusion}
+    res = {"task": TASK, "test_acc": val_acc, "test_loss": val_loss, "classes": CLASSES, "confusion": confusion}
+    if SEG:
+        res.update(miou=miou, iou=iou)
     res.update(pictures(model, test, device))
     with open(os.path.join(OUT, "results.json"), "w", encoding="utf-8") as f:
         json.dump(res, f)
-    emit("stopped" if stopped else "done", test_acc=round(val_acc, 5))
+    emit("stopped" if stopped else "done", test_acc=round(val_acc, 5), **({"miou": round(miou, 5)} if SEG else {}))
 
 
 if __name__ == "__main__":

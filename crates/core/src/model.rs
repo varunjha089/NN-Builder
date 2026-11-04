@@ -47,7 +47,9 @@ pub const KINDS: &[(&str, &str)] = &[
     ("activation", "Activation"),
     ("add", "Add"),
     ("concat", "Concat"),
+    ("multiply", "Multiply"),
     ("output", "Output"),
+    ("seg_output", "Segmentation output"),
 ];
 
 pub const ACTIVATIONS: &[&str] = &["relu", "leaky_relu", "gelu", "silu", "sigmoid", "tanh", "none"];
@@ -75,7 +77,7 @@ pub fn defaults(kind: &str) -> Value {
 pub fn arity(kind: &str) -> Option<usize> {
     match kind {
         "input" => Some(0),
-        "add" | "concat" => None,
+        "add" | "concat" | "multiply" => None,
         _ => Some(1),
     }
 }

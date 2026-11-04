@@ -173,3 +173,58 @@ fn machine_validation_and_commands() {
     let secret = remote::put_secret_script(".kaggle/kaggle.json", "{\"key\":\"x\"}");
     assert!(secret.contains("chmod 600") && secret.contains("umask 077"));
 }
+
+/// the dataset a template is shown with: its own input size; segmentation templates get two classes
+fn dataset_for(t: &nnb_core::templates::Template) -> Dataset {
+    if t.task == "segment" {
+        Dataset { source: "huggingface".into(), task: "segment".into(), hf_repo: "x/y".into(), image_size: [t.input[1], t.input[2]], channels: t.input[0],
+            classes: vec!["background".into(), "flood".into()], ..Default::default() }
+    } else {
+        let builtin = if t.input == [1, 28, 28] { "mnist" } else { "cifar10" };
+        let native = if builtin == "mnist" { [1, 28, 28] } else { [3, 32, 32] };
+        Dataset { builtin: builtin.into(), resize: t.input != native, image_size: [t.input[1], t.input[2]], channels: t.input[0], ..Default::default() }
+    }
+}
+
+#[test]
+fn every_template_is_valid_and_compiles() {
+    for t in nnb_core::templates::TEMPLATES {
+        let g = nnb_core::templates::build(t.key).unwrap();
+        let ds = dataset_for(t);
+        let a = analyze(&g, &ds);
+        let errs: Vec<_> = a.nodes.iter().filter(|n| n.status == "error" || n.status == "blocked").map(|n| (&n.title, &n.messages)).collect();
+        assert!(a.ok, "{}: {:?} {:?}", t.key, a.problems, errs);
+        assert_eq!(a.input, t.input.to_vec(), "{}", t.key);
+        let code = train_script(&g, &ds, &a, &TrainSettings::default(), t.title).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("t.py"), &code).unwrap();
+        let out = std::process::Command::new("python3").args(["-m", "py_compile"]).arg(dir.path().join("t.py")).output().unwrap();
+        assert!(out.status.success(), "{}: {}", t.key, String::from_utf8_lossy(&out.stderr));
+        // positions are spread out (no two nodes on the same spot)
+        let mut pos: Vec<(i64, i64)> = g.nodes.iter().map(|n| (n.x as i64, n.y as i64)).collect();
+        pos.sort();
+        pos.dedup();
+        assert_eq!(pos.len(), g.nodes.len(), "{}", t.key);
+    }
+    // known parameter counts (no bias in the BN-followed convolutions, as in torchvision)
+    let p = |k: &str| analyze(&nnb_core::templates::build(k).unwrap(), &dataset_for(nnb_core::templates::get(k).unwrap())).total_params;
+    assert_eq!(p("lenet5"), 61_706); // LeNet-5 with 10 classes
+    assert_eq!(p("vgg16"), 134_301_514); // torchvision VGG-16 with 10 classes
+    assert_eq!(p("resnet18"), 11_181_642); // torchvision ResNet-18 with 10 classes
+}
+
+#[test]
+fn segmentation_and_multiply_rules() {
+    let t = nnb_core::templates::get("attention_unet").unwrap();
+    let g = nnb_core::templates::build("attention_unet").unwrap();
+    let a = analyze(&g, &dataset_for(t));
+    assert_eq!(a.nodes.iter().find(|n| n.kind == "seg_output").unwrap().out, Some(vec![2, 128, 128]));
+    let m = a.nodes.iter().find(|n| n.kind == "multiply").unwrap();
+    assert_eq!(m.inputs[1][0], 1, "the attention map has one channel");
+    // the same network on a classification dataset is refused with advice
+    let a = analyze(&g, &Dataset::default());
+    assert!(!a.ok);
+    // Output on a segmentation dataset is refused too
+    let a = analyze(&model::starter(), &dataset_for(t));
+    assert!(a.nodes.iter().any(|n| n.messages.iter().any(|m| m.contains("Segmentation output"))));
+}

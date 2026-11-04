@@ -6,6 +6,12 @@ use serde::{Deserialize, Serialize};
 pub struct Dataset {
     /// "builtin" | "huggingface" | "kaggle"
     pub source: String,
+    /// "classify" (one label per image) | "segment" (a class for every pixel: images + masks)
+    #[serde(default = "classify")]
+    pub task: String,
+    /// built-in sets: resize to image_size / convert to channels (e.g. CIFAR-10 at 224×224 for AlexNet); other sources always resize
+    #[serde(default)]
+    pub resize: bool,
     /// builtin: "mnist" | "fashion_mnist" | "cifar10"
     #[serde(default)]
     pub builtin: String,
@@ -23,6 +29,9 @@ pub struct Dataset {
     pub hf_image_col: String,
     #[serde(default = "label")]
     pub hf_label_col: String,
+    /// segmentation: the column with the mask image (pixel value = class index; for two classes any non-zero pixel = class 1)
+    #[serde(default = "mask")]
+    pub hf_mask_col: String,
     /// kaggle: "owner/dataset" and the folder (inside it) with one subfolder per class; optional separate test folder
     #[serde(default)]
     pub kaggle_slug: String,
@@ -30,6 +39,9 @@ pub struct Dataset {
     pub kaggle_train_dir: String,
     #[serde(default)]
     pub kaggle_test_dir: String,
+    /// segmentation: the folder of masks (same file names as the images in kaggle_train_dir)
+    #[serde(default)]
+    pub kaggle_mask_dir: String,
     /// images are resized to this (height, width) and converted to this many channels (1 = grey, 3 = colour); ignored for built-in sets
     #[serde(default = "size64")]
     pub image_size: [usize; 2],
@@ -48,6 +60,12 @@ fn image() -> String {
 }
 fn label() -> String {
     "label".into()
+}
+fn mask() -> String {
+    "mask".into()
+}
+fn classify() -> String {
+    "classify".into()
 }
 fn size64() -> [usize; 2] {
     [64, 64]
@@ -83,6 +101,8 @@ impl Default for Dataset {
     fn default() -> Self {
         Dataset {
             source: "builtin".into(),
+            task: classify(),
+            resize: false,
             builtin: "mnist".into(),
             hf_repo: String::new(),
             hf_config: String::new(),
@@ -90,9 +110,11 @@ impl Default for Dataset {
             hf_test_split: String::new(),
             hf_image_col: image(),
             hf_label_col: label(),
+            hf_mask_col: mask(),
             kaggle_slug: String::new(),
             kaggle_train_dir: String::new(),
             kaggle_test_dir: String::new(),
+            kaggle_mask_dir: String::new(),
             image_size: size64(),
             channels: 3,
             classes: vec![],
@@ -108,7 +130,7 @@ impl Dataset {
     /// (channels, height, width) the model receives
     pub fn input_shape(&self) -> Vec<usize> {
         match (self.source.as_str(), self.builtin_info()) {
-            ("builtin", Some(b)) => b.shape.to_vec(),
+            ("builtin", Some(b)) if !self.resize => b.shape.to_vec(),
             _ => vec![self.channels, self.image_size[0], self.image_size[1]],
         }
     }
@@ -139,7 +161,7 @@ impl Dataset {
                 if !ok_id(&self.kaggle_slug) || self.kaggle_slug.matches('/').count() != 1 {
                     p.push("Kaggle: give the dataset as owner/name.".into())
                 }
-                for d in [&self.kaggle_train_dir, &self.kaggle_test_dir] {
+                for d in [&self.kaggle_train_dir, &self.kaggle_test_dir, &self.kaggle_mask_dir] {
                     if !d.is_empty() && !ok_id(d) {
                         p.push("Kaggle: folders may contain letters, digits and - _ . / only.".into())
                     }
@@ -147,7 +169,17 @@ impl Dataset {
             }
             _ => p.push("Choose where the data comes from.".into()),
         }
-        if self.source != "builtin" {
+        if self.task == "segment" {
+            match self.source.as_str() {
+                "builtin" => p.push("The built-in datasets are for classification: choose a segmentation dataset from Hugging Face or Kaggle.".into()),
+                "huggingface" if self.hf_mask_col.is_empty() => p.push("Hugging Face: choose the mask column.".into()),
+                "kaggle" if self.kaggle_train_dir.is_empty() || self.kaggle_mask_dir.is_empty() => {
+                    p.push("Kaggle: give the images folder and the masks folder (same file names).".into())
+                }
+                _ => {}
+            }
+        }
+        if self.source != "builtin" || self.resize {
             if self.class_names().len() < 2 {
                 p.push("Give the class names (at least two): read them from the dataset with 'Read info', or type them.".into())
             }

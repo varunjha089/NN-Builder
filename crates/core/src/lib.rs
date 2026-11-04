@@ -10,3 +10,4 @@ pub mod remote;
 pub mod runs;
 pub mod shapes;
 pub mod store;
+pub mod templates;
