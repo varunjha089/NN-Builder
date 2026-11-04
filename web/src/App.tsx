@@ -1,7 +1,7 @@
 // The window: top bar with the tabs (Connection set apart on the right), the project, background tasks and messages.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { api, errText, type Analysis, type AppState, type Dataset, type Graph, type JobSnap, type TrainSettings } from "./api";
+import { api, errText, type Analysis, type AppState, type Dataset, type Graph, type JobSnap, type Template, type TrainSettings } from "./api";
 import { Design } from "./Design";
 import { DatasetTab } from "./DatasetTab";
 import { TrainTab } from "./TrainTab";
@@ -130,9 +130,25 @@ function CodeTab({ toast }: { toast: (m: string) => void }) {
 function ProjectTab({ st, toast, opened, reload }: { st: AppState; toast: (m: string) => void; opened: () => void; reload: () => void }) {
   const [name, setName] = useState("");
   const [path, setPath] = useState("");
+  const [demos, setDemos] = useState<Template[]>([]);
+  useEffect(() => { api.templates().then(setDemos).catch(() => {}); }, []);
+  const fromDemo = (t: Template) => api.projectFromTemplate(t.key).then((m) => { toast(m); opened(); }).catch((e) => toast(errText(e)));
   return (
     <div className="page">
       <h2>Projects</h2>
+      <h3>Start from a demo architecture</h3>
+      <p className="muted small">Creates a new project with the network already on the canvas; change it from there. Every demo is also in the Design tab under "Famous architectures".</p>
+      <div className="demos">
+        {demos.map((t) => (
+          <div key={t.key} className="demo">
+            <div className="row"><strong>{t.title}</strong><span className="muted small">{t.year}</span>
+              {t.task === "segment" && <span className="pill">segmentation</span>}</div>
+            <p className="small muted">{(() => { const parts = t.about.split(". "); return (/et al$| & /.test(parts[0]) ? parts[1] : parts[0]).replace(/\.$/, ""); })()}.</p>
+            <div className="row"><span className="muted small">input {t.input[1]}×{t.input[2]}×{t.input[0]}</span><span className="grow" />
+              <button onClick={() => fromDemo(t)}>Create project</button></div>
+          </div>
+        ))}
+      </div>
       <h3>New project</h3>
       <p className="row"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="name" />
         <button className="primary" onClick={() => api.projectNew(name).then(() => { setName(""); opened(); }).catch((e) => toast(errText(e)))}>Create</button></p>

@@ -11,7 +11,7 @@ Version 0.1.0 · MIT licence · Rust (Tauri 2) + React; the generated training c
   LayerNorm, Dropout, Flatten, Dense, Activation, Add, Concat, Multiply, To tokens, Class token + position, Self-attention, Token pool, Output,
   Segmentation output. Branches work (ResNet skips with Add, U-Net with Concat, attention gates with Multiply, Transformer blocks with Add).
   The network reads left to right; "Arrange left to right" lays out any design.
-  - **Famous architectures** to start from: LeNet-5, a small CIFAR-10 CNN, AlexNet, VGG-16, GoogLeNet (Inception v1), ResNet-18, MobileNet v1,
+  - **Famous architectures** to start from (Projects page: "Start from a demo architecture" creates a project with one; or Design → Famous architectures): LeNet-5, a small CIFAR-10 CNN, AlexNet, VGG-16, GoogLeNet (Inception v1), ResNet-18, MobileNet v1,
     a small DenseNet, a Transformer encoder (image rows as tokens), ViT-Base/16, ViT-Tiny (CIFAR-10), U-Net and Attention U-Net (VGG-16,
     ResNet-18 and ViT-Base/16 have exactly torchvision's parameter counts).
   - **Skip connections:** select a block and choose an earlier one: an Add (residual) or Concat is inserted, with a 1×1 convolution (or pooling)

@@ -119,9 +119,30 @@ async fn templates_list() -> R<Value> {
 /// replace the design with a famous architecture (the current design is kept as model.previous.json) and fit the dataset to it
 #[tauri::command]
 async fn template_apply(st: State<'_, App>, key: String) -> R<String> {
-    let p = project(&st)?;
+    apply_template(&project(&st)?, &key)
+}
+
+/// a new project that starts with a famous architecture (named after it; " 2", " 3" ... when that name is taken)
+#[tauri::command]
+async fn project_from_template(st: State<'_, App>, key: String) -> R<String> {
     let t = nnb_core::templates::get(&key).ok_or("Unknown architecture.")?;
-    let g = nnb_core::templates::build(&key).ok_or("Unknown architecture.")?;
+    let base = store::default_projects_dir();
+    let mut name = format!("{} demo", t.title.split(" (").next().unwrap_or(t.title));
+    let mut n = 1;
+    while base.join(name.replace('/', "_")).exists() || base.join(&name).exists() {
+        n += 1;
+        name = format!("{} demo {n}", t.title.split(" (").next().unwrap_or(t.title));
+    }
+    let p = store::create(&name, None).map_err(e)?;
+    let msg = apply_template(&p, &key)?;
+    let _ = std::fs::remove_file(p.dir.join("model.previous.json"));
+    *st.project.lock().unwrap() = Some(p);
+    Ok(format!("Project \"{name}\" created. {}", msg.split_once(". ").map(|x| x.1).unwrap_or("")))
+}
+
+fn apply_template(p: &Project, key: &str) -> R<String> {
+    let t = nnb_core::templates::get(key).ok_or("Unknown architecture.")?;
+    let g = nnb_core::templates::build(key).ok_or("Unknown architecture.")?;
     let _ = std::fs::copy(p.dir.join("model.json"), p.dir.join("model.previous.json"));
     p.save_graph(&g).map_err(e)?;
     let mut d = p.dataset();
@@ -487,7 +508,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            app_state, templates_list, template_apply, project_new, project_open, set_projects_dir, project_load, save_graph, save_dataset, save_train, code, export_code,
+            app_state, templates_list, template_apply, project_from_template, project_new, project_open, set_projects_dir, project_load, save_graph, save_dataset, save_train, code, export_code,
             set_kaggle, set_hf, set_aws, clear_secret, test_kaggle, test_hf, test_aws, tools_install,
             machine_save, machine_delete, machine_test, machine_connect, machine_prepare, hf_info, kaggle_files,
             targets, run_start, runs_list, run_status, run_stop, run_fetch, run_results, run_reveal, job_status, open_url

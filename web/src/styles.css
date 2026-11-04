@@ -98,3 +98,7 @@ canvas.pix { image-rendering: pixelated; border: 1px solid var(--line); }
 .aug input[type=number] { width: 60px; }
 .thumb.seg .row { gap: 3px; margin: 0; }
 .arrange { width: 100%; margin-bottom: 8px; }
+.demos { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; margin: 8px 0 18px; }
+.demo { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 9px 12px; display: flex; flex-direction: column; }
+.demo p { flex: 1; margin: 4px 0; }
+.demo .row { margin: 2px 0; }

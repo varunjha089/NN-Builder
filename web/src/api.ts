@@ -57,6 +57,7 @@ export interface Template { key: string; title: string; year: number; task: stri
 export const api = {
   templates: () => invoke<Template[]>("templates_list"),
   templateApply: (key: string) => invoke<string>("template_apply", { key }),
+  projectFromTemplate: (key: string) => invoke<string>("project_from_template", { key }),
   state: () => invoke<AppState>("app_state"),
   projectNew: (name: string) => invoke<void>("project_new", { name }),
   projectOpen: (path: string) => invoke<void>("project_open", { path }),
