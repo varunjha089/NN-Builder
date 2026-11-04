@@ -3,6 +3,10 @@
 Design neural networks on a canvas, check every shape while you build, and train them on a GPU somewhere else: **Kaggle**, a **college GPU
 server** (SSH) or an **AWS EC2** instance (g4dn.xlarge). Your computer only designs: it never trains, never downloads datasets and needs no PyTorch.
 
+**Manual:** [doc/nn_builder_manual.pdf](doc/nn_builder_manual.pdf) (source: [doc/nn_builder_manual.tex](doc/nn_builder_manual.tex)): using the
+application, designing a network step by step, the arithmetic behind every number, all blocks, training on Kaggle / SSH / EC2 (spot), and
+the fifteen demo architectures explained, with references to the original papers (arXiv).
+
 Version 0.2.0 · MIT licence · Rust (Tauri 2) + React; the generated training code is Python (PyTorch).
 
 ## What it does

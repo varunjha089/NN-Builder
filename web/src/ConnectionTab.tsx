@@ -13,7 +13,7 @@ const POLICY = `{
     "Resource": "arn:aws:ec2:REGION:ACCOUNT:instance/INSTANCE-ID"
   }, {
     "Effect": "Allow",
-    "Action": ["ec2:DescribeInstances", "ec2:DescribeInstanceAttribute"],
+    "Action": ["ec2:DescribeInstances", "ec2:DescribeInstanceAttribute", "ec2:DescribeSpotInstanceRequests"],
     "Resource": "*"
   }]
 }`;

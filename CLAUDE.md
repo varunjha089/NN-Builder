@@ -85,6 +85,10 @@ web/src/                   Design.tsx: the canvas reads left to right (handles l
                            NN Builder → Settings… ⌘,): presets + colour pickers, kept in localStorage "nnb-night-panels" (theme.ts
                            setPanels/usePanels); the Settings tab also has the theme and the automatic-update switch.
 .github/workflows/ci.yml   core tests + PyTorch comparison on GitHub's machines
+doc/nn_builder_manual.tex  the user manual (LaTeX, plain thebibliography, no biber): app tour, step-by-step design, arithmetic, block
+                           reference, dataset/code/connection/train/results, spot handling, the 15 demos (numbers from the app),
+                           troubleshooting; nn_builder_manual.pdf is committed next to it. Build: cd doc && latexmk -pdf
+                           nn_builder_manual.tex. Keep it in step with features (new blocks, demos, settings, menus) and recompile.
 ```
 
 ## Build, test, install (macOS)

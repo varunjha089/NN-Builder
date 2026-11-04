@@ -1,0 +1,1136 @@
+% NN Builder: user manual. Build: latexmk -pdf nn_builder_manual.tex (pdfLaTeX; no biber needed, the references are a plain bibliography).
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=2.3cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,fit,calc}
+\usepackage{caption}
+\usepackage[hidelinks]{hyperref}
+\usepackage{url}
+
+\definecolor{nnaccent}{HTML}{2F6FDE}
+\definecolor{nnconv}{HTML}{D9822B}
+\definecolor{nnpool}{HTML}{2A9D8F}
+\definecolor{nnnorm}{HTML}{8E5BB5}
+\definecolor{nndense}{HTML}{4B5BB5}
+\definecolor{nnjoin}{HTML}{C0392B}
+\definecolor{nnout}{HTML}{2E8B57}
+\definecolor{nntok}{HTML}{0F766E}
+\definecolor{nnatt}{HTML}{7C3AED}
+\definecolor{nnin}{HTML}{3B6FD8}
+
+\newcommand{\ui}[1]{\textbf{\textsf{#1}}}
+\newcommand{\kbd}[1]{\mbox{\fboxsep=1.5pt\fbox{\footnotesize\texttt{#1}}}}
+\newcommand{\file}[1]{\texttt{#1}}
+\newcommand{\shape}[1]{$(#1)$}
+\newcommand{\note}[1]{\par\smallskip\noindent\fcolorbox{nnaccent!60}{nnaccent!6}{\parbox{\dimexpr\linewidth-2\fboxsep-2\fboxrule}{\small #1}}\par\smallskip}
+
+\tikzset{
+  blk/.style={draw, rounded corners=2pt, minimum height=6.5mm, inner sep=3pt, font=\footnotesize\sffamily, line width=0.6pt},
+  arr/.style={-{Stealth[length=2mm]}, line width=0.5pt},
+}
+
+\setlist{itemsep=2pt, topsep=4pt}
+\setlength{\parskip}{4pt}
+\setlength{\parindent}{0pt}
+\setlength{\emergencystretch}{2em}
+
+\title{\textbf{NN Builder}\\[4pt]\large User manual: using the application, designing a neural network,\\ and the demo architectures explained}
+\author{The NN Builder project\\\small\url{https://github.com/varunjha089/NN-Builder}}
+\date{November 2026 (version 0.2 and the changes after it)}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+NN Builder is a desktop application for designing neural networks on a canvas, the way one draws a block diagram. The design is checked
+while it is drawn: every connection shows the shape of the tensor it carries, every block shows its output size and parameter count, and
+mistakes are explained in plain words on the block itself. A finished design becomes a complete, readable PyTorch training script that also
+loads the data (a built-in dataset, Hugging Face or Kaggle), and the application runs it on a GPU somewhere else: a free Kaggle notebook,
+a college GPU server over SSH, or an Amazon EC2 instance (including spot instances, which may be interrupted). The computer the application
+runs on only designs: it never trains, never downloads datasets and needs no PyTorch.
+This manual explains the application screen by screen, walks through designing a network from scratch, gives the arithmetic behind every
+number the application shows, explains the fifteen demo architectures (from LeNet-5 to a one-billion-parameter Vision Transformer, plus one
+original design), and ends with troubleshooting. References point to the original papers, on arXiv wherever they are published there.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+%=====================================================================================================================================
+\section{What NN Builder is}
+
+\subsection{The idea}
+Building a neural network usually means writing code, running it, and finding out from an error message (or worse, from silently bad
+results) that a layer received a tensor of the wrong shape. NN Builder moves that discovery to the moment of design. It is inspired by
+visual programming tools such as MIT App Inventor: blocks are placed and connected, and the tool refuses or explains combinations that cannot
+work.
+
+Three principles shape the application:
+\begin{enumerate}
+  \item \textbf{The design computer only designs.} Shapes, parameter counts and the generated code are computed by an engine written in
+        Rust inside the application, instantly and offline. No deep-learning library is installed locally, and no dataset is downloaded
+        to the design computer.
+  \item \textbf{Training happens on a GPU elsewhere, automatically.} One button generates the script, uploads it, prepares the machine
+        if needed, starts the run, follows it, and brings the results back.
+  \item \textbf{A run does not depend on the connection.} On a server or an EC2 instance the run is started detached; it continues
+        when the laptop sleeps, the network drops or the application is closed, and the application reconnects to it later.
+\end{enumerate}
+
+\subsection{The workflow at a glance}
+\begin{center}
+\begin{tikzpicture}[node distance=5mm]
+  \node[blk, fill=nnin!15] (p) {Project};
+  \node[blk, fill=nnconv!15, right=of p] (d) {Design};
+  \node[blk, fill=nnpool!15, right=of d] (ds) {Dataset};
+  \node[blk, fill=nndense!15, right=of ds] (c) {Code};
+  \node[blk, fill=nnatt!15, right=of c] (t) {Train};
+  \node[blk, fill=nnout!15, right=of t] (r) {Results};
+  \foreach \a/\b in {p/d,d/ds,ds/c,c/t,t/r} \draw[arr] (\a) -- (\b);
+  \node[below=3mm of t, font=\scriptsize, align=center] {Kaggle / college GPU (SSH) /\\ AWS EC2 (on-demand or spot)};
+\end{tikzpicture}
+\end{center}
+The tabs in the top bar follow this order. \ui{Connection}, set apart on the right, holds the tokens and machines that training needs,
+and is usually visited once.
+
+\subsection{What it is not}
+NN Builder covers image classification and image segmentation. It does not (yet) train on text, audio or tabular data, and it does not
+run training on the design computer, even for a tiny network. The generated script, however, is ordinary PyTorch~\cite{paszke2019pytorch}:
+it can be copied, read, edited and run anywhere by hand.
+
+%=====================================================================================================================================
+\section{Installing, updating and the window}
+
+\subsection{Installing}
+Installers are published with every release on GitHub (\url{https://github.com/varunjha089/NN-Builder/releases/latest}):
+\begin{itemize}
+  \item \textbf{macOS} (Apple silicon): the file ending in \file{\_aarch64.app.zip}. Unzip it and move \file{NN Builder.app} to
+        the Applications folder. The application is not signed by Apple, so the first start may need a right-click on the application and
+        \ui{Open}.
+  \item \textbf{Windows}: \file{NN-Builder\_X\_x64-setup.exe}.
+  \item \textbf{Linux}: \file{nn-builder\_X\_amd64.deb} or the portable \file{.AppImage}.
+\end{itemize}
+
+\subsection{Automatic updates}
+Once a day (if enabled), the application asks GitHub for the latest release. When a newer version exists, a banner appears under the top
+bar with \ui{Install and restart}. The download is checked against the SHA-256 checksum published with the release before anything is
+replaced. The switch is in \ui{Settings} (and on the Projects page); \ui{NN Builder} $\rightarrow$ \ui{Check for Updates\ldots} checks at once.
+
+\subsection{The top bar}
+From left to right: the name, the \ui{Project} button (the current project, or \emph{No project}; it opens the Projects page), a
+\ui{not saved} badge and a \ui{Save\ldots} button when the open project is an unsaved demo, the tabs \ui{Design}, \ui{Dataset},
+\ui{Code}, \ui{Train}, \ui{Results}, then on the right a summary (``\emph{N params $\cdot$ ready}'' in green, or
+``\emph{design has problems}'' / ``\emph{dataset incomplete}'' in red), the day/night button (a moon in day mode, a sun in night mode), the \ui{Settings} button, and \ui{Connection} (a red dot means something is still missing there).
+
+\subsection{Menus and keyboard shortcuts}
+\begin{longtable}{@{}p{3.1cm}p{3.3cm}p{8.6cm}@{}}
+\toprule
+\textbf{Menu} & \textbf{Item (shortcut)} & \textbf{What it does}\\
+\midrule\endhead
+NN Builder & Check for Updates\ldots & asks GitHub for a newer release\\
+ & Settings\ldots\ (\kbd{Cmd+,}) & opens the Settings page\\
+File & New Project\ldots\ (\kbd{Cmd+N}) & Projects page, cursor in the name field\\
+ & Open Project\ldots\ (\kbd{Cmd+O}) & choose a project folder\\
+ & Save Project\ldots\ (\kbd{Cmd+S}) & keeps an unsaved demo as a real project\\
+ & New from Demo $\triangleright$ & opens one of the fifteen demo architectures\\
+ & Import / Export Design\ldots & reads or writes a design (\file{model.json})\\
+ & Export train.py\ldots\ (\kbd{Cmd+E}) & saves the generated training script\\
+ & Show Project in Finder (\kbd{Shift+Cmd+R}) & reveals the project folder\\
+Edit & Undo (\kbd{Cmd+Z}), Redo (\kbd{Shift+Cmd+Z}) & undo/redo changes to the design (in a text field: the typing)\\
+ & Arrange Left to Right (\kbd{Cmd+L}) & lays the canvas out in columns by depth\\
+View & Night Mode (\kbd{Shift+Cmd+N}) & switches the neon night theme\\
+Connection & Open Connection (\kbd{Shift+Cmd+K}) & the Connection page\\
+ & Install Tools\ldots & installs the \file{kaggle} and \file{boto3} helpers\\
+\bottomrule
+\end{longtable}
+
+\subsection{Day and night themes, Settings}
+The night theme draws panels dark and boxes and text as neon glows; every layer glows in the colour of its kind (Conv2D orange, pooling
+teal, normalisation violet, Dense blue, joins red, outputs green, transformer blocks teal and violet). In night mode the Design screen is
+split into three separate panels (blocks on the left, canvas in the middle, inspector on the right). Their background colours are chosen in
+\ui{Settings} $\rightarrow$ \ui{Night panel colours}: six presets (Midnight, Deep purple, Ocean, Carbon, Forest, Crimson) or a colour
+picker per panel, with a live preview; a warning appears for colours so light that neon text becomes hard to read. The theme, the panel
+colours and the automatic-update switch are all on the Settings page.
+
+%=====================================================================================================================================
+\section{Projects}
+
+\subsection{Creating, opening, saving}
+A \emph{project} is a folder. The Projects page has two cards side by side:
+\begin{itemize}
+  \item \ui{New project}: type a name and press \ui{Create} (or Enter). The folder is made in the projects folder shown underneath
+        (\ui{change} picks another one).
+  \item \ui{Open}: the projects used before, each with its folder, and a field to open any project folder by its path.
+\end{itemize}
+Every change is saved as it is made; there is no ``save'' step for a normal project.
+
+\subsection{Demo architectures are unsaved until you save them}
+Below the two cards, \ui{Start from a demo architecture} shows the fifteen demos as tiles (the section folds with its arrow). Clicking a
+tile opens that network on the canvas as an \emph{unsaved} project: nothing is written to the projects folder. The top bar then shows
+\ui{not saved} and \ui{Save\ldots}. Saving (\ui{Save\ldots} or \kbd{Cmd+S}) asks for a name and moves it into the projects folder as a
+normal project. An unsaved demo is discarded, without asking, when another demo or project is opened or created, and when the application
+quits. This keeps the projects folder free of ``AlexNet demo 2, 3, 4\ldots''. A demo cannot be trained before it is saved, so that runs
+always belong to a kept project.
+
+\subsection{What a project folder contains}
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\file{project.json} & name, creation date\\
+\file{model.json} & the design: blocks (with their settings and positions) and arrows\\
+\file{dataset.json} & the dataset choice\\
+\file{train.json} & the training settings\\
+\file{runs/<id>/} & one folder per training run (code, metrics, log, results, model)\\
+\bottomrule
+\end{tabular}
+\end{center}
+A design can also be exported on its own (\ui{File} $\rightarrow$ \ui{Export Design\ldots}) and imported into another project.
+
+%=====================================================================================================================================
+\section{The Design screen}
+
+\subsection{Layout}
+\begin{description}
+  \item[Blocks (left).] The palette, grouped as \emph{Image} (Conv2D, Depthwise Conv2D, Pool, Global pool, Flatten),
+        \emph{Up-sampling} (ConvTranspose2D, Upsample), \emph{Dense and outputs} (Dense, Output, Segmentation output),
+        \emph{Normalise / regularise} (BatchNorm, LayerNorm, Dropout, Activation), \emph{Transformer} (To tokens, Class token +
+        position, Self-attention, Token pool) and \emph{Branches} (Add, Concat, Multiply). Above them: the
+        \ui{Famous architectures} picker and \ui{Arrange left to right}.
+  \item[Canvas (middle).] The network, read from left to right. Each block shows its title (with $\times$ for an error and a warning
+        sign for a warning), a one-line summary of its settings, and its output shape with its parameter count. Each arrow shows the
+        shape of the tensor it carries. Zoom and pan with the trackpad or the controls; a minimap sits in the corner.
+  \item[Inspector (right).] With a block selected: its settings, its shape formula with its own numbers, its receptive field, the
+        sliding-window animation (convolution and pooling), and the skip-connection tool. With nothing selected: the whole design's
+        parameter count, its problems, and the layer table.
+\end{description}
+
+\subsection{Working with blocks}
+\begin{itemize}
+  \item \textbf{Add:} click a block in the palette; it is added after the selected block (and connected to it).
+  \item \textbf{Connect:} drag from a block's right dot to another block's left dot. Add, Concat and Multiply accept several arrows; all
+        other blocks take one.
+  \item \textbf{Delete:} select a block or an arrow and press Backspace. The Input block cannot be deleted.
+  \item \textbf{Move:} drag blocks; \ui{Arrange left to right} (\kbd{Cmd+L}) places them in columns by depth (the longest path from the
+        Input), stacking parallel branches in their column.
+  \item \textbf{Undo / Redo:} \kbd{Cmd+Z} / \kbd{Shift+Cmd+Z}; changes made within 0.6 seconds of each other count as one step.
+\end{itemize}
+
+\subsection{The layer table}
+With nothing selected, the inspector lists the layers grouped into stages, each with its output shape, its parameter subtotal and the
+receptive field at its end:
+\begin{itemize}
+  \item \textbf{Input}.
+  \item \textbf{Image stages} by resolution (``Stage 2 $\cdot$ 27$\times$27''); a pooling layer, a Dropout after it, and small vector
+        layers inside a stage (a squeeze-and-excitation gate) stay with their stage; decoder stages that grow the image are marked with an
+        up arrow.
+  \item \textbf{Transformers}: \emph{Embedding} (with a patch convolution before it), \emph{Encoder block 1, 2, \ldots}, \emph{Final norm}.
+  \item \textbf{Classifier}: the vector layers at the end.
+\end{itemize}
+Each group shows its contents in block colours (``Conv2D $\times$3, Pool'') and opens with a click (\ui{Expand all} opens all).
+
+\subsection{Famous architectures and the skip-connection tool}
+\ui{Famous architectures} replaces the current design with a demo (the previous design is kept as \file{model.previous.json}) and adjusts
+the dataset's image size to the one the architecture was made for. The skip-connection tool (inspector, with a block selected) joins an
+earlier block's output to the selected block's output with \emph{Add} (a residual connection, as in ResNet~\cite{he2015resnet}) or
+\emph{Concat} (as in DenseNet~\cite{huang2016densenet} and U-Net~\cite{ronneberger2015unet}). When the shapes differ, it inserts a
+projection: a 1$\times$1 convolution with the right stride (images), a pooling layer, or a Dense layer (vectors).
+
+%=====================================================================================================================================
+\section{Designing a network, step by step}
+
+This section builds a small convolutional network for CIFAR-10~\cite{krizhevsky2009cifar} (32$\times$32 colour photos, 10 classes).
+
+\paragraph{1. A project and the data first.}
+Create a project ``CIFAR CNN''. Open \ui{Dataset}, choose \ui{Built-in (torchvision)} and \ui{CIFAR-10}. The Input block now says
+\shape{3, 32, 32}: three colour channels of 32$\times$32 pixels. (Choosing the data first means every shape shown while designing is the
+real one.)
+
+\paragraph{2. A convolution.}
+In \ui{Design}, select the Input block and click \ui{Conv2D}. In the inspector set \ui{Filters} to 32 and choose the preset
+``3$\times$3, stride 1 (keep size)''. The block shows $\rightarrow$ \shape{32, 32, 32} and 896 parameters
+($3\cdot3\cdot3\cdot32$ weights $+$ 32 biases). The arrow from Input shows \shape{3, 32, 32}.
+
+\paragraph{3. Downsampling.}
+With the convolution selected, click \ui{Pool}: max pooling 2$\times$2, stride ``same as pool size''. Output \shape{32, 16, 16}, no
+parameters. The inspector animates the 2$\times$2 window sliding with stride 2: every window position gives one output value.
+
+\paragraph{4. Repeat, wider.}
+Add another Conv2D (64 filters, 3$\times$3, same) and Pool: \shape{64, 8, 8}. A third pair with 128 filters gives \shape{128, 4, 4}.
+This is the common pattern: \emph{the image gets smaller and deeper}.
+
+\paragraph{5. From image to vector.}
+A classifier needs one vector per image. Two choices:
+\begin{itemize}
+  \item \ui{Flatten}: \shape{128, 4, 4} $\rightarrow$ \shape{2048}. Keeps the spatial layout, but the next Dense layer then has many weights.
+  \item \ui{Global pool} (average): \shape{128, 4, 4} $\rightarrow$ \shape{128}, one number per channel~\cite{lin2013nin}. Far fewer
+        parameters, and it works for any image size.
+\end{itemize}
+Choose Global pool here.
+
+\paragraph{6. The head.}
+Add \ui{Dense} (128 units, ReLU), \ui{Dropout} (rate 0.3)~\cite{hinton2012dropout,srivastava2014dropout}, then \ui{Output}. The
+Output block reads the number of classes from the dataset (10) and has $128\cdot10+10=1290$ parameters. The top bar now says
+``\emph{\ldots params $\cdot$ ready}''.
+
+\paragraph{7. Make it better.}
+\begin{itemize}
+  \item Insert \ui{BatchNorm}~\cite{ioffe2015batchnorm} after each convolution (set the convolution's activation to \emph{none}, and add
+        an \ui{Activation} ReLU after the BatchNorm): faster, more stable training.
+  \item Select the second convolution and use the skip-connection tool to add its input to its output (\emph{Add}): a residual block.
+        Where the channel counts differ, the tool adds the 1$\times$1 projection for you.
+  \item Look at the layer table: it now shows Stage 1 $\cdot$ 32$\times$32, Stage 2 $\cdot$ 16$\times$16, Stage 3 $\cdot$ 8$\times$8,
+        Classifier, each with its parameter subtotal.
+\end{itemize}
+
+\paragraph{8. Check, then train.}
+The \ui{Code} tab shows the generated script; \ui{Train} starts it on Kaggle, a server or EC2 (Section~\ref{sec:train}).
+
+\subsection{When something is wrong}
+\label{sec:checks}
+A block turns \textbf{red} when the design cannot work (training is blocked) and \textbf{yellow} when it works but probably not as
+intended. Blocks after a red block are greyed out (``fix the layer above''); blocks not connected to the Input are faded and ignored.
+The reasons are written on the block and in the inspector. The checks include:
+
+\begin{longtable}{@{}p{1.6cm}p{13.4cm}@{}}
+\toprule
+\textbf{Level} & \textbf{Check (as the application words it, shortened)}\\
+\midrule\endhead
+error & exactly one Input; exactly one Output (or Segmentation output), and it must be last; no loops\\
+error & the image is too small for the window (``use a smaller kernel, padding, or fewer pooling layers before this'')\\
+error & Dense / Output on an image: ``add Flatten or Global pool before it''\\
+error & an image block (convolution, pooling) after Flatten or after To tokens\\
+error & Add with different shapes (``use a 1$\times$1 Conv2D to match channels, or a stride to match sizes'')\\
+error & Concat with different heights/widths; Multiply with incompatible shapes\\
+error & attention: the token dimension must divide evenly by the number of heads\\
+error & BatchNorm on tokens (use LayerNorm); Output on tokens (add Token pool)\\
+error & segmentation: the output must return to the mask size (``Upsample / ConvTranspose2D'')\\
+error & pooling padding more than half the window; output padding not smaller than the stride (PyTorch rules)\\
+error & the dataset has no classes yet\\
+warning & the stride does not divide the input evenly: the last rows/columns are ignored\\
+warning & stride larger than the window: pixels between windows are skipped\\
+warning & ``same'' padding with an even kernel cannot keep the size exactly\\
+warning & a very large Dense layer after Flatten (``try Global pool instead'')\\
+warning & a block whose result is not used; Flatten on an input that is already flat\\
+\bottomrule
+\end{longtable}
+
+%=====================================================================================================================================
+\section{The arithmetic behind the numbers}
+\label{sec:math}
+
+The engine computes everything below exactly as PyTorch does; on every change to the code, an automatic test on GitHub builds hundreds of
+random designs (and all demos) in real PyTorch and compares every shape and parameter count with the application's (most recently:
+296 designs, 0 differences). A good visual guide to this arithmetic is Dumoulin and Visin~\cite{dumoulin2016guide}.
+
+\subsection{Output size}
+For a convolution or pooling layer with input size $n$ (height or width), kernel $k$, stride $s$, padding $p$ and dilation $d$:
+\begin{equation}
+  n_{\text{out}} = \left\lfloor \frac{n + 2p - d\,(k-1) - 1}{s} \right\rfloor + 1 .
+\end{equation}
+\begin{itemize}
+  \item \textbf{same}: padding chosen so that, with stride 1, $n_{\text{out}}=n$ (for an odd kernel, $p=d(k-1)/2$). With stride $s>1$
+        the application computes the explicit padding PyTorch needs (it refuses \texttt{padding="same"} with a stride), giving
+        $n_{\text{out}}=\lceil n/s\rceil$.
+  \item \textbf{valid}: $p=0$.
+  \item \textbf{a number}: that many pixels of zeros on each side.
+\end{itemize}
+Dilation~\cite{yu2015dilated} spreads the kernel: a 3$\times$3 kernel with dilation 2 covers 5$\times$5 pixels with 9 weights.
+For a transposed convolution (up-sampling):
+\begin{equation}
+  n_{\text{out}} = (n-1)\,s - 2p + d\,(k-1) + p_{\text{out}} + 1 ,
+\end{equation}
+so a 2$\times$2 kernel with stride 2 exactly doubles the size. Upsample multiplies the size by its scale.
+
+\subsection{Parameters}
+\begin{center}
+\begin{tabular}{@{}p{3.9cm}p{6.4cm}p{5cm}@{}}
+\toprule
+\textbf{Block} & \textbf{Parameters} & \textbf{Example}\\
+\midrule
+Conv2D & $k_h k_w C_{\text{in}} C_{\text{out}} + C_{\text{out}}$ (bias) & 3$\times$3, 64$\rightarrow$128: 73\,856\\
+Depthwise Conv2D & $k_h k_w C_{\text{in}} m + C_{\text{in}} m$ & 3$\times$3, 512 channels: 5\,120\\
+ConvTranspose2D & $k_h k_w C_{\text{in}} C_{\text{out}} + C_{\text{out}}$ & 2$\times$2, 512$\rightarrow$256: 524\,544\\
+Dense / Output & $n_{\text{in}} n_{\text{out}} + n_{\text{out}}$ & 4096$\rightarrow$4096: 16\,781\,312\\
+BatchNorm & $2C$ (scale and shift) & 64 channels: 128\\
+LayerNorm & $2D$ & 768 values: 1\,536\\
+Self-attention & $4d^2 + 4d$ (query, key, value, output) & $d=768$: 2\,362\,368\\
+Class token + position & $d + (N+1)\,d$ & 196 tokens, $d=768$: 152\,064\\
+Pool, Global pool, Flatten, Dropout, Activation, joins & 0 & \\
+\bottomrule
+\end{tabular}
+\end{center}
+Convolutions followed by BatchNorm are created without a bias in the demos (the BatchNorm shift makes it redundant), as torchvision does.
+
+\subsection{Receptive field}
+The receptive field of a block is the size of the input region that one of its output values can see. With $r_0=1$ and $j_0=1$ (the
+``jump'', the distance in input pixels between neighbouring outputs), each layer with kernel $k$, dilation $d$ and stride $s$ gives
+\begin{equation}
+  r_\ell = r_{\ell-1} + d\,(k-1)\, j_{\ell-1}, \qquad j_\ell = j_{\ell-1}\, s .
+\end{equation}
+The inspector shows it for every block (``one output value here sees 99$\times$99 input pixels''). A network should usually reach a
+receptive field about the size of the objects it must recognise; the \emph{effective} receptive field is smaller and concentrated in the
+centre~\cite{luo2017erf}.
+
+\subsection{Memory needed for training}
+A useful estimate for training with Adam~\cite{kingma2014adam} in mixed precision~\cite{micikevicius2017mixed} is about
+\textbf{16 bytes per parameter} before any images: 4 for the weights, 4 for the gradients and 8 for Adam's two running averages. On top
+come the activations kept for the backward pass, which grow with the batch size and the image size. Examples: ResNet-18 (11.2 M
+parameters) needs about 0.2 GB for its state; ViT-Base (86 M) about 1.4 GB; ViT-g/14 (1.01 B) about 16 GB, more than a 16 GB T4 has. If a
+run fails with ``CUDA out of memory'', halve the batch size; beyond that, gradient checkpointing~\cite{chen2016checkpoint} and sharding
+the optimizer state over several GPUs~\cite{rajbhandari2019zero} are the standard remedies (not built into NN Builder).
+
+%=====================================================================================================================================
+\section{Reference of all blocks}
+
+\begin{longtable}{@{}p{2.9cm}p{3.7cm}p{8.4cm}@{}}
+\toprule
+\textbf{Block} & \textbf{Shape in $\rightarrow$ out} & \textbf{Settings and notes}\\
+\midrule\endhead
+Input & $\rightarrow (C,H,W)$ & set by the dataset (channels, height, width)\\
+Conv2D & $(C,H,W)\rightarrow(F,H',W')$ & filters, kernel (with a ``square'' link: unlink for height$\times$width), stride, padding (same / valid / number), dilation, activation, bias; presets: 3$\times$3 keep size, 3$\times$3 stride 2 (halve), 1$\times$1 (mix channels), 5$\times$5, 7$\times$7 stride 2 (ResNet stem)\\
+Depthwise Conv2D & $(C,H,W)\rightarrow(Cm,H',W')$ & one filter per input channel (channel multiplier $m$); with a following 1$\times$1 Conv2D it forms a depthwise separable convolution~\cite{howard2017mobilenets}\\
+ConvTranspose2D & $(C,H,W)\rightarrow(F,H'',W'')$ & learnt up-sampling; filters, kernel, stride, padding, output padding\\
+Pool & $(C,H,W)\rightarrow(C,H',W')$ & max or average; pool size; stride (default: same as size); padding\\
+Global pool & $(C,H,W)\rightarrow(C)$ & average or max over the whole image\\
+Upsample & $(C,H,W)\rightarrow(C,sH,sW)$ & scale, nearest or bilinear; no parameters\\
+BatchNorm & same shape & normalises each channel over the batch~\cite{ioffe2015batchnorm}; images and vectors only\\
+LayerNorm & same shape & normalises each sample~\cite{ba2016layernorm}; on tokens, over the dimension; on an image, over (channels, height, width)\\
+Dropout & same shape & rate: the fraction of values set to zero during training~\cite{srivastava2014dropout}\\
+Flatten & $(C,H,W)\rightarrow(CHW)$ & \\
+Dense & $(n)\rightarrow(u)$; tokens $(N,D)\rightarrow(N,u)$ & units, activation; on tokens it acts on each token (the transformer MLP)\\
+Activation & same shape & ReLU, Leaky ReLU, GELU~\cite{hendrycks2016gelu}, SiLU~\cite{ramachandran2017swish}, sigmoid, tanh\\
+Add & equal shapes $\rightarrow$ same & element-wise sum: residual connections~\cite{he2015resnet}\\
+Concat & joins along channels & images need equal height and width; the arrow order is the channel order\\
+Multiply & see notes & equal shapes; a one-channel map times an image (attention gate~\cite{oktay2018attention}); a per-channel vector times an image (squeeze-and-excitation~\cite{hu2017senet})\\
+To tokens & $(C,H,W)\rightarrow(N,D)$ & \emph{patches}: every pixel of the feature map becomes a token of $C$ values ($N=HW$), used after a patch convolution as in ViT~\cite{dosovitskiy2020vit}; \emph{rows}: every image row is a token\\
+Class token + position & $(N,D)\rightarrow(N{+}1,D)$ & a learnt class token in front, and learnt position embeddings added\\
+Self-attention & $(N,D)\rightarrow(N,D)$ & heads, dropout; multi-head scaled dot-product attention~\cite{vaswani2017attention}\\
+Token pool & $(N,D)\rightarrow(D)$ & the class token, or the mean of all tokens\\
+Output & $(n)\rightarrow(K)$ & $K$ = number of classes; softmax/cross-entropy is in the training script\\
+Segmentation output & $(C,H,W)\rightarrow(K,H,W)$ & a 1$\times$1 convolution giving a class score for every pixel; must match the mask size\\
+\bottomrule
+\end{longtable}
+
+\subsection{Transformers in NN Builder}
+A transformer works on a \emph{sequence of tokens}, shape $(N, D)$: $N$ tokens of $D$ values. To use one on images:
+\begin{enumerate}
+  \item cut the image into patches with a convolution whose kernel equals its stride (ViT: 16$\times$16, stride 16, $D$ filters), giving
+        $(D, H/16, W/16)$;
+  \item \ui{To tokens} (patches) turns that map into $N=(H/16)(W/16)$ tokens;
+  \item \ui{Class token + position} adds a learnt class token and position information (attention by itself ignores order);
+  \item repeat the \emph{encoder block}: LayerNorm $\rightarrow$ Self-attention $\rightarrow$ Add (with the block's input), then
+        LayerNorm $\rightarrow$ Dense (GELU, usually $4D$ units) $\rightarrow$ Dense ($D$) $\rightarrow$ Add. Normalising before each
+        part (``pre-norm'') trains more stably than after it~\cite{xiong2020prenorm};
+  \item a final LayerNorm, \ui{Token pool} (class token), \ui{Output}.
+\end{enumerate}
+
+\begin{figure}[htbp]\centering
+\begin{tikzpicture}[node distance=3.5mm]
+  \node[blk] (x) {$x$};
+  \node[blk, fill=nnnorm!15, right=of x] (ln1) {LayerNorm};
+  \node[blk, fill=nnatt!15, right=of ln1] (at) {Self-attention};
+  \node[blk, fill=nnjoin!15, right=of at] (a1) {Add};
+  \node[blk, fill=nnnorm!15, right=of a1] (ln2) {LayerNorm};
+  \node[blk, fill=nndense!15, right=of ln2] (d1) {Dense $4D$};
+  \node[blk, fill=nndense!15, right=of d1] (d2) {Dense $D$};
+  \node[blk, fill=nnjoin!15, right=of d2] (a2) {Add};
+  \foreach \a/\b in {x/ln1,ln1/at,at/a1,a1/ln2,ln2/d1,d1/d2,d2/a2} \draw[arr] (\a) -- (\b);
+  \draw[arr] (x.north) -- ++(0,5mm) -| (a1.north);
+  \draw[arr] (a1.south) -- ++(0,-5mm) -| (a2.south);
+\end{tikzpicture}
+\caption{A pre-norm Transformer encoder block as it is built on the canvas.}
+\end{figure}
+
+\subsection{Segmentation}
+For segmentation (Dataset $\rightarrow$ \ui{Segmentation}) every pixel gets a class. The network must end with \ui{Segmentation output}
+at the size of the masks, so an encoder that shrinks the image needs a decoder that grows it again (ConvTranspose2D or Upsample), as in
+U-Net~\cite{ronneberger2015unet}. The training script uses a per-pixel cross-entropy loss and reports pixel accuracy and the mean
+intersection over union (mIoU) of the classes.
+
+%=====================================================================================================================================
+\section{The Dataset tab}
+
+Only the \emph{description} of a dataset is read on the design computer; the images are downloaded on the GPU machine when training starts
+(and cached there in \file{\textasciitilde/.nn\_builder/data}).
+
+\subsection{Built-in datasets}
+MNIST (handwritten digits, $1\times28\times28$)~\cite{lecun1998gradient}, Fashion-MNIST (clothing, $1\times28\times28$)~\cite{xiao2017fashion}
+and CIFAR-10 (photos, $3\times32\times32$)~\cite{krizhevsky2009cifar}, ten classes each, downloaded by torchvision on the GPU machine.
+\ui{Resize the images} enlarges them for networks made for larger inputs (for example 224$\times$224 for AlexNet); the number of channels
+can be changed as well (grey images repeated into three channels).
+
+\subsection{Hugging Face}
+Type a dataset id (\texttt{owner/name}) and press \ui{Read info}: the application reads its configurations, splits, columns and first
+rows from the public datasets-server API, without downloading~\cite{lhoest2021datasets}. Then choose:
+\begin{itemize}
+  \item \ui{Config} and \ui{Training split} (with its number of rows);
+  \item \ui{Test split}: a separate split, or ``10\% of the training split'' (a fixed, seeded split);
+  \item \ui{Image column} and \ui{Label column}: the column that holds the pictures (an \emph{Image} feature) and the one that holds the
+        class (a \emph{ClassLabel} feature, whose class names fill the class list).
+\end{itemize}
+Gated or private datasets need a Hugging Face token (Connection tab), which the run can copy to the machine.
+
+\note{\textbf{Only image datasets work.} A text corpus such as \texttt{HuggingFaceFW/fineweb-edu} (web pages and their metadata) has no
+image column and no class column: the image and label columns then point at unrelated text, the class list stays empty, and the design
+is marked as having problems. Use datasets such as \texttt{uoft-cs/cifar10}, \texttt{ylecun/mnist} or \texttt{food101}.}
+
+\subsection{Kaggle}
+Type the dataset slug (\texttt{owner/name}); with the Kaggle token stored, the application lists its files and recognises the common
+layout of \emph{one folder per class}. Set the training folder (and optionally a test folder; otherwise 10\% of the training images are
+kept for testing) and the class names (the folder names, in order). On Kaggle the dataset is attached to the notebook; on a server or EC2
+it is downloaded with the Kaggle tool, which needs the token on that machine (the Train tab offers to copy it there).
+
+\subsection{Segmentation data}
+Hugging Face: an image column and a \ui{Mask column}. Kaggle: an \ui{Images folder} and a \ui{Masks folder} whose files have the same
+names. The class list maps mask values to classes (value 0 is the first class; with two classes any non-zero pixel is the second).
+
+\subsection{Image size and classes}
+\ui{Image height}, \ui{Image width} and \ui{Channels} set the shape of the Input block; images are resized to it. The class names, one per
+line in label order, set the Output block's size.
+
+%=====================================================================================================================================
+\section{The Code tab: what the generated script does}
+
+The \ui{Code} tab shows the complete \file{train.py}; \ui{Copy} and \ui{Export train.py} save it. It needs only PyTorch and torchvision
+(plus \texttt{datasets} or \texttt{kaggle} for those sources) and runs anywhere with \texttt{python train.py}. In order, it:
+\begin{enumerate}
+  \item defines the network as an \texttt{nn.Module} whose \texttt{forward} follows the graph, and lists every layer's expected shape;
+  \item loads the data with the chosen transforms and augmentation (training images only), normalised with the dataset's statistics;
+  \item runs a \textbf{one-batch check} on the GPU machine: one batch forward and backward, comparing every layer's real shape with the
+        application's, and stopping at once with a clear message on a difference;
+  \item trains with Adam~\cite{kingma2014adam} or SGD with momentum 0.9, with automatic mixed precision on CUDA~\cite{micikevicius2017mixed};
+  \item after each epoch evaluates on the test data and writes a \textbf{checkpoint} (\file{checkpoint.pt}; optionally also every few
+        minutes inside an epoch); a restarted run \textbf{resumes} from it, in the middle of an epoch with the same batch order;
+  \item writes one JSON line per event to \file{metrics.jsonl} (start, batch, epoch, checkpoint, resume, interrupted, done, stopped,
+        error) and finally \file{model.pt} (the weights) and \file{results.json} (test accuracy, confusion matrix, sample predictions,
+        feature maps, first-layer filters, and per-class IoU for segmentation).
+\end{enumerate}
+Signals: \texttt{TERM}/\texttt{INT} end the run cleanly (the model and results are still saved); on EC2, \texttt{USR1} means ``AWS is
+taking the instance back'' (checkpoint and exit to be resumed) and \texttt{USR2} means ``checkpoint now'' (Section~\ref{sec:spot}).
+
+%=====================================================================================================================================
+\section{The Connection tab}
+
+Tokens and keys are kept in the system keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service) and handed to one call
+at a time; they are never written into projects, code or logs. When a run needs one on a remote machine, it is written there as a file
+readable only by its owner, through the SSH connection's input, never on a command line.
+
+\begin{description}
+  \item[Kaggle.] kaggle.com $\rightarrow$ profile $\rightarrow$ Settings $\rightarrow$ API $\rightarrow$ Create New Token. Paste the
+        username and key (or the whole \file{kaggle.json}). GPU notebooks need a phone-verified account.
+  \item[Hugging Face.] Only for gated or private datasets: a ``Read'' token from huggingface.co $\rightarrow$ Settings $\rightarrow$
+        Access Tokens.
+  \item[AWS.] An IAM user's access key that may only start, stop and describe your instance (the page shows the policy to paste,
+        with \texttt{ec2:DescribeSpotInstanceRequests} added for spot details).
+  \item[Tools.] \ui{Install tools} makes a small private Python environment with the \texttt{kaggle} and \texttt{boto3} packages (about
+        60 MB) used to talk to Kaggle and AWS. No deep-learning library is installed.
+\end{description}
+
+\subsection{Machines}
+\textbf{College / any SSH server.} Host (or an alias from \file{\textasciitilde/.ssh/config}), user, port, login by key or
+\emph{password}, optional jump host, remote folder (default \file{.nn\_builder}), optional existing Python with PyTorch. With a password,
+\ui{Connect (log in once)} opens a Terminal window where you type it; the application then reuses that connection and never sees the
+password. \ui{Test} checks the login; \ui{Prepare} checks Python, the GPUs (\texttt{nvidia-smi}), the disk, and installs PyTorch in the
+remote folder (no administrator rights needed). \ui{Keep runs going with} chooses how a run survives logging out: SLURM (\texttt{sbatch},
+the right way on a shared cluster), \texttt{systemd-run} (needs ``lingering''), \texttt{tmux}, or \texttt{nohup}+\texttt{setsid};
+\emph{automatic} picks the best the machine allows.
+
+\textbf{AWS EC2 instance.} Region, instance id, user (\texttt{ubuntu}) and the instance's key file (\file{.pem}). \ui{Check instance}
+reports its state, type and shutdown behaviour (it must be \emph{Stop}, not \emph{Terminate}, or a finished run would delete the
+instance), and for a spot instance its request type and interruption behaviour. The application starts the instance for a run and the run
+stops it at the end.
+
+\textbf{Keep a copy of checkpoints on this Mac.} For either kind: every new checkpoint is copied back while the application is open,
+so a run can continue on another machine if its own machine is lost (essential for spot instances that may be terminated).
+
+%=====================================================================================================================================
+\section{Training}
+\label{sec:train}
+
+\subsection{Where to train}
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}lXXX@{}}
+\toprule
+ & \textbf{Kaggle} & \textbf{College GPU (SSH)} & \textbf{AWS EC2 g4dn.xlarge}\\
+\midrule
+GPU & T4 or P100 (Kaggle's choice) & whatever the server has (e.g. RTX A6000 48 GB) & NVIDIA T4 16 GB, 4 vCPU\\
+Cost & free (about 30 GPU hours a week) & free & per hour; spot is cheaper but may be interrupted\\
+Limits & about 12 h per run; runs may queue & the server's rules (SLURM time limits) & your quota for G instances\\
+Progress & shown when the notebook ends & live (every few seconds) & live\\
+Needs & Kaggle token & SSH access & AWS key, key file, quota\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Training settings}
+\begin{longtable}{@{}p{4.2cm}p{10.8cm}@{}}
+\toprule
+\textbf{Setting} & \textbf{Meaning and advice}\\
+\midrule\endhead
+Train on & Kaggle, or a machine from the Connection tab\\
+GPU on the machine & which GPU(s) to use on a shared server (empty = any free one)\\
+Epochs & passes over the training data\\
+Batch size & images per step; larger is faster but needs more memory (halve it on ``out of memory'')\\
+Learning rate & 0.001 suits Adam on small networks; very large networks (ViT-Base and bigger) need 0.0001 or less~\cite{steiner2021howtotrain}\\
+Optimizer & Adam~\cite{kingma2014adam} or SGD with momentum 0.9 (often better for ResNet-style networks with a good schedule~\cite{goyal2017accurate})\\
+Training images (0 = all) & a quick trial on a subset\\
+End the run after (hours of running) & a time limit, summed over resumes (protects the budget)\\
+Checkpoint every (minutes) & also checkpoint inside an epoch; 0 = only at the end of each epoch (spot instances then use 10 minutes)\\
+Automatic resumes & spot instances: how many interruptions are resumed automatically (default 20)\\
+Mixed precision & faster on T4/A100-class GPUs, half the activation memory~\cite{micikevicius2017mixed}\\
+Stop the EC2 instance & stop the instance when the run ends (saves money)\\
+Data augmentation & horizontal / vertical flip, random crop after padding, rotation, brightness/contrast; training images only~\cite{cubuk2018autoaugment}. Flips change the meaning of digits; vertical flips suit aerial images\\
+Copy my token to the machine & needed for Kaggle data on a server/EC2 and for gated Hugging Face data\\
+\bottomrule
+\end{longtable}
+
+\subsection{Following a run}
+\ui{Train on \ldots} starts a background task whose log appears at the bottom right. The run card then shows the state (starting,
+running with the epoch, interrupted, done, stopped, crashed, failed), the GPU, the training set size, the loss curves (per batch, training
+and validation per epoch) and the accuracy curves (and mIoU for segmentation), the last checkpoint, and the log. \ui{Stop} ends the run
+cleanly (the current epoch ends early, the model and results are saved). \ui{Fetch results} copies the outputs back (for a stopped EC2
+instance it starts the instance, copies, and stops it again). The \ui{Runs} table lists every run of the project with its test accuracy.
+
+\subsection{Independence from the connection}
+On a server or EC2, the run folder is copied with \texttt{rsync} and started detached (SLURM, systemd, tmux or nohup). The application only
+looks at it: every few seconds while the run is open it copies the new metric lines and the end of the log. Closing the application,
+sleeping the laptop or losing the network does not affect the run; the application catches up when it can reach the machine again.
+
+\subsection{EC2 spot instances}
+\label{sec:spot}
+Spot instances use spare EC2 capacity at a lower price, but AWS may take one back with a two-minute notice. NN Builder recognises a spot
+instance by itself. The recommended setup is a \emph{persistent} spot request with interruption behaviour \emph{stop} (AWS restarts the
+instance when capacity returns, with its disk), plus \ui{Keep a copy of checkpoints on this Mac}.
+
+\begin{longtable}{@{}p{5cm}p{10cm}@{}}
+\toprule
+\textbf{Situation} & \textbf{What NN Builder does}\\
+\midrule\endhead
+Two-minute interruption notice & a watcher on the instance sees it in the instance metadata; the script saves a mid-epoch checkpoint at once and exits to be resumed\\
+Rebalance recommendation (earlier warning) & a checkpoint is saved now; training continues\\
+Interruption without notice & at most the checkpoint interval of training is lost (10 minutes by default on spot)\\
+Interrupted while writing a checkpoint, or disk full & checkpoints are written to a temporary file and swapped in: the previous one is never damaged\\
+Instance restarted while the laptop is off & a boot-time job on the instance resumes the run: no laptop needed\\
+Instance back while the application is open & the application follows the instance's new address and restarts the run if needed\\
+Two starters at once & a lock lets only one copy of a run train\\
+Resumed in the middle of an epoch & the remaining batches of that epoch, in the same order; optimiser, mixed-precision scaler and random state restored\\
+Interrupted again and again & at most the set number of automatic resumes; the time limit counts running time over all resumes\\
+Instance terminated & shown as ``terminated''; with the copy on the Mac, \ui{Continue on another machine} starts a new run from it (for example on a college GPU)\\
+Old instance returns after moving & when that run is opened and the instance answers, the run there is stopped (cancel its spot request in the AWS console to be sure)\\
+\ui{Stop} while the instance is down & remembered: the run is stopped instead of resumed when the instance answers\\
+\bottomrule
+\end{longtable}
+
+\subsection{Can my GPU train this network?}
+Use the 16-bytes-per-parameter rule of Section~\ref{sec:math} plus room for activations. A 48 GB RTX A6000 can train ViT-g/14
+(about 18 GB of fixed state) with batches of roughly 16 to 32 images at 224$\times$224; a 16 GB T4 cannot. Large networks trained from
+scratch on small datasets overfit: ViT-g was trained on billions of images~\cite{zhai2021scaling}, and even ViT-Base needs strong
+augmentation and regularisation, or pre-training, to do well on small data~\cite{steiner2021howtotrain,touvron2020deit}.
+
+%=====================================================================================================================================
+\section{The Results tab}
+For a finished run (open it in the Train tab): the test accuracy (and mIoU), the confusion matrix (rows: true class, columns: predicted;
+the diagonal is correct), sample predictions with their confidence (wrong ones marked), the feature maps of the first test image (first
+eight channels of early layers), the first layer's filters as small pictures, and for segmentation the true and predicted masks and the IoU
+of every class. \ui{Show files} reveals \file{model.pt}, \file{train.py} and \file{results.json}. The weights load in PyTorch with
+\texttt{Net().load\_state\_dict(torch.load("model.pt"))} using the \texttt{Net} class from the same \file{train.py}.
+
+%=====================================================================================================================================
+\section{The demo architectures}
+
+Each demo opens unsaved on the canvas (Projects page, \ui{File} $\rightarrow$ \ui{New from Demo}, or \ui{Famous architectures} in the
+Design tab) at the input size it was made for. Parameter counts below are the application's, with a 10-class output (2 classes for the
+segmentation networks); they change with the number of classes. Where a demo differs from the paper, the difference is stated.
+
+{\small
+\begin{longtable}{@{}p{3.3cm}rlp{2.2cm}p{4.3cm}r@{}}
+\toprule
+\textbf{Demo} & \textbf{Year} & \textbf{Task} & \textbf{Input} & \textbf{Main idea} & \textbf{Parameters}\\
+\midrule\endhead
+LeNet-5 & 1998 & classify & 1$\times$28$\times$28 & convolution + subsampling & 61\,706\\
+Small CNN (CIFAR-10) & 2015 & classify & 3$\times$32$\times$32 & VGG-style blocks + BatchNorm & 551\,018\\
+AlexNet & 2012 & classify & 3$\times$224$\times$224 & deep CNN on GPUs, ReLU, dropout & 58\,322\,314\\
+VGG-16 & 2014 & classify & 3$\times$224$\times$224 & only 3$\times$3 convolutions & 134\,301\,514\\
+GoogLeNet & 2014 & classify & 3$\times$224$\times$224 & Inception modules & 5\,983\,802\\
+ResNet-18 & 2015 & classify & 3$\times$224$\times$224 & residual connections & 11\,181\,642\\
+MobileNet v1 & 2017 & classify & 3$\times$224$\times$224 & depthwise separable convolutions & 3\,217\,226\\
+DenseNet (small) & 2017 & classify & 3$\times$32$\times$32 & dense connectivity & 76\,810\\
+Transformer encoder & 2017 & classify & 1$\times$28$\times$28 & self-attention on image rows & 71\,498\\
+ViT-Base/16 & 2020 & classify & 3$\times$224$\times$224 & image patches as tokens & 85\,806\,346\\
+ViT-Tiny (CIFAR-10) & 2020 & classify & 3$\times$32$\times$32 & a small ViT & 1\,806\,538\\
+ViT-g/14 & 2022 & classify & 3$\times$224$\times$224 & scaling a ViT to 1 B parameters & 1\,011\,216\,522\\
+U-Net & 2015 & segment & 3$\times$128$\times$128 & encoder--decoder with skips & 7\,760\,130\\
+Attention U-Net & 2018 & segment & 3$\times$128$\times$128 & attention gates on the skips & 7\,847\,894\\
+MSG-Former & 2026 & classify & 3$\times$32$\times$32 & NN Builder original (hybrid) & 466\,522\\
+\bottomrule
+\end{longtable}}
+
+%-------------------------------------------------------------------------------------------------------------------------------------
+\subsection{LeNet-5 (1998)}
+\textbf{Background.} LeCun et al.\ trained LeNet-5 to read handwritten digits on bank cheques~\cite{lecun1998gradient}; it established the
+pattern every CNN since has followed: convolutions that detect local features, subsampling that makes them tolerant to small shifts, and
+fully connected layers that classify.
+
+\textbf{As built in NN Builder.}
+\begin{center}
+\begin{tabular}{@{}llrr@{}}
+\toprule
+\textbf{Block} & \textbf{Settings} & \textbf{Output} & \textbf{Parameters}\\
+\midrule
+Conv2D C1 & 6 filters, 5$\times$5, padding 2, tanh & 6$\times$28$\times$28 & 156\\
+Pool S2 & average 2$\times$2 & 6$\times$14$\times$14 & 0\\
+Conv2D C3 & 16 filters, 5$\times$5, valid, tanh & 16$\times$10$\times$10 & 2\,416\\
+Pool S4 & average 2$\times$2 & 16$\times$5$\times$5 & 0\\
+Flatten & & 400 & 0\\
+Dense C5, F6 & 120 then 84 units, tanh & 84 & 48\,120 + 10\,164\\
+Output & 10 classes & 10 & 850\\
+\bottomrule
+\end{tabular}
+\end{center}
+\textbf{Differences from the paper.} The paper used 32$\times$32 inputs with no padding (padding 2 on 28$\times$28 MNIST gives the same
+28$\times$28 maps), trainable subsampling coefficients, a hand-designed partial connection table in C3, and Gaussian output units; the
+demo uses plain average pooling, full connections and a softmax output.
+
+\textbf{Training it.} Dataset: built-in MNIST (no resizing needed). Adam, learning rate 0.001, batch 64, 5--10 epochs; it reaches about
+99\% test accuracy on any GPU in a few minutes. Look at the first-layer filters in Results: they become stroke and edge detectors.
+
+%-------------------------------------------------------------------------------------------------------------------------------------
+\subsection{Small CNN for CIFAR-10}
+\textbf{Background.} Not one paper but the standard ``VGG-style'' baseline for 32$\times$32 colour images: stacks of 3$\times$3
+convolutions~\cite{simonyan2014vgg} with BatchNorm~\cite{ioffe2015batchnorm} and dropout~\cite{srivastava2014dropout}.
+
+\textbf{As built.} Three blocks with 32, 64 and 128 filters; each block is two times (Conv2D 3$\times$3 without bias $\rightarrow$
+BatchNorm $\rightarrow$ ReLU), then max pooling 2$\times$2 and dropout (0.2, 0.3, 0.4). The image goes 32 $\rightarrow$ 16 $\rightarrow$ 8
+$\rightarrow$ 4; Flatten gives 2\,048 values, then Dense 128 (ReLU), Dropout 0.5 and the output. The classifier holds 263\,562 of the
+551\,018 parameters.
+
+\textbf{Training it.} Built-in CIFAR-10; Adam 0.001, batch 128, 30--50 epochs, with horizontal flips and a random crop with 4 pixels of
+padding: such networks commonly reach the mid to high 80s in test accuracy. Without augmentation the training accuracy runs far ahead of
+the validation accuracy (overfitting): compare the two curves in the Train tab.
+
+%-------------------------------------------------------------------------------------------------------------------------------------
+\subsection{AlexNet (2012)}
+\textbf{Background.} Krizhevsky, Sutskever and Hinton won the ImageNet challenge~\cite{russakovsky2014imagenet} of 2012 by a wide margin
+with a deep CNN trained on two GPUs~\cite{krizhevsky2012alexnet}; its ingredients (ReLU instead of tanh, dropout, data augmentation, GPU
+training) started the deep-learning era in computer vision.
+
+\textbf{As built.} Conv2D 96 filters 11$\times$11 stride 4 padding 2 (224 $\rightarrow$ 55) $\rightarrow$ max pool 3$\times$3 stride 2
+(overlapping, 55 $\rightarrow$ 27) $\rightarrow$ Conv2D 256 5$\times$5 $\rightarrow$ pool (13) $\rightarrow$ Conv2D 384, 384, 256
+(3$\times$3) $\rightarrow$ pool (6) $\rightarrow$ Flatten (9\,216) $\rightarrow$ Dropout 0.5 $\rightarrow$ Dense 4\,096 $\rightarrow$
+Dropout 0.5 $\rightarrow$ Dense 4\,096 $\rightarrow$ Output. Of the 58.3 million parameters, 37.8 million sit in the first Dense layer: the
+layer table's Classifier group shows this at a glance.
+
+\textbf{Differences from the paper.} No local response normalisation, and no split of the layers into two groups (one per GPU); with
+1\,000 classes the demo has about 62 million parameters (the paper reports 60 million). A later note by Krizhevsky describes the single-GPU
+variant~\cite{krizhevsky2014weird}.
+
+\textbf{Training it.} AlexNet expects 224$\times$224 images: use CIFAR-10 with \ui{Resize} (slow and not ideal: tiny photos enlarged) or a
+Hugging Face dataset of larger photos. Use a smaller learning rate (Adam 0.0001) and flips. It fits a T4 at batch 64--128.
+
+%-------------------------------------------------------------------------------------------------------------------------------------
+\subsection{VGG-16 (2014)}
+\textbf{Background.} Simonyan and Zisserman showed that depth matters and that small filters suffice: two 3$\times$3 convolutions see as
+far as one 5$\times$5, three as far as one 7$\times$7, with fewer parameters and more non-linearities~\cite{simonyan2014vgg}.
+
+\textbf{As built.} Five blocks of 3$\times$3 convolutions (ReLU, padding same) with 64, 64 $|$ 128, 128 $|$ 256 $\times$3 $|$ 512
+$\times$3 $|$ 512 $\times$3 filters, each block followed by 2$\times$2 max pooling (224 $\rightarrow$ 7); Flatten (25\,088), two Dense
+4\,096 with dropout 0.5, Output. 134\,301\,514 parameters, exactly torchvision's \texttt{vgg16} with a 10-class head; 102.8 million of them
+are in the first Dense layer.
+
+\textbf{Training it.} Like AlexNet: 224$\times$224 images, Adam 0.0001 or SGD 0.01 with momentum, batch 32--64 on a T4. Watch the
+receptive field grow in the inspector: 3$\times$3 convolutions and poolings reach 212$\times$212 pixels at the last convolution.
+
+%-------------------------------------------------------------------------------------------------------------------------------------
+\subsection{GoogLeNet / Inception v1 (2014)}
+\textbf{Background.} Szegedy et al.\ asked which filter size to use, and answered ``all of them, side by side'': the Inception module
+runs 1$\times$1, 3$\times$3 and 5$\times$5 convolutions and a pooling branch in parallel and concatenates them~\cite{szegedy2014going}.
+1$\times$1 convolutions first reduce the channels (the idea comes from Network in Network~\cite{lin2013nin}), keeping the cost low:
+GoogLeNet has twelve times fewer parameters than AlexNet and was more accurate.
+
+\begin{figure}[htbp]\centering
+\begin{tikzpicture}[x=34mm, y=11mm]
+  \node[blk] (in) at (1.5, 0) {previous layer};
+  \node[blk, fill=nnconv!15] (a)  at (0, -1) {1$\times$1};
+  \node[blk, fill=nnconv!15] (r3) at (1, -1) {1$\times$1 reduce};
+  \node[blk, fill=nnconv!15] (r5) at (2, -1) {1$\times$1 reduce};
+  \node[blk, fill=nnpool!15] (p)  at (3, -1) {max pool 3$\times$3};
+  \node[blk, fill=nnconv!15] (c3) at (1, -2) {3$\times$3};
+  \node[blk, fill=nnconv!15] (c5) at (2, -2) {5$\times$5};
+  \node[blk, fill=nnconv!15] (pp) at (3, -2) {1$\times$1 projection};
+  \node[blk, fill=nnjoin!15] (cat) at (1.5, -3.1) {Concat};
+  \foreach \t in {a,r3,r5,p} \draw[arr] (in.south) -- (\t.north);
+  \draw[arr] (r3) -- (c3); \draw[arr] (r5) -- (c5); \draw[arr] (p) -- (pp);
+  \draw[arr] (a.south) -- (cat.north west);
+  \foreach \t in {c3,c5} \draw[arr] (\t.south) -- (cat.north);
+  \draw[arr] (pp.south) -- (cat.north east);
+\end{tikzpicture}
+\caption{An Inception module: four branches side by side (all keep the height and width); Concat stacks their channels.}
+\end{figure}
+
+\textbf{As built.} Stem: Conv2D 64 7$\times$7 stride 2, max pool, Conv2D 1$\times$1 64, Conv2D 3$\times$3 192, max pool (224
+$\rightarrow$ 28). Then nine Inception modules with the paper's channel numbers: 3a (output 256 channels), 3b (480), max pool, 4a--4e
+(512, 512, 512, 528, 832), max pool, 5a (832), 5b (1\,024); global average pooling, dropout 0.4, output. 5\,983\,802 parameters.
+
+\textbf{Differences from the paper.} The two auxiliary classifiers used during training are left out (later work found them of little
+use), and there is no local response normalisation.
+
+\textbf{Training it.} 224$\times$224 inputs; without BatchNorm, deep plain networks like this train slowly: use Adam 0.0001--0.0003 and
+patience, or add BatchNorm after the convolutions yourself.
+
+%-------------------------------------------------------------------------------------------------------------------------------------
+\subsection{ResNet-18 (2015)}
+\textbf{Background.} Deeper plain networks became \emph{harder to train}, not just to generalise: adding layers raised the training error.
+He et al.\ let every block learn a correction to its input, $y = x + F(x)$, through a shortcut~\cite{he2015resnet}; gradients then flow
+through the shortcuts, and networks of 50, 101, even 1\,000 layers train well~\cite{he2016identity}.
+
+\begin{figure}[htbp]\centering
+\begin{tikzpicture}[node distance=3.5mm]
+  \node[blk] (x) {$x$};
+  \node[blk, fill=nnconv!15, right=of x] (c1) {Conv 3$\times$3};
+  \node[blk, fill=nnnorm!15, right=of c1] (b1) {BN};
+  \node[blk, right=of b1] (r1) {ReLU};
+  \node[blk, fill=nnconv!15, right=of r1] (c2) {Conv 3$\times$3};
+  \node[blk, fill=nnnorm!15, right=of c2] (b2) {BN};
+  \node[blk, fill=nnjoin!15, right=of b2] (add) {Add};
+  \node[blk, right=of add] (r2) {ReLU};
+  \foreach \a/\b in {x/c1,c1/b1,b1/r1,r1/c2,c2/b2,b2/add,add/r2} \draw[arr] (\a) -- (\b);
+  \draw[arr] (x.south) -- ++(0,-6mm) -| (add.south);
+  \node[font=\scriptsize] at ($(x.south)!0.5!(add.south) + (0,-8.5mm)$) {shortcut (a 1$\times$1 convolution + BN when the shape changes)};
+\end{tikzpicture}
+\caption{A basic residual block as built on the canvas: $y = \mathrm{ReLU}(x + F(x))$.}
+\end{figure}
+
+\textbf{As built.} Stem: Conv2D 64 7$\times$7 stride 2 + BatchNorm + ReLU, max pool 3$\times$3 stride 2 (224 $\rightarrow$ 56). Four
+stages of two basic blocks with 64, 128, 256 and 512 filters; the first block of stages 2--4 has stride 2 and a 1$\times$1 stride-2
+convolution with BatchNorm on the shortcut (56 $\rightarrow$ 28 $\rightarrow$ 14 $\rightarrow$ 7). Global average pooling and the output.
+11\,181\,642 parameters, exactly torchvision's \texttt{resnet18} with a 10-class head.
+
+\textbf{Training it.} The most forgiving of the large demos thanks to BatchNorm and the shortcuts. At 224$\times$224 it fits a T4 at batch
+64--128. For CIFAR-10 at 32$\times$32 the stem shrinks the image too early (32 $\rightarrow$ 8 before the first block); the usual CIFAR
+variant replaces the stem with a 3$\times$3 stride-1 convolution and drops the max pooling, an easy edit on the canvas.
+
+%-------------------------------------------------------------------------------------------------------------------------------------
+\subsection{MobileNet v1 (2017)}
+\textbf{Background.} For phones, Howard et al.\ factorised a convolution into a \emph{depthwise} 3$\times$3 convolution (one filter per
+channel, spatial only) and a \emph{pointwise} 1$\times$1 convolution (mixing channels)~\cite{howard2017mobilenets}. The cost drops by a
+factor of about $1/N + 1/k^2$ ($N$ output channels, $k=3$): roughly eight to nine times fewer computations.
+
+\textbf{As built.} Conv2D 32 3$\times$3 stride 2 + BN + ReLU, then 13 depthwise separable blocks (Depthwise Conv2D 3$\times$3 + BN +
+ReLU, Conv2D 1$\times$1 + BN + ReLU) with 64, 128, 128, 256, 256, 512 ($\times$6), 1\,024, 1\,024 channels; five of them have stride 2
+(224 $\rightarrow$ 7); global average pooling and the output. 3\,217\,226 parameters (4.2 million with 1\,000 classes, as in the paper).
+Width and resolution multipliers of the paper can be imitated by changing the filter counts and the input size.
+
+\textbf{Training it.} Light and fast; SGD or Adam 0.001 with BatchNorm works well. Depthwise convolutions are memory-bound on GPUs, so
+it is not proportionally faster to \emph{train}; its advantage is at inference on small devices.
+
+%-------------------------------------------------------------------------------------------------------------------------------------
+\subsection{DenseNet, small CIFAR version (2017)}
+\textbf{Background.} Huang et al.\ connected each layer to \emph{all} earlier layers of its block by concatenation~\cite{huang2016densenet}:
+features are reused instead of re-learnt, so each layer can be narrow (the ``growth rate'' $k$, here 12 channels).
+
+\textbf{As built.} Conv2D 24 3$\times$3; three dense blocks of four layers (BatchNorm $\rightarrow$ ReLU $\rightarrow$ Conv2D 12
+3$\times$3, concatenated to everything before); between blocks a transition (BatchNorm $\rightarrow$ 1$\times$1 Conv2D halving the
+channels $\rightarrow$ average pool 2$\times$2). The channels go 24 $\rightarrow$ 72 $\rightarrow$ 36 $\rightarrow$ 84 $\rightarrow$ 42
+$\rightarrow$ 90 while the image goes 32 $\rightarrow$ 16 $\rightarrow$ 8; BatchNorm, ReLU, global pool and output. Only 76\,810 parameters.
+
+\textbf{Differences from the paper.} The paper's CIFAR models are much deeper (for example 100 layers with bottleneck 1$\times$1
+convolutions inside each layer, about 0.8 million parameters); the demo is a small teaching version. The paper's transitions have a ReLU
+after their BatchNorm; the demo's do not.
+
+\textbf{Training it.} CIFAR-10 built in, Adam 0.001, flips and crops, 50+ epochs; small but deep, so batch 64--128 fits easily.
+
+%-------------------------------------------------------------------------------------------------------------------------------------
+\subsection{Transformer encoder on image rows (2017)}
+\textbf{Background.} The Transformer of Vaswani et al.\ replaced recurrence with self-attention: every token computes a weighted mix of
+all tokens, the weights coming from query--key similarities~\cite{vaswani2017attention}. Its encoder is a stack of attention and
+two-layer MLP blocks with residual connections and layer normalisation~\cite{ba2016layernorm}.
+
+\textbf{As built.} A teaching version on MNIST: To tokens (\emph{rows}) makes each of the 28 rows a token of 28 values; Dense 64 embeds
+them; Class token + position gives 29 tokens of 64; two pre-norm encoder blocks with 4 heads, an MLP of 128 (GELU~\cite{hendrycks2016gelu})
+and dropout 0.1; LayerNorm, the class token, output. 71\,498 parameters.
+
+\textbf{Training it.} MNIST, Adam 0.001, 10--20 epochs: it reaches high-90s accuracy and shows that attention can learn image structure
+from a sequence of rows. Change the number of heads (64 must stay divisible by it) or blocks and compare.
+
+%-------------------------------------------------------------------------------------------------------------------------------------
+\subsection{ViT-Base/16 (2020)}
+\textbf{Background.} Dosovitskiy et al.\ showed that a plain Transformer encoder on image patches, ``an image is worth 16$\times$16
+words'', matches the best CNNs when pre-trained on enough data~\cite{dosovitskiy2020vit}.
+
+\textbf{As built.} Conv2D 768 filters 16$\times$16 stride 16 (the patch embedding: 224 $\rightarrow$ 14$\times$14), To tokens (196 tokens
+of 768), Class token + position (197 tokens), 12 encoder blocks (12 heads, MLP 3\,072), LayerNorm, class token, output.
+85\,806\,346 parameters, exactly torchvision's \texttt{vit\_b\_16} with a 10-class head (86.6 million with 1\,000 classes).
+
+\textbf{Training it.} ViTs lack the built-in assumptions of convolutions (locality, translation equivariance) and need much data or strong
+augmentation and regularisation~\cite{steiner2021howtotrain,touvron2020deit}. From scratch on a small dataset it does worse than
+ResNet-18. Use a low learning rate (0.0001 or less; AdamW with warm-up is the usual recipe~\cite{loshchilov2017adamw,goyal2017accurate},
+not built in), batch 32--64 on a T4 with mixed precision.
+
+%-------------------------------------------------------------------------------------------------------------------------------------
+\subsection{ViT-Tiny for CIFAR-10}
+\textbf{Background.} Small ViTs in the spirit of DeiT-Ti~\cite{touvron2020deit} (embedding 192, 3 heads) make transformers trainable
+on small images in minutes.
+
+\textbf{As built.} Conv2D 192 4$\times$4 stride 4 (32 $\rightarrow$ 8$\times$8 = 64 patches), To tokens, Class token + position (65
+tokens), 6 encoder blocks with 3 heads, MLP 384 and dropout 0.1, LayerNorm, class token, output. 1\,806\,538 parameters. (DeiT-Ti itself
+has 12 blocks and an MLP of 768.)
+
+\textbf{Training it.} CIFAR-10 with flips and crops (augmentation matters a lot for ViTs), Adam 0.001 or a little lower, 50+ epochs. It
+usually stays below the Small CNN on CIFAR-10 when trained from scratch for a short time: a useful experiment on the data hunger of
+transformers.
+
+%-------------------------------------------------------------------------------------------------------------------------------------
+\subsection{ViT-g/14, one billion parameters (2022)}
+\textbf{Background.} Zhai et al.\ studied how ViTs scale with model size, data and compute, training up to two billion parameters on
+billions of images~\cite{zhai2021scaling}. ViT-g/14 (``giant'') is their one-billion-parameter model.
+
+\textbf{As built.} Conv2D 1\,408 filters 14$\times$14 stride 14 (224 $\rightarrow$ 16$\times$16 = 256 patches), Class token + position
+(257 tokens), 40 encoder blocks with 16 heads and MLP 6\,144, LayerNorm, class token, output: 1\,011\,216\,522 parameters. Each encoder
+block alone has 25\,250\,176 parameters (attention $4d^2+4d$ = 7\,935\,488; MLP $2\cdot1408\cdot6144+6144+1408$ = 17\,309\,056; two
+LayerNorms 5\,632). The canvas holds about 290 blocks; the layer table groups them into Embedding, 40 encoder blocks, Final norm and
+Classifier.
+
+\textbf{Training it.} About 16 GB of fixed state for Adam (Section~\ref{sec:math}): it does \emph{not} fit a 16 GB T4 (Kaggle,
+g4dn.xlarge). A 48 GB RTX A6000 fits it with batches of roughly 16--32 at 224$\times$224 (estimate), at around 1.5 TFLOP of compute per
+training image; a checkpoint with the optimiser state is about 12 GB and the final \file{model.pt} about 4 GB, both copied over the
+network. From scratch on a small dataset it overfits badly and scores below ResNet-18; its value here is to see how a transformer scales
+(compare it block by block with ViT-Base) and to measure memory and speed.
+
+%-------------------------------------------------------------------------------------------------------------------------------------
+\subsection{U-Net (2015)}
+\textbf{Background.} Ronneberger et al.\ designed U-Net for biomedical image segmentation with few training images~\cite{ronneberger2015unet}:
+a contracting path captures context, an expanding path recovers resolution, and skip connections hand the fine detail of each encoder
+level to the decoder level of the same size.
+
+\begin{figure}[htbp]\centering
+\begin{tikzpicture}[x=10mm, y=8mm]
+  \foreach \i/\c/\s in {0/32/128,1/64/64,2/128/32,3/256/16} {
+    \node[blk, fill=nnconv!15, minimum width=19mm] (e\i) at (\i*1.2, -\i) {enc \c\ $\cdot$ \s$^2$};
+    \node[blk, fill=nnconv!15, minimum width=19mm] (d\i) at (12.6-\i*1.2, -\i) {dec \c\ $\cdot$ \s$^2$};
+    \draw[arr, dashed] (e\i) -- node[above, font=\scriptsize] {Concat (skip)} (d\i);
+  }
+  \node[blk, fill=nnconv!30, minimum width=19mm] (b) at (6.3, -4) {512 $\cdot$ 8$^2$};
+  \draw[arr] (e0) -- (e1); \draw[arr] (e1) -- (e2); \draw[arr] (e2) -- (e3); \draw[arr] (e3) |- (b);
+  \draw[arr] (b) -| (d3); \draw[arr] (d3) -- (d2); \draw[arr] (d2) -- (d1); \draw[arr] (d1) -- (d0);
+  \node[font=\scriptsize] at (1.2,-4) {max pool $\downarrow$};
+  \node[font=\scriptsize] at (11.4,-4) {ConvTranspose2D $\uparrow$};
+\end{tikzpicture}
+\caption{The U shape as built: channels $\cdot$ image size per level, 128 $\rightarrow$ 8 pixels and back, with a skip at every level.}
+\end{figure}
+
+\textbf{As built.} Input 3$\times$128$\times$128. Encoder: four levels of two 3$\times$3 convolutions (ReLU) with 32, 64, 128, 256
+filters, each followed by 2$\times$2 max pooling; bottleneck: two convolutions with 512 filters at 8$\times$8. Decoder: at each level a
+2$\times$2 stride-2 ConvTranspose2D halving the channels, Concat with the encoder output of the same size, two 3$\times$3 convolutions;
+Segmentation output (1$\times$1) with two classes. 7\,760\,130 parameters.
+
+\textbf{Differences from the paper.} The paper starts at 64 filters (1\,024 at the bottom, about 31 million parameters) and uses
+unpadded convolutions, cropping the encoder maps before concatenating; the demo uses padding ``same'', so sizes match without cropping.
+
+\textbf{Training it.} Dataset $\rightarrow$ Segmentation, with an image column and a mask column (Hugging Face) or images and masks
+folders (Kaggle); the class list maps mask values to classes. Flips and rotations are applied to the image and its mask together. Watch
+the mIoU curve and the predicted masks in Results.
+
+%-------------------------------------------------------------------------------------------------------------------------------------
+\subsection{Attention U-Net (2018)}
+\textbf{Background.} Oktay et al.\ added \emph{attention gates} to U-Net's skip connections: the decoder's coarser signal decides which
+regions of the encoder features matter, suppressing irrelevant background~\cite{oktay2018attention}.
+
+\textbf{As built.} U-Net as above, but before each Concat the skip features $x$ pass a gate: $g$ (the up-sampled decoder signal) and $x$
+are each projected by a 1$\times$1 convolution to half the channels, added, passed through ReLU and a 1$\times$1 convolution to one channel
+with a sigmoid; the resulting map $\psi\in[0,1]^{H\times W}$ multiplies $x$ (Multiply, one-channel map times image). 7\,847\,894 parameters.
+
+\textbf{Difference from the paper.} The paper takes the gating signal from the coarser decoder level and resamples it; the demo uses the
+up-sampled decoder features, which already have the skip's size.
+
+%-------------------------------------------------------------------------------------------------------------------------------------
+\subsection{MSG-Former: an NN Builder original}
+\textbf{Idea.} A small hybrid that is not from a paper, combining three published ideas: multi-scale context from dilated convolutions
+(as in dilated networks~\cite{yu2015dilated} and Inception~\cite{szegedy2014going}), channel attention from squeeze-and-excitation~\cite{hu2017senet},
+and global reasoning with Transformer encoders~\cite{vaswani2017attention,dosovitskiy2020vit}. Convolutions first find local texture at
+several scales; attention relates distant parts of the image last.
+
+\begin{figure}[htbp]\centering
+\begin{tikzpicture}[x=22mm, y=10mm]
+  \node[blk] (x) at (0, 0) {$x$};
+  \node[blk, fill=nnconv!15] (d1) at (1, 1) {3$\times$3, dilation 1};
+  \node[blk, fill=nnconv!15] (d2) at (1, 0) {3$\times$3, dilation 2};
+  \node[blk, fill=nnconv!15] (d3) at (1, -1) {3$\times$3, dilation 3};
+  \node[blk, fill=nnjoin!15] (cat) at (2.1, 0) {Concat};
+  \node[blk, fill=nnconv!15] (f) at (3, 0) {1$\times$1 fuse};
+  \node[blk, fill=nnpool!15] (se) at (4.15, 1.3) {gate: pool $\rightarrow$ Dense $\rightarrow$ sigmoid};
+  \node[blk, fill=nnjoin!15] (m) at (5, 0) {Multiply};
+  \node[blk, fill=nnjoin!15] (add) at (6, 0) {Add};
+  \foreach \t in {d1,d2,d3} {\draw[arr] (x) -- (\t.west); \draw[arr] (\t.east) -- (cat);}
+  \draw[arr] (cat) -- (f); \draw[arr] (f) -- (m);
+  \draw[arr] (f.north) |- (se.west); \draw[arr] (se.south -| m.north) -- (m.north);
+  \draw[arr] (m) -- (add);
+  \draw[arr] (x.south) -- ++(0,-14mm) -| (add.south);
+  \node[font=\scriptsize, fill=white, inner sep=1pt] at (3, -1.4) {1$\times$1 convolution shortcut};
+\end{tikzpicture}
+\caption{A multi-scale gated residual block of MSG-Former (each 3$\times$3 branch with BatchNorm and SiLU; the gate weights every channel).}
+\end{figure}
+
+\textbf{As built.} Stem: Conv2D 32 3$\times$3 + BN + ReLU. Two multi-scale gated residual blocks (32 then 64 filters per branch, fused to
+64 then 128 channels), each followed by 2$\times$2 max pooling (32 $\rightarrow$ 16 $\rightarrow$ 8). The 8$\times$8 map becomes 64
+tokens of 128; Class token + position; two encoder blocks (4 heads, MLP 256, dropout 0.1); LayerNorm, class token, Dropout 0.2, output.
+466\,522 parameters, counted by hand and pinned in the application's tests; the PyTorch comparison on GitHub builds it as well.
+
+\textbf{Training it.} CIFAR-10 with flips and crops, Adam 0.001, 30--60 epochs; it trains in minutes on a T4. Whether it beats the Small
+CNN or ViT-Tiny is an open question: it is a design to experiment with (remove the gate, change the dilations, add a block) rather than
+a tested result.
+
+%=====================================================================================================================================
+\section{Troubleshooting}
+
+\begin{description}
+  \item[``design has problems''.] Open Design; the red block says why (Section~\ref{sec:checks}). Blocks after it are greyed out until it is fixed.
+  \item[``dataset incomplete'' or no classes.] The class list is empty (Hugging Face: \ui{Read info} and a ClassLabel column; Kaggle:
+        type the class folder names). Text datasets cannot be used.
+  \item[The one-batch check stops the run.] A layer's real shape differed from the application's (for example images of an unexpected
+        size in a custom dataset). The message names the layer; check the image size and channels in the Dataset tab.
+  \item[``CUDA out of memory''.] Halve the batch size; turn mixed precision on; use a smaller input size or network
+        (Section~\ref{sec:math}).
+  \item[Kaggle run fails to start.] The account must be phone-verified for GPU and internet access; the token must be current.
+  \item[SSH machine does not answer.] Password machines: press \ui{Connect} again (the login lasts a few hours); key machines:
+        \ui{Test}. A running training is not affected.
+  \item[EC2: ``no public address'' / ssh never answers.] Give the instance a public IP (or an Elastic IP), allow port 22 in its security
+        group, and use its key file. A new account may have a vCPU quota of 0 for G instances: request an increase.
+  \item[EC2 spot: the run says ``interrupted''.] AWS took the capacity back; with a persistent request and behaviour \emph{stop} it resumes
+        by itself. To continue now, use \ui{Continue on another machine} (needs the checkpoint copy on the Mac).
+  \item[A demo disappeared.] Unsaved demos are discarded when another demo or project is opened or the application quits; save them with
+        \kbd{Cmd+S}.
+  \item[Training is unstable (loss jumps or becomes NaN).] Lower the learning rate (by 10$\times$), keep mixed precision on (the script
+        scales the loss), add BatchNorm / LayerNorm, check that the labels match the class list.
+  \item[High training accuracy, low validation accuracy.] Overfitting: augmentation, dropout, fewer parameters (Global pool instead of
+        Flatten + large Dense), more data, fewer epochs.
+\end{description}
+
+%=====================================================================================================================================
+\section{Privacy and security}
+\begin{itemize}
+  \item Tokens and keys live only in the system keychain; they are passed to one call at a time, and written on a remote machine only
+        when a run needs them, as files readable by their owner.
+  \item The design computer never downloads datasets or runs training; it reads dataset descriptions only.
+  \item Unsaved demos are kept in the application's own folder and deleted when no longer needed; projects live where you choose.
+  \item Updates come only from the project's GitHub releases and are checked against the published SHA-256 checksum.
+\end{itemize}
+
+%=====================================================================================================================================
+\appendix
+\section{Glossary}
+\begin{description}[itemsep=1pt]
+  \item[Activation function] a non-linear function applied element-wise (ReLU, GELU, \ldots).
+  \item[Batch] the images processed together in one training step.
+  \item[Channel] one ``layer'' of an image or feature map (3 for RGB; a convolution with 64 filters produces 64).
+  \item[Checkpoint] a saved training state (weights, optimiser, position) from which a run can resume.
+  \item[Epoch] one pass over the whole training set.
+  \item[Feature map] the output of a convolution: one image per filter.
+  \item[Kernel / filter] the small window of weights a convolution slides over the image.
+  \item[mIoU] mean over the classes of (overlap / union) of predicted and true masks.
+  \item[Padding] pixels added around the image so the window can reach the borders.
+  \item[Parameter] a trainable number (weight or bias).
+  \item[Receptive field] the input region one output value depends on.
+  \item[Spot instance] spare cloud capacity at a lower price that the provider can take back.
+  \item[Stride] how far the window moves at each step.
+  \item[Token] one element of a sequence a transformer works on (here: an image patch or row).
+\end{description}
+
+%=====================================================================================================================================
+\begin{thebibliography}{99}\small
+
+\bibitem{ba2016layernorm} J.~L. Ba, J.~R. Kiros and G.~E. Hinton. Layer normalization. 2016.
+  \href{https://arxiv.org/abs/1607.06450}{arXiv:1607.06450}.
+\bibitem{chen2016checkpoint} T.~Chen, B.~Xu, C.~Zhang and C.~Guestrin. Training deep nets with sublinear memory cost. 2016.
+  \href{https://arxiv.org/abs/1604.06174}{arXiv:1604.06174}.
+\bibitem{cubuk2018autoaugment} E.~D. Cubuk, B.~Zoph, D.~Man\'e, V.~Vasudevan and Q.~V. Le. AutoAugment: learning augmentation policies
+  from data. 2018. \href{https://arxiv.org/abs/1805.09501}{arXiv:1805.09501}.
+\bibitem{dosovitskiy2020vit} A.~Dosovitskiy et al. An image is worth 16x16 words: Transformers for image recognition at scale. 2020.
+  \href{https://arxiv.org/abs/2010.11929}{arXiv:2010.11929}.
+\bibitem{dumoulin2016guide} V.~Dumoulin and F.~Visin. A guide to convolution arithmetic for deep learning. 2016.
+  \href{https://arxiv.org/abs/1603.07285}{arXiv:1603.07285}.
+\bibitem{goyal2017accurate} P.~Goyal et al. Accurate, large minibatch SGD: training ImageNet in 1 hour. 2017.
+  \href{https://arxiv.org/abs/1706.02677}{arXiv:1706.02677}.
+\bibitem{he2015resnet} K.~He, X.~Zhang, S.~Ren and J.~Sun. Deep residual learning for image recognition. 2015.
+  \href{https://arxiv.org/abs/1512.03385}{arXiv:1512.03385}.
+\bibitem{he2016identity} K.~He, X.~Zhang, S.~Ren and J.~Sun. Identity mappings in deep residual networks. 2016.
+  \href{https://arxiv.org/abs/1603.05027}{arXiv:1603.05027}.
+\bibitem{hendrycks2016gelu} D.~Hendrycks and K.~Gimpel. Gaussian error linear units (GELUs). 2016.
+  \href{https://arxiv.org/abs/1606.08415}{arXiv:1606.08415}.
+\bibitem{hinton2012dropout} G.~E. Hinton, N.~Srivastava, A.~Krizhevsky, I.~Sutskever and R.~R. Salakhutdinov. Improving neural networks
+  by preventing co-adaptation of feature detectors. 2012. \href{https://arxiv.org/abs/1207.0580}{arXiv:1207.0580}.
+\bibitem{howard2017mobilenets} A.~G. Howard et al. MobileNets: efficient convolutional neural networks for mobile vision applications.
+  2017. \href{https://arxiv.org/abs/1704.04861}{arXiv:1704.04861}.
+\bibitem{hu2017senet} J.~Hu, L.~Shen, S.~Albanie, G.~Sun and E.~Wu. Squeeze-and-excitation networks. 2017.
+  \href{https://arxiv.org/abs/1709.01507}{arXiv:1709.01507}.
+\bibitem{huang2016densenet} G.~Huang, Z.~Liu, L.~van der Maaten and K.~Q. Weinberger. Densely connected convolutional networks. 2016.
+  \href{https://arxiv.org/abs/1608.06993}{arXiv:1608.06993}.
+\bibitem{ioffe2015batchnorm} S.~Ioffe and C.~Szegedy. Batch normalization: accelerating deep network training by reducing internal
+  covariate shift. 2015. \href{https://arxiv.org/abs/1502.03167}{arXiv:1502.03167}.
+\bibitem{kingma2014adam} D.~P. Kingma and J.~Ba. Adam: a method for stochastic optimization. 2014.
+  \href{https://arxiv.org/abs/1412.6980}{arXiv:1412.6980}.
+\bibitem{krizhevsky2009cifar} A.~Krizhevsky. Learning multiple layers of features from tiny images. Technical report, University of
+  Toronto, 2009 (not on arXiv). \url{https://www.cs.toronto.edu/~kriz/learning-features-2009-TR.pdf}.
+\bibitem{krizhevsky2012alexnet} A.~Krizhevsky, I.~Sutskever and G.~E. Hinton. ImageNet classification with deep convolutional neural
+  networks. NeurIPS 2012 (not on arXiv).
+  \url{https://papers.nips.cc/paper/2012/hash/c399862d3b9d6b76c8436e924a68c45b-Abstract.html}.
+\bibitem{krizhevsky2014weird} A.~Krizhevsky. One weird trick for parallelizing convolutional neural networks. 2014.
+  \href{https://arxiv.org/abs/1404.5997}{arXiv:1404.5997}.
+\bibitem{lecun1998gradient} Y.~LeCun, L.~Bottou, Y.~Bengio and P.~Haffner. Gradient-based learning applied to document recognition.
+  Proceedings of the IEEE 86(11), 1998 (not on arXiv). \href{https://doi.org/10.1109/5.726791}{doi:10.1109/5.726791}.
+\bibitem{lhoest2021datasets} Q.~Lhoest et al. Datasets: a community library for natural language processing. 2021.
+  \href{https://arxiv.org/abs/2109.02846}{arXiv:2109.02846}.
+\bibitem{lin2013nin} M.~Lin, Q.~Chen and S.~Yan. Network in network. 2013.
+  \href{https://arxiv.org/abs/1312.4400}{arXiv:1312.4400}.
+\bibitem{loshchilov2017adamw} I.~Loshchilov and F.~Hutter. Decoupled weight decay regularization. 2017.
+  \href{https://arxiv.org/abs/1711.05101}{arXiv:1711.05101}.
+\bibitem{luo2017erf} W.~Luo, Y.~Li, R.~Urtasun and R.~Zemel. Understanding the effective receptive field in deep convolutional neural
+  networks. 2017. \href{https://arxiv.org/abs/1701.04128}{arXiv:1701.04128}.
+\bibitem{micikevicius2017mixed} P.~Micikevicius et al. Mixed precision training. 2017.
+  \href{https://arxiv.org/abs/1710.03740}{arXiv:1710.03740}.
+\bibitem{oktay2018attention} O.~Oktay et al. Attention U-Net: learning where to look for the pancreas. 2018.
+  \href{https://arxiv.org/abs/1804.03999}{arXiv:1804.03999}.
+\bibitem{paszke2019pytorch} A.~Paszke et al. PyTorch: an imperative style, high-performance deep learning library. 2019.
+  \href{https://arxiv.org/abs/1912.01703}{arXiv:1912.01703}.
+\bibitem{rajbhandari2019zero} S.~Rajbhandari, J.~Rasley, O.~Ruwase and Y.~He. ZeRO: memory optimizations toward training trillion
+  parameter models. 2019. \href{https://arxiv.org/abs/1910.02054}{arXiv:1910.02054}.
+\bibitem{ramachandran2017swish} P.~Ramachandran, B.~Zoph and Q.~V. Le. Searching for activation functions. 2017.
+  \href{https://arxiv.org/abs/1710.05941}{arXiv:1710.05941}.
+\bibitem{ronneberger2015unet} O.~Ronneberger, P.~Fischer and T.~Brox. U-Net: convolutional networks for biomedical image segmentation.
+  2015. \href{https://arxiv.org/abs/1505.04597}{arXiv:1505.04597}.
+\bibitem{russakovsky2014imagenet} O.~Russakovsky et al. ImageNet large scale visual recognition challenge. 2014.
+  \href{https://arxiv.org/abs/1409.0575}{arXiv:1409.0575}.
+\bibitem{simonyan2014vgg} K.~Simonyan and A.~Zisserman. Very deep convolutional networks for large-scale image recognition. 2014.
+  \href{https://arxiv.org/abs/1409.1556}{arXiv:1409.1556}.
+\bibitem{srivastava2014dropout} N.~Srivastava, G.~Hinton, A.~Krizhevsky, I.~Sutskever and R.~Salakhutdinov. Dropout: a simple way to
+  prevent neural networks from overfitting. JMLR 15, 2014 (not on arXiv; see also \cite{hinton2012dropout}).
+  \url{https://jmlr.org/papers/v15/srivastava14a.html}.
+\bibitem{steiner2021howtotrain} A.~Steiner et al. How to train your ViT? Data, augmentation, and regularization in Vision Transformers.
+  2021. \href{https://arxiv.org/abs/2106.10270}{arXiv:2106.10270}.
+\bibitem{szegedy2014going} C.~Szegedy et al. Going deeper with convolutions. 2014.
+  \href{https://arxiv.org/abs/1409.4842}{arXiv:1409.4842}.
+\bibitem{touvron2020deit} H.~Touvron et al. Training data-efficient image transformers \& distillation through attention. 2020.
+  \href{https://arxiv.org/abs/2012.12877}{arXiv:2012.12877}.
+\bibitem{vaswani2017attention} A.~Vaswani et al. Attention is all you need. 2017.
+  \href{https://arxiv.org/abs/1706.03762}{arXiv:1706.03762}.
+\bibitem{xiao2017fashion} H.~Xiao, K.~Rasul and R.~Vollgraf. Fashion-MNIST: a novel image dataset for benchmarking machine learning
+  algorithms. 2017. \href{https://arxiv.org/abs/1708.07747}{arXiv:1708.07747}.
+\bibitem{xiong2020prenorm} R.~Xiong et al. On layer normalization in the Transformer architecture. 2020.
+  \href{https://arxiv.org/abs/2002.04745}{arXiv:2002.04745}.
+\bibitem{yu2015dilated} F.~Yu and V.~Koltun. Multi-scale context aggregation by dilated convolutions. 2015.
+  \href{https://arxiv.org/abs/1511.07122}{arXiv:1511.07122}.
+\bibitem{zhai2021scaling} X.~Zhai, A.~Kolesnikov, N.~Houlsby and L.~Beyer. Scaling Vision Transformers. 2021.
+  \href{https://arxiv.org/abs/2106.04560}{arXiv:2106.04560}.
+
+\end{thebibliography}
+
+\end{document}
