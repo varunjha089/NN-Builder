@@ -66,6 +66,8 @@ export function TrainTab({ st, ok, train, setTrain, runId, openRun, toast, start
         <label>Batch size<input type="number" min={1} max={8192} value={train.batch_size} onChange={(e) => set({ batch_size: Number(e.target.value) })} /></label>
         <label>Learning rate<input type="number" step={0.0001} min={0.0000001} max={1} value={train.lr} onChange={(e) => set({ lr: Number(e.target.value) })} /></label>
         <label>Optimizer<select value={train.optimizer} onChange={(e) => set({ optimizer: e.target.value })}><option value="adam">Adam</option><option value="sgd">SGD (momentum 0.9)</option></select></label>
+        <label>Random seed<input type="number" min={0} value={train.seed} onChange={(e) => set({ seed: Math.max(0, Math.floor(Number(e.target.value))) })}
+          title="Fixes the initial weights, the test split taken from the training data, and the batch order; run several seeds to report a mean" /></label>
         <label>Training images (0 = all)<input type="number" min={0} value={train.limit_train} onChange={(e) => set({ limit_train: Number(e.target.value) })} /></label>
         {kind !== "kaggle" && <label>End the run after (hours of running)<input type="number" min={0.1} max={72} step={0.5} value={train.max_hours} onChange={(e) => set({ max_hours: Number(e.target.value) })} /></label>}
         {kind !== "kaggle" && <label>Checkpoint every (minutes, 0 = each epoch)<input type="number" min={0} max={240} value={train.checkpoint_minutes}

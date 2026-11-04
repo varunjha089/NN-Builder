@@ -26,6 +26,7 @@ crates/core/src/
                            Dataset → Read info (Hugging Face) keeps the chosen image/label columns when the dataset has them; else the
                            class column named "label", else the one with most classes (the columns arrive sorted by name, so CIFAR-100's
                            coarse_label would otherwise replace fine_label).
+                           Train tab: Random seed field (TrainSettings.seed: weights, derived test split, batch order).
   dataset.rs               Dataset (builtin | huggingface | kaggle; task classify | segment; resize (built-in); hf_mask_col, kaggle_mask_dir;
                            image_size, channels, classes), BUILTINS, input_shape, problems()
   shapes.rs                analyze(graph, dataset) -> Analysis: computation order (Kahn), per-node in/out shapes, params, rf, padding/stride
