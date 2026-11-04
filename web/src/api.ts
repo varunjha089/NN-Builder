@@ -26,6 +26,7 @@ export interface TrainSettings {
   epochs: number; batch_size: number; lr: number; optimizer: string; seed: number; amp: boolean; limit_train: number; max_hours: number; stop_instance: boolean;
   aug_hflip: boolean; aug_vflip: boolean; aug_crop: number; aug_rotate: number; aug_color: boolean;
   checkpoint_minutes: number; max_resumes: number;
+  val_fraction: number; early_stop: boolean; patience: number; monitor: "val_loss" | "val_acc" | "val_miou";
 }
 
 export interface Machine {

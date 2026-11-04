@@ -607,6 +607,9 @@ Training images (0 = all) & a quick trial on a subset\\
 End the run after (hours of running) & a time limit, summed over resumes (protects the budget)\\
 Checkpoint every (minutes) & also checkpoint inside an epoch; 0 = only at the end of each epoch (spot instances then use 10 minutes)\\
 Automatic resumes & spot instances: how many interruptions are resumed automatically (default 20)\\
+Validation part of the training data & held out from the training images (default 0\%: the curves' ``validation'' is then the test data). Use 10--20\% whenever results are reported: the test data is then touched only once, at the end\\
+Early stopping & stop when the validation loss (or accuracy, or mIoU) has not improved for \emph{patience} epochs; the best epoch's weights become \file{model.pt} and the test accuracy is measured on them. Switching it on sets a 10\% validation part if there is none. Epochs is then the maximum\\
+Random seed & fixes the initial weights, the derived splits and the batch order; run several seeds to report a mean and spread\\
 Mixed precision & faster on T4/A100-class GPUs, half the activation memory~\cite{micikevicius2017mixed}\\
 Stop the EC2 instance & stop the instance when the run ends (saves money)\\
 Data augmentation & horizontal / vertical flip, random crop after padding, rotation, brightness/contrast; training images only~\cite{cubuk2018autoaugment}. Flips change the meaning of digits; vertical flips suit aerial images\\

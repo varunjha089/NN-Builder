@@ -84,6 +84,25 @@ export function TrainTab({ st, ok, train, setTrain, runId, openRun, toast, start
           </div>
           {datasetSource === "builtin" && train.aug_hflip && datasetTask !== "segment" && <p className="muted small">Note: flipping digits (MNIST) changes their meaning; use flips for objects and photos.</p>}
         </div>
+        <div className="wide aug"><strong>Validation and early stopping</strong>
+          <span className="muted small"> (validation data is taken from the training data; the test data is then used only once, at the end)</span>
+          <div className="row">
+            <label>Validation part of the training data<input type="number" min={0} max={50} step={5} value={Math.round(train.val_fraction * 100)}
+              onChange={(e) => set({ val_fraction: Number(e.target.value) / 100 })} />%</label>
+            <label className="chk"><input type="checkbox" checked={train.early_stop}
+              onChange={(e) => set({ early_stop: e.target.checked, ...(e.target.checked && train.val_fraction < 0.01 ? { val_fraction: 0.1 } : {}) })} />early stopping</label>
+            {train.early_stop && <>
+              <label>stop after<input type="number" min={1} max={100} value={train.patience} onChange={(e) => set({ patience: Number(e.target.value) })} />epochs without improvement</label>
+              <label>in<select value={train.monitor} onChange={(e) => set({ monitor: e.target.value as TrainSettings["monitor"] })}>
+                <option value="val_loss">validation loss</option><option value="val_acc">validation accuracy</option>
+                {datasetTask === "segment" && <option value="val_miou">validation mIoU</option>}</select></label>
+            </>}
+          </div>
+          {train.early_stop && <p className="muted small">The model kept at the end is the best epoch's, and the test accuracy is measured on it.
+            Epochs is the most the run may take.</p>}
+          {!train.early_stop && train.val_fraction === 0 && <p className="muted small">0% = the curves' "validation" is the test data (fine for
+            a quick look; for a paper, hold out a validation part instead).</p>}
+        </div>
         <label className="chk wide"><input type="checkbox" checked={train.amp} onChange={(e) => set({ amp: e.target.checked })} />Mixed precision on the GPU (faster on a T4)</label>
         {kind === "aws" && <label className="chk wide"><input type="checkbox" checked={train.stop_instance} onChange={(e) => set({ stop_instance: e.target.checked })} />Stop the EC2 instance when the run ends (saves money)</label>}
         {kind !== "kaggle" && needsToken && <label className="chk wide"><input type="checkbox" checked={copyTokens} onChange={(e) => setCopyTokens(e.target.checked)} />
@@ -110,6 +129,8 @@ export function TrainTab({ st, ok, train, setTrain, runId, openRun, toast, start
         {errEv && <div className="msg error">{errEv.message}</div>}
         {status.info.error && <div className="msg error">{status.info.error}</div>}
         {status.state === "crashed" && <div className="msg error">The run ended without a result: see the log.</div>}
+        {(() => { const es = status.events.find((e) => e.event === "early_stop"); return es ? <div className="msg ok">Early stopping after epoch {es.epoch}:
+          no better {String(es.monitor).replace("val_", "validation ")} for {es.patience} epochs; the model is from epoch {es.best_epoch}.</div> : null; })()}
         {status.state === "interrupted" && <div className="msg warn">Interrupted by AWS (spot). It resumes from its last checkpoint when the instance is back.</div>}
         {status.state === "terminated" && <div className="msg error">The spot instance was terminated, with the checkpoints on it.</div>}
         {status.info.resumed_from && <p className="muted small">Continues run {status.info.resumed_from} from its checkpoint.</p>}

@@ -29,3 +29,7 @@ jobs:
         run: |
           cargo run -q -p nnb-core --example resume_case -- ci_run
           python python/ci_resume_check.py ci_run
+      - name: Early stopping (real training on CPU)
+        run: |
+          cargo run -q -p nnb-core --example resume_case -- ci_early early
+          python python/ci_early_stop_check.py ci_early

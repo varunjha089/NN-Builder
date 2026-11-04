@@ -155,6 +155,27 @@ fn generated_python_compiles() {
 }
 
 #[test]
+fn early_stopping_settings() {
+    // early stopping always gets a validation part of the training data (never the test data)
+    let t = TrainSettings { early_stop: true, val_fraction: 0.0, patience: 0, monitor: "loss?".into(), ..Default::default() }.clean();
+    assert_eq!((t.val_fraction, t.patience, t.monitor.as_str()), (0.1, 1, "val_loss"));
+    let off = TrainSettings::default().clean();
+    assert!(!off.early_stop && off.val_fraction == 0.0, "off by default: earlier runs behave as before");
+    // old train.json files without the new fields still load
+    let old: TrainSettings = serde_json::from_str(r#"{"epochs":3,"batch_size":64,"lr":0.001,"optimizer":"adam","seed":1,"amp":true,"limit_train":0,"max_hours":6.0,"stop_instance":true}"#).unwrap();
+    assert!(!old.early_stop && old.patience == 5 && old.monitor == "val_loss");
+    let g = model::starter();
+    let ds = mnist();
+    let code = train_script(&g, &ds, &analyze(&g, &ds), &t, "es").unwrap();
+    assert!(code.contains("\"early_stop\": True") && code.contains("\"val_fraction\": 0.1"), "{code}");
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("train.py"), &code).unwrap();
+    if let Some(out) = py_compile(&dir.path().join("train.py")) {
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    }
+}
+
+#[test]
 fn machine_validation_and_commands() {
     assert!(Machine { name: "x".into(), host: "a; rm -rf /".into(), ..Default::default() }.clean().is_err());
     assert!(Machine { name: "Kaggle".into(), host: "h".into(), ..Default::default() }.clean().is_err());

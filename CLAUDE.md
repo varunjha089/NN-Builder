@@ -27,6 +27,10 @@ crates/core/src/
                            class column named "label", else the one with most classes (the columns arrive sorted by name, so CIFAR-100's
                            coarse_label would otherwise replace fine_label).
                            Train tab: Random seed field (TrainSettings.seed: weights, derived test split, batch order).
+                           Validation and early stopping: val_fraction (held out of the training data, evaluation transforms; 0 =
+                           validate on test as before), early_stop + patience + monitor (val_loss | val_acc | val_miou); clean() forces
+                           val_fraction 0.1 when early stopping is on. harness: best_model.pt (atomic), "best" / "early_stop" events,
+                           es state in the checkpoint (survives spot resume), final test on the best weights; CI: ci_early_stop_check.py.
                            Kaggle runs: data in /tmp/nnb_data (not /kaggle/working, the notebook output), checkpoint removed at the
                            end, kaggle_output deleted after metrics/results/model/log are copied; the run card shows the last check.
   dataset.rs               Dataset (builtin | huggingface | kaggle; task classify | segment; resize (built-in); hf_mask_col, kaggle_mask_dir;

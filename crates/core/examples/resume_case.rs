@@ -9,6 +9,8 @@ use serde_json::json;
 
 fn main() {
     let dir = std::env::args().nth(1).expect("folder");
+    // "early": a script with a validation split and early stopping (python/ci_early_stop_check.py)
+    let early = std::env::args().nth(2).as_deref() == Some("early");
     let node = |id: &str, kind: &str, p: serde_json::Value| Node { id: id.into(), kind: kind.into(), params: nnb_core::model::defaults(kind).as_object().cloned()
         .map(|mut d| { d.extend(p.as_object().unwrap().clone()); d }).unwrap_or_default(), x: 0.0, y: 0.0 };
     let g = Graph {
@@ -20,7 +22,11 @@ fn main() {
         classes: vec!["a".into(), "b".into()], ..Default::default() };
     let a = analyze(&g, &ds);
     assert!(a.ok, "{:?}", a.problems);
-    let t = TrainSettings { epochs: 3, batch_size: 4, amp: false, ..Default::default() };
+    let t = if early {
+        TrainSettings { epochs: 25, batch_size: 16, amp: false, early_stop: true, patience: 2, monitor: "val_acc".into(), val_fraction: 0.2, ..Default::default() }
+    } else {
+        TrainSettings { epochs: 3, batch_size: 4, amp: false, ..Default::default() }
+    }.clean();
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(format!("{dir}/train.py"), train_script(&g, &ds, &a, &t, "ci resume check").unwrap()).unwrap();
 }

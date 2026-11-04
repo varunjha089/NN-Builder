@@ -275,6 +275,7 @@ def load_data(cfg):
         cls = {"mnist": datasets.MNIST, "fashion_mnist": datasets.FashionMNIST, "cifar10": datasets.CIFAR10}[DATASET["builtin"]]
         root = os.path.join(DATA, "torchvision")
         train, test = cls(root, train=True, download=True, transform=train_t), cls(root, train=False, download=True, transform=test_t)
+        train_eval = cls(root, train=True, download=False, transform=test_t)
     elif src == "huggingface":
         from datasets import load_dataset
         kw = {"cache_dir": os.path.join(DATA, "huggingface")}
@@ -286,15 +287,16 @@ def load_data(cfg):
             parts = tr.train_test_split(test_size=0.1, seed=cfg["seed"])
             tr, te = parts["train"], parts["test"]
         if SEG:
-            train, test = SegPairs(HFPairs(tr), True), SegPairs(HFPairs(te), False)
+            train, test, train_eval = SegPairs(HFPairs(tr), True), SegPairs(HFPairs(te), False), SegPairs(HFPairs(tr), False)
         else:
-            train, test = HFImages(tr, train_t), HFImages(te, test_t)
+            train, test, train_eval = HFImages(tr, train_t), HFImages(te, test_t), HFImages(tr, test_t)
     else:
         root = kaggle_root()
         if SEG:
             pairs = kaggle_pairs(root)
             tr_i, te_i = split(len(pairs), cfg["seed"])
             train, test = SegPairs([pairs[i] for i in tr_i], True), SegPairs([pairs[i] for i in te_i], False)
+            train_eval = SegPairs([pairs[i] for i in tr_i], False)
         else:
             from torchvision.datasets import ImageFolder
             folder = kaggle_folder(root, DATASET["kaggle_train_dir"])
@@ -302,13 +304,19 @@ def load_data(cfg):
             if list(full_train.classes) != list(CLASSES):
                 raise SystemExit(f"DATA: the class folders are {full_train.classes}, but the design expects {CLASSES}.")
             if DATASET["kaggle_test_dir"]:
-                train, test = full_train, ImageFolder(kaggle_folder(root, DATASET["kaggle_test_dir"]), transform=test_t)
+                train, train_eval = full_train, full_test
+                test = ImageFolder(kaggle_folder(root, DATASET["kaggle_test_dir"]), transform=test_t)
             else:
                 tr_i, te_i = split(len(full_train), cfg["seed"])
-                train, test = Subset(full_train, tr_i), Subset(full_test, te_i)
+                train, test, train_eval = Subset(full_train, tr_i), Subset(full_test, te_i), Subset(full_test, tr_i)
+    # a validation part of the training data (the same images without augmentation), so that the test data is used only once, at the end
+    val = None
+    if cfg.get("val_fraction"):
+        tr_i, va_i = split(len(train), cfg["seed"] + 7, cfg["val_fraction"])
+        train, val = Subset(train, tr_i), Subset(train_eval, va_i)
     if cfg.get("limit_train"):
         train = Subset(train, range(min(cfg["limit_train"], len(train))))
-    return train, test
+    return train, val, test
 
 
 # ---------------------------------------------------------------- checks and results
@@ -431,7 +439,7 @@ def main():
         emit("info", message="no CUDA GPU found: training on the CPU (slow)")
     model = Net().to(device)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    train, test = load_data(cfg)
+    train, val, test = load_data(cfg)
     workers = cfg.get("num_workers", 2) if device.type == "cuda" else 0
     bs = cfg["batch_size"]
 
@@ -439,7 +447,15 @@ def main():
         return DataLoader(train, batch_size=bs, sampler=EpochOrder(len(train), cfg["seed"], epoch, skip_batches * bs), num_workers=workers,
                           pin_memory=device.type == "cuda")
 
-    vl = DataLoader(test, batch_size=64 if SEG else 256, shuffle=False, num_workers=workers)
+    eval_bs = 64 if SEG else 256
+    # per-epoch validation: the held-out part of the training data, or (without one) the test data as before
+    vl = DataLoader(val if val is not None else test, batch_size=eval_bs, shuffle=False, num_workers=workers)
+    test_l = DataLoader(test, batch_size=eval_bs, shuffle=False, num_workers=workers) if val is not None else vl
+    # early stopping: the monitored value, the best epoch so far and how many epochs since then (kept in the checkpoint)
+    monitor = cfg.get("monitor", "val_loss")
+    early, patience = bool(cfg.get("early_stop")), max(1, int(cfg.get("patience", 5)))
+    es = {"best": None, "best_epoch": 0, "bad": 0}
+    best_path = os.path.join(OUT, "best_model.pt")
     opt = (torch.optim.SGD(model.parameters(), lr=cfg["lr"], momentum=0.9) if cfg["optimizer"] == "sgd"
            else torch.optim.Adam(model.parameters(), lr=cfg["lr"]))
     amp = bool(cfg.get("amp", True)) and device.type == "cuda"
@@ -461,6 +477,7 @@ def main():
         if "scaler" in ck:
             scaler.load_state_dict(ck["scaler"])
         pos = {"epoch": ck["epoch"], "step": ck.get("step", 0), "sums": ck.get("sums") or dict(zero)}
+        es = ck.get("es") or es
         if ck.get("steps") not in (None, steps):
             pos["step"], pos["sums"] = 0, dict(zero)  # a different batch size or dataset size: restart the epoch
         rng = ck.get("rng") or {}
@@ -481,7 +498,7 @@ def main():
         if device.type == "cuda":
             rng["cuda"] = torch.cuda.get_rng_state_all()
         return {"model": model.state_dict(), "opt": opt.state_dict(), "scaler": scaler.state_dict(), "epoch": pos["epoch"], "step": pos["step"],
-                "steps": steps, "sums": pos["sums"], "rng": rng, "resumes": resumes, "version": 2}
+                "steps": steps, "sums": pos["sums"], "rng": rng, "resumes": resumes, "es": es, "version": 3}
 
     def checkpoint(reason):
         if save_checkpoint(ck_path, state()):
@@ -496,7 +513,8 @@ def main():
 
     gpu = torch.cuda.get_device_name(0) if device.type == "cuda" else "cpu"
     emit("start", device=str(device), gpu=gpu, torch=torch.__version__, python=sys.version.split()[0], params=n_params, task=TASK,
-         train_size=len(train), test_size=len(test), epochs=cfg["epochs"], amp=amp, augmentation={k: v for k, v in AUG.items() if v})
+         train_size=len(train), val_size=len(val) if val is not None else 0, test_size=len(test), epochs=cfg["epochs"],
+         early_stop=early, patience=patience if early else None, monitor=monitor if early else None, amp=amp, augmentation={k: v for k, v in AUG.items() if v})
     if pos["epoch"] == 0 and pos["step"] == 0:
         one_batch_check(model, loader(1), device)
     every = max(1, steps // 20)
@@ -543,14 +561,30 @@ def main():
             if SEG:
                 ev["val_miou"] = round(miou, 5)
             emit("epoch", **ev)
+            # best epoch so far (lower validation loss, or higher validation accuracy / mIoU); its weights are kept in best_model.pt
+            value = {"val_loss": val_loss, "val_acc": val_acc, "val_miou": miou}.get(monitor, val_loss)
+            better = es["best"] is None or (value < es["best"] - 1e-4 if monitor == "val_loss" else value > es["best"] + 1e-4)
+            if better and not stopped:
+                es.update(best=value, best_epoch=epoch, bad=0)
+                if early:
+                    save_checkpoint(best_path, model.state_dict())
+                    emit("best", epoch=epoch, monitor=monitor, value=round(value, 5))
+            elif not stopped:
+                es["bad"] += 1
             pos.update(epoch=epoch, step=0, sums=dict(zero))
             checkpoint("epoch")
             last_ck = time.time()
+            if early and es["bad"] >= patience and epoch < cfg["epochs"]:
+                emit("early_stop", epoch=epoch, best_epoch=es["best_epoch"], monitor=monitor, best=round(es["best"], 5), patience=patience)
+                break
             if stopped or INTERRUPT:
                 break
         if INTERRUPT:
             interrupted()
-        val_loss, val_acc, confusion, miou, iou = evaluate(model, vl, device)
+        if early and os.path.exists(best_path):
+            # the final model is the best epoch's, not the last one's
+            model.load_state_dict(torch.load(best_path, map_location=device))
+        val_loss, val_acc, confusion, miou, iou = evaluate(model, test_l, device)
     except Interrupted:
         interrupted()
     torch.save(model.state_dict(), os.path.join(OUT, "model.pt"))
@@ -560,13 +594,15 @@ def main():
     res.update(pictures(model, test, device))
     with open(os.path.join(OUT, "results.json"), "w", encoding="utf-8") as f:
         json.dump(res, f)
-    emit("stopped" if stopped else "done", test_acc=round(val_acc, 5), **({"miou": round(miou, 5)} if SEG else {}))
+    emit("stopped" if stopped else "done", test_acc=round(val_acc, 5), **({"miou": round(miou, 5)} if SEG else {}),
+         **({"best_epoch": es["best_epoch"]} if early else {}))
     if ON_KAGGLE:
         # a Kaggle run is never resumed: the checkpoint would only make the output the app downloads bigger
-        try:
-            os.remove(ck_path)
-        except OSError:
-            pass
+        for f in (ck_path, best_path):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":
