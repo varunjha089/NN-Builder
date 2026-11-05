@@ -496,3 +496,13 @@ fn too_many_blocks_is_reported_on_the_repeat_line() {
     assert_eq!(e.line, 2);
     assert!(e.message.contains("27000 blocks") && e.message.contains("At most 6666 passes"), "{}", e.message);
 }
+
+#[test]
+fn recommended_design_size_follows_memory() {
+    use nnb_core::dsl::recommended_max_blocks;
+    let gb = |g: u64| g << 30;
+    assert_eq!(recommended_max_blocks(gb(8)), 6_000); // 2 GB for the canvas at 0.3 MB per block
+    assert_eq!(recommended_max_blocks(gb(16)), 13_000);
+    assert_eq!(recommended_max_blocks(gb(124)), 105_000);
+    assert_eq!(recommended_max_blocks(gb(1)), 5_000); // never below 5,000
+}

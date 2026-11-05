@@ -786,7 +786,9 @@ width 2\,048, 500 layers & 25.2 B & 3\,507 & 965 MB & 21 ms\\
 \bottomrule
 \end{tabular}
 \end{center}
-The canvas needs about 0.3 MB per block drawn. Above 500 blocks the canvas says so and offers \ui{Collapse repeated blocks (×N)}, which
+The canvas needs about 0.3 MB per block drawn. \ui{Settings} $\rightarrow$ \ui{Design size} sets the most blocks a design may
+have: recommended from the computer's memory (a quarter of it at 0.3 MB per block, e.g.\ 13\,000 blocks with 16 GB, 105\,000 with
+124 GB) and editable; it concerns the computer running NN Builder, not the training machine. Above 500 blocks the canvas says so and offers \ui{Collapse repeated blocks (×N)}, which
 draws each repeated group once; the Text tab edits a design of any size without drawing it. Conv2D filters and attention heads go up to
 65\,536 and 512; a setting outside its range is an error on its block (it is never silently changed).
 

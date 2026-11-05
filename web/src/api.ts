@@ -2,6 +2,8 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export type Params = Record<string, unknown>;
+/** the most blocks a design may have: the owner's value or the recommendation from this computer's memory */
+export interface DesignSize { max_blocks: number; recommended: number; own: boolean; ram_gb: number }
 export interface GNode { id: string; kind: string; params: Params; x: number; y: number; label?: string }
 export interface GEdge { id: string; source: string; target: string }
 export interface Graph { nodes: GNode[]; edges: GEdge[]; text?: string }
@@ -41,6 +43,7 @@ export interface Prepared {
 
 export interface AppState {
   version: string; home: string; projects: { path: string; name: string; exists: boolean }[]; projects_dir: string;
+  design_size: DesignSize;
   project: { name: string; path: string; draft: boolean } | null; tools_ready: boolean;
   secrets: { kaggle: string | null; huggingface: boolean; aws: string | null };
   machines: { machine: Machine; prepared: Prepared | null }[];
@@ -65,6 +68,7 @@ export interface UpdateCheck { current: string; release: { version: string; newe
 export const api = {
   updateSettings: () => invoke<{ auto: boolean; last_check: number | null; version: string }>("update_settings"),
   setAutoUpdate: (on: boolean) => invoke<void>("set_auto_update", { on }),
+  setMaxBlocks: (n: number | null) => invoke<DesignSize>("set_max_blocks", { n }),
   updateCheck: (manual: boolean) => invoke<UpdateCheck | null>("update_check", { manual }),
   updateInstall: () => invoke<void>("update_install"),
   updateRestart: () => invoke<void>("update_restart"),

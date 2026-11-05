@@ -80,7 +80,9 @@ crates/core/src/
                            and run in PyTorch by CI via dump_cases) is described in PROGRAMMING_LANGUAGE.md (section 9: as built, what is left) (FUTURE_PLAN.md: Sentinel-1/2).
                            Large designs (measured 2026-11-05, examples/big_designs.rs builds 1B-100B ViTs from text and times them):
                            cost follows blocks, not parameters; the window needs ~0.3 MB per block drawn (3,507 blocks ≈ 1 GB),
-                           the canvas suggests the ×N view above 500 blocks. shapes::analyze and dsl/codegen use id maps (no
+                           the canvas suggests the ×N view above 500 blocks. Most blocks per design: Settings → Design size
+                           (settings.json max_blocks, null = recommended = dsl::recommended_max_blocks(RAM): a quarter of memory at
+                           0.3 MB/block, ≥ 5,000; RAM from sysctl / /proc/meminfo / CIM; dsl::set_max_blocks at start and on save). shapes::analyze and dsl/codegen use id maps (no
                            per-block search: 3,507 blocks analysed in ~21 ms); Design.tsx reuses unchanged React Flow nodes. Limits:
                            shapes::limits() per kind (filters 65,536, heads 512); a value outside is an error, never clamped silently.
                            Help menu: Documentation opens the bundled manual PDF (tauri.conf.json bundle.resources).

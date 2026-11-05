@@ -111,14 +111,53 @@ fn creds() -> Creds {
 }
 
 // ---------------------------------------------------------------- state and projects
+/// the computer's memory in bytes (asked once): macOS sysctl, Linux /proc/meminfo, Windows CIM
+fn ram_bytes() -> u64 {
+    static RAM: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *RAM.get_or_init(|| {
+        #[cfg(target_os = "macos")]
+        let v = std::process::Command::new("sysctl").args(["-n", "hw.memsize"]).output().ok()
+            .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u64>().ok());
+        #[cfg(target_os = "linux")]
+        let v = std::fs::read_to_string("/proc/meminfo").ok().and_then(|t| t.lines().find(|l| l.starts_with("MemTotal:"))
+            .and_then(|l| l.split_whitespace().nth(1)?.parse::<u64>().ok()).map(|kb| kb * 1024));
+        #[cfg(target_os = "windows")]
+        let v = std::process::Command::new("powershell").args(["-NoProfile", "-Command", "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"])
+            .output().ok().and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u64>().ok());
+        v.unwrap_or(8 << 30)
+    })
+}
+
+/// the design-size limit: the owner's value from Settings, else the recommendation for this computer's memory
+fn design_limit() -> (usize, usize, bool) {
+    let rec = nnb_core::dsl::recommended_max_blocks(ram_bytes());
+    match store::settings()["max_blocks"].as_u64() {
+        Some(n) => (n as usize, rec, true),
+        None => (rec, rec, false),
+    }
+}
+
+/// Settings → Design size: a number, or null for the recommendation
+#[tauri::command]
+async fn set_max_blocks(n: Option<u64>) -> R<Value> {
+    store::save_setting("max_blocks", n.map(|n| json!(n.clamp(100, 10_000_000))).unwrap_or(Value::Null)).map_err(e)?;
+    let (limit, rec, own) = design_limit();
+    nnb_core::dsl::set_max_blocks(limit);
+    let ram_gb = ram_bytes() as f64 / 1073741824.0;
+    Ok(json!({"max_blocks": limit, "recommended": rec, "own": own, "ram_gb": ram_gb}))
+}
+
 #[tauri::command]
 async fn app_state(st: State<'_, App>) -> R<Value> {
     let pr = st.project.lock().unwrap().clone();
+    let (limit, rec, own) = design_limit();
+    let design_size = json!({"max_blocks": limit, "recommended": rec, "own": own, "ram_gb": ram_bytes() as f64 / 1073741824.0});
     Ok(json!({
         "version": env!("CARGO_PKG_VERSION"),
         "home": store::home(),
         "projects": store::listing(),
         "projects_dir": store::default_projects_dir(),
+        "design_size": design_size,
         "project": pr.map(|p| json!({"name": p.name(), "path": p.dir, "draft": p.is_draft()})),
         "tools_ready": cloud::tools_ready(),
         "secrets": secrets_meta(),
@@ -998,6 +1037,7 @@ fn on_menu(h: &tauri::AppHandle, id: &str) {
 fn main() {
     // an unsaved demo does not outlive the app (also after a crash)
     let _ = store::discard_draft();
+    nnb_core::dsl::set_max_blocks(design_limit().0);
     let app = App { project: Mutex::new(store::last_project()), jobs: Jobs::default(), update_after: Default::default() };
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -1009,7 +1049,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            app_state, templates_list, template_apply, project_from_template, project_save_as, project_new, project_open, set_projects_dir, project_delete, project_load, save_graph, design_from_text, design_format, save_dataset, save_train, code, export_code,
+            app_state, templates_list, template_apply, project_from_template, project_save_as, project_new, project_open, set_projects_dir, project_delete, set_max_blocks, project_load, save_graph, design_from_text, design_format, save_dataset, save_train, code, export_code,
             set_kaggle, set_hf, set_aws, clear_secret, test_kaggle, test_hf, test_aws, tools_install,
             machine_save, machine_delete, machine_test, machine_connect, machine_prepare, hf_info, hf_preview, kaggle_files,
             update_settings, set_auto_update, update_check, update_install, update_restart, targets, run_start, run_start_seeds, runs_summary, runs_export, run_resume_on, runs_list, run_status, run_stop, run_fetch, run_results, run_reveal, job_status, open_url

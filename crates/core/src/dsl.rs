@@ -40,7 +40,25 @@ fn diag(line: usize, col: usize, message: impl Into<String>) -> Diagnostic {
     Diagnostic { line, col, message: message.into() }
 }
 
-const MAX_BLOCKS: usize = 20_000;
+/// the most blocks a design may have: set from the Settings page (recommended from the computer's memory, see `recommended_max_blocks`)
+static MAX_BLOCKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(DEFAULT_MAX_BLOCKS);
+pub const DEFAULT_MAX_BLOCKS: usize = 20_000;
+/// what the canvas needs per block drawn (measured on a Mac, 2026-11-05)
+pub const MB_PER_BLOCK: f64 = 0.3;
+
+pub fn set_max_blocks(n: usize) {
+    MAX_BLOCKS.store(n.clamp(100, 10_000_000), std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn max_blocks() -> usize {
+    MAX_BLOCKS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// a quarter of the computer's memory for the canvas, at MB_PER_BLOCK, rounded down to a thousand (at least 5,000)
+pub fn recommended_max_blocks(ram_bytes: u64) -> usize {
+    let blocks = (ram_bytes as f64 / 4.0 / (MB_PER_BLOCK * 1024.0 * 1024.0)) as usize;
+    (blocks / 1000 * 1000).max(5_000)
+}
 const MAX_DEPTH: usize = 16;
 
 // ---------------------------------------------------------------- tokens
@@ -1119,8 +1137,8 @@ impl Ctx<'_> {
                 let (kind, preset) = kind_of(word).ok_or_else(|| err(unknown_block(word)))?;
                 let vals = eval_args(args, &sc.vars).map_err(err)?;
                 let params = block_params(kind, preset, &vals).map_err(err)?;
-                if self.nodes.len() >= MAX_BLOCKS {
-                    return Err(err(format!("more than {MAX_BLOCKS} blocks: a repeat count is probably too large")));
+                if self.nodes.len() >= max_blocks() {
+                    return Err(err(format!("more than {} blocks (the limit in Settings): a repeat count is probably too large", max_blocks())));
                 }
                 let ins: &[String] = if kind == "input" { &[] } else { ins };
                 for src in ins {
@@ -1198,11 +1216,12 @@ impl Ctx<'_> {
             if r == 0 {
                 let per = self.nodes.len() - before;
                 let total = before + per * passes.len();
-                if total > MAX_BLOCKS {
+                let limit = max_blocks();
+                if total > limit {
                     return Err(diag(line, col, format!(
-                        "{} passes × {per} blocks = {} blocks, more than the {} a design may have (the canvas needs about 0.3 MB per \
-                         block: {} would take about {:.1} GB). At most {} passes fit here.",
-                        passes.len(), per * passes.len(), MAX_BLOCKS, total, total as f64 * 0.3 / 1024.0, (MAX_BLOCKS.saturating_sub(before)) / per.max(1))));
+                        "{} passes × {per} blocks = {} blocks, more than the {} a design may have (Settings → Design size; the canvas needs \
+                         about 0.3 MB per block: {} would take about {:.1} GB). At most {} passes fit here.",
+                        passes.len(), per * passes.len(), limit, total, total as f64 * MB_PER_BLOCK / 1024.0, (limit.saturating_sub(before)) / per.max(1))));
                 }
             }
             self.outputs.insert(format!("{full}.{}", r + 1), out.clone());

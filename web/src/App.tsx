@@ -206,7 +206,7 @@ export default function App() {
         {tab === "code" && <CodeTab toast={toast} />}
         {tab === "train" && train && <TrainTab st={st} ok={ok} analysis={analysis} train={train} setTrain={setTrain} runId={runId} openRun={setRunId} toast={toast} startJob={startJob} datasetSource={ds?.source ?? "builtin"} datasetTask={ds?.task ?? "classify"} />}
         {tab === "results" && <ResultsTab runId={runId} />}
-        {tab === "settings" && <SettingsTab />}
+        {tab === "settings" && <SettingsTab st={st} reload={reload} />}
         {tab === "connection" && <ConnectionTab st={st} reload={reload} toast={toast} startJob={startJob} />}
       </main>
       {job && job.name && (job.state === "running" || jobLog.length > 0) && <div className="job">
@@ -323,7 +323,7 @@ const PANEL_NAMES: [Panel, string, string][] = [
   ["inspector", "Inspector (right)", "settings of the selected block and the layer table"],
 ];
 
-function SettingsTab() {
+function SettingsTab({ st, reload }: { st: AppState; reload: () => Promise<AppState> }) {
   const theme = useTheme();
   const panels = usePanels();
   const same = (a: Record<Panel, string>) => PANEL_NAMES.every(([k]) => a[k].toLowerCase() === panels[k].toLowerCase());
@@ -359,10 +359,34 @@ function SettingsTab() {
       </div>
       <p className="row"><button onClick={() => setPanels(PANEL_DEFAULTS)} disabled={same(PANEL_DEFAULTS)}>Reset to Midnight</button>
         {theme === "day" && <span className="muted small">You are in day mode: switch to Night to see the colours on the Design screen.</span>}</p>
+      <h3>Design size</h3>
+      <DesignSizeSetting size={st.design_size} reload={reload} />
       <h3>Updates</h3>
       <AutoUpdate />
     </div>
   );
+}
+
+function DesignSizeSetting({ size, reload }: { size: AppState["design_size"]; reload: () => Promise<AppState> }) {
+  const [value, setValue] = useState(String(size.max_blocks));
+  useEffect(() => setValue(String(size.max_blocks)), [size.max_blocks]);
+  const n = Math.round(Number(value));
+  const valid = value.trim() !== "" && Number.isFinite(n) && n >= 100 && n <= 10_000_000;
+  const gb = (blocks: number) => (blocks * 0.3 / 1024).toFixed(1);
+  const save = (v: number | null) => api.setMaxBlocks(v).then(() => reload());
+  return <>
+    <p className="muted small">The most blocks a design may have (a repeat, loop or function can make many). The canvas needs about 0.3 MB per
+      block drawn; the parameter count does not matter. This computer has {size.ram_gb.toFixed(0)} GB of memory: recommended
+      {" "}<strong>{size.recommended.toLocaleString()}</strong> blocks (a quarter of the memory, about {gb(size.recommended)} GB). Designs above a few thousand
+      blocks are drawn slowly: use Collapse repeated blocks (×N) on the canvas, or the Text tab.</p>
+    <p className="row"><label>Most blocks per design<input type="number" min={100} max={10000000} step={1000} value={value}
+      onChange={(e) => setValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && valid) save(n); }} /></label>
+      <button disabled={!valid || n === size.max_blocks} onClick={() => save(n)}>Save</button>
+      <button disabled={!size.own} onClick={() => save(null)}>Use recommended</button>
+      <span className="muted small">{size.own ? "your value" : "the recommendation"}{valid ? ` · up to about ${gb(n)} GB for the canvas` : " · 100 to 10,000,000"}</span></p>
+    {valid && n * 0.3 / 1024 > size.ram_gb * 0.6 && <div className="msg warn">{n.toLocaleString()} blocks could need about {gb(n)} GB, more than
+      half of this computer's {size.ram_gb.toFixed(0)} GB: a design that large may make the app very slow or be closed by the system.</div>}
+  </>;
 }
 
 function AutoUpdate() {
