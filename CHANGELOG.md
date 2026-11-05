@@ -3,6 +3,22 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 05_11_26_22_02_01
+
+**Own dataset files (e.g. Sentinel-1/2 exported from Google Earth Engine)** (`82f35aa`)
+
+A new Dataset source, 'My own files': a folder on the Mac that is copied to the training machine
+(rsync, only when it changed) or uploaded once as a private Kaggle dataset and attached to the
+notebook, or a folder already on the training machine. Read folder lists class folders and reads
+the first GeoTIFF header (size, bands, GDAL/Earth Engine band names) to fill the band order.
+
+Earth Engine conventions: B4 = B04, NaN (masked) pixels left out of the statistics and filled,
+Sentinel-1 already in dB recognised, label values that are not a class ignored. Multispectral
+segmentation: images + masks, or a split scene + label image cut into tiles (memory-mapped).
+The Dataset tab writes a GEE export script matching its settings (scene + WorldCover labels, or
+class patches). Tests: stand-in SSH and Kaggle flows, TIFF header reader; CI trains on generated
+GEE-style folders, a scene and image/mask pairs with real PyTorch.
+
 ## 05_11_26_19_54_07
 
 **Docs: satellite images (Sentinel-2 / Sentinel-1) in the manual, plan status, CLAUDE.md** (`8a35f16`)
