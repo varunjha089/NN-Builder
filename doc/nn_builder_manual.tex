@@ -146,6 +146,7 @@ NN Builder & Check for Updates\ldots & asks GitHub for a newer release\\
 File & New Project\ldots\ (\kbd{Cmd+N}) & Projects page, cursor in the name field\\
  & Open Project\ldots\ (\kbd{Cmd+O}) & choose a project folder\\
  & Save Project\ldots\ (\kbd{Cmd+S}) & keeps an unsaved demo as a real project\\
+ & Close Project & back to the Projects page with no project open (an unsaved demo is discarded)\\
  & New from Demo $\triangleright$ & opens one of the fifteen demo architectures\\
  & Import / Export Design\ldots & reads or writes a design (\file{model.json})\\
  & Export train.py\ldots\ (\kbd{Cmd+E}) & saves the generated training script\\
@@ -534,9 +535,12 @@ def basic(c, s = 1) {              # a function: blocks with values
 Labels may be left out (they are then numbered), and \texttt{\#} starts a comment. \ui{Format} prints the text again from the blocks;
 \ui{Copy} puts it on the clipboard, e.g.\ for a paper's appendix. A design of identical consecutive groups prints as a \texttt{repeat}:
 ViT-g/14's 287 blocks take 16 lines. What a change on the canvas does to a hand-written text: moving blocks keeps it; a changed
-setting of a block on its own line rewrites only that line (names, functions, loops and comments stay); adding, removing or connecting
-blocks, or changing a block made by a function or loop, prints the text again with functions written out as lines (Undo brings the
-hand-written text back). In the layer table, the blocks of one \texttt{repeat}, \texttt{for} or function line form one group named after
+setting of a block on its own line rewrites only that line; a block added, removed or connected differently on a plain line changes only
+the lines concerned (a new block gets the next free number and goes after its input; a line that took ``the line above'' gets an explicit
+\texttt{<-} when that changed; a block inserted in front of a function call or loop becomes its input). Names, functions, loops and
+comments stay. Only a change to a block made by a function or loop (which would change every call) prints the text again with functions
+written out as lines (Undo brings the hand-written text back). The text is coloured by kind of word (labels, keywords, blocks, settings,
+numbers, functions, comments), and \kbd{Cmd}-click on a number selects that block on the canvas. In the layer table, the blocks of one \texttt{repeat}, \texttt{for} or function line form one group named after
 the line. A long design typed into an empty canvas is laid out in rows of 24 columns. \ui{File → Export Design\dots} saves the design as
 \file{.json} (with positions) or as design text (\file{.nnb}); \ui{Import Design\dots} reads both.
 

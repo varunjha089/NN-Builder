@@ -618,8 +618,10 @@ fn kind_word(kind: &str) -> &str {
 
 const PAIR_KEYS: &[&str] = &["kernel", "stride", "size"];
 
-/// a number as JSON: whole numbers as integers
+/// a number as JSON: whole numbers as integers, others rounded to 9 decimals (0.1 + 0.2 is 0.3, not 0.30000000000000004, so a value
+/// computed somewhere prints short and compares equal to the same value typed in the text)
 fn num(v: f64) -> Value {
+    let v = if v.abs() < 1e6 { (v * 1e9).round() / 1e9 } else { v };
     if v.fract() == 0.0 && v.abs() < 1e15 {
         json!(v as i64)
     } else {
@@ -812,6 +814,7 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
 }
 
 fn fmt_num(v: f64) -> String {
+    let v = if v.abs() < 1e6 { (v * 1e9).round() / 1e9 } else { v };
     if v.fract() == 0.0 && v.abs() < 1e15 {
         format!("{}", v as i64)
     } else {
@@ -932,6 +935,19 @@ pub struct Expanded {
     pub graph: Graph,
     pub name: Option<String>,
     pub lines: BTreeMap<String, usize>,
+    /// every top-level line (by label): its output block, its inputs and whether they were written with `<-`
+    pub tops: BTreeMap<String, TopLine>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TopLine {
+    pub line: usize,
+    /// the label of the block that is this line's output (itself for a block; the last block of a repeat, loop or call)
+    pub output: String,
+    pub inputs: Vec<String>,
+    pub explicit: bool,
+    /// a single block (not a repeat, loop or call)
+    pub plain: bool,
 }
 
 struct Ctx<'a> {
@@ -941,6 +957,7 @@ struct Ctx<'a> {
     /// every label made so far -> the label of the block that is its output (itself for a block)
     outputs: HashMap<String, String>,
     lines: BTreeMap<String, usize>,
+    tops: BTreeMap<String, TopLine>,
     depth: usize,
 }
 
@@ -1082,6 +1099,10 @@ impl Ctx<'_> {
                         None => prev.iter().cloned().collect(),
                     };
                     let out = self.item(item, &full, &ins, sc, *line, *col)?;
+                    if sc.prefix.is_empty() {
+                        self.tops.insert(label.clone(), TopLine { line: *line, output: out.clone(), inputs: ins.clone(), explicit: inputs.is_some(),
+                            plain: matches!(item, Item::Block { .. }) });
+                    }
                     sc.local.insert(label, out.clone());
                     self.outputs.insert(full, out.clone());
                     prev = Some(out);
@@ -1195,16 +1216,17 @@ fn letters(i: usize) -> String {
 /// to their first input (or everything is arranged when nothing matches).
 pub fn expand(text: &str, old: &Graph) -> Result<Expanded, Vec<Diagnostic>> {
     let prog = parse(text).map_err(|d| vec![d])?;
-    let mut ctx = Ctx { defs: &prog.defs, nodes: vec![], edges: vec![], outputs: HashMap::new(), lines: BTreeMap::new(), depth: 0 };
+    let mut ctx = Ctx { defs: &prog.defs, nodes: vec![], edges: vec![], outputs: HashMap::new(), lines: BTreeMap::new(), tops: BTreeMap::new(), depth: 0 };
     let mut top = Scope { prefix: String::new(), vars: HashMap::new(), inputs: vec![], local: HashMap::new(), auto: 0 };
     ctx.stmts(&prog.stmts, &mut top).map_err(|d| vec![d])?;
-    let (mut nodes, edges, lines) = (ctx.nodes, ctx.edges, ctx.lines);
+    let (mut nodes, edges, lines, tops) = (ctx.nodes, ctx.edges, ctx.lines, ctx.tops);
     // ids and positions: from the old block with the same label
     let by_label: HashMap<&str, &Node> = old.nodes.iter().filter(|n| !n.label.is_empty()).map(|n| (n.label.as_str(), n)).collect();
     let mut used: HashSet<String> = HashSet::new();
     let mut kept = 0;
     for n in nodes.iter_mut() {
-        if let Some(o) = by_label.get(n.label.as_str()).filter(|o| !used.contains(&o.id)) {
+        // the same label and the same kind of block: the same block (a pasted text that reuses numbers for other blocks gets new ones)
+        if let Some(o) = by_label.get(n.label.as_str()).filter(|o| !used.contains(&o.id) && o.kind == n.kind) {
             n.id = o.id.clone();
             n.x = o.x;
             n.y = o.y;
@@ -1264,7 +1286,7 @@ pub fn expand(text: &str, old: &Graph) -> Result<Expanded, Vec<Diagnostic>> {
             g.nodes[i].y = y;
         }
     }
-    Ok(Expanded { graph: g, name: prog.name, lines })
+    Ok(Expanded { graph: g, name: prog.name, lines, tops })
 }
 
 /// a long chain laid out by columns would be one very wide row: more than `cols` columns are cut into bands, one below the other
@@ -1502,6 +1524,17 @@ pub fn sync(g: &Graph) -> Graph {
                 out.text = text;
                 return out;
             }
+            // blocks on plain lines added, removed or connected differently: edit those lines only
+            if let Some((text, labels)) = patch_structure(&g.text, &e, g) {
+                let mut out = g.clone();
+                out.text = text;
+                for n in &mut out.nodes {
+                    if let Some(l) = labels.get(&n.id) {
+                        n.label = l.clone();
+                    }
+                }
+                return out;
+            }
         }
     }
     let (text, labels) = print(g);
@@ -1567,6 +1600,200 @@ fn patch_settings(text: &str, e: &Expanded, g: &Graph) -> Option<String> {
     // the rewritten text must give exactly the canvas design
     let check = expand(&out, g).ok()?;
     same_structure(&check.graph, g).then_some(out)
+}
+
+/// the text after blocks on plain top-level lines were added, removed or connected differently on the canvas: only those lines change
+/// (a new block gets a new number and goes after its input; a line that took "the line above" gets an explicit `<-` when that line
+/// changed); everything else (functions, loops, names, comments) stays as written. None when a block made by a repeat, loop or call
+/// changed, or when the result would not give exactly the canvas design. Returns the text and the label of every block.
+fn patch_structure(text: &str, e: &Expanded, g: &Graph) -> Option<(String, HashMap<String, String>)> {
+    let old = &e.graph;
+    let old_by_id: HashMap<&str, &Node> = old.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+    let new_by_id: HashMap<&str, &Node> = g.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+    // labels: kept blocks keep theirs, new blocks get the next free numbers
+    let mut next = e.tops.keys().filter_map(|l| l.parse::<usize>().ok()).max().unwrap_or(0) + 1;
+    let mut label: HashMap<String, String> = HashMap::new();
+    for n in &g.nodes {
+        let l = match old_by_id.get(n.id.as_str()) {
+            Some(o) => o.label.clone(),
+            None => {
+                next += 1;
+                (next - 1).to_string()
+            }
+        };
+        label.insert(n.id.clone(), l);
+    }
+    // blocks made by a repeat, loop or call: unchanged and still there (their lines make several blocks at once), except that the group
+    // may take its inputs from other blocks (a block inserted in front of it): then its line gets the new `<-`
+    let mut group_inputs: HashMap<String, Vec<String>> = HashMap::new();
+    for o in old.nodes.iter().filter(|o| o.label.contains('.')) {
+        let n = new_by_id.get(o.id.as_str())?;
+        if n.kind != o.kind || effective(&n.kind, &n.params) != effective(&o.kind, &o.params) {
+            return None;
+        }
+        let (oi, ni) = (old.inputs_of(&o.id), g.inputs_of(&n.id));
+        if oi.len() != ni.len() {
+            return None;
+        }
+        let top = o.label.split('.').next().unwrap_or("").to_string();
+        let inside = |l: &str| l.starts_with(&format!("{top}."));
+        for (a, b) in oi.iter().zip(&ni) {
+            if a == b {
+                continue;
+            }
+            let (la, lb) = (old_by_id.get(a)?.label.clone(), label.get(*b)?.clone());
+            if inside(&la) || inside(&lb) {
+                return None;
+            }
+            let t = e.tops.get(&top)?;
+            let k = t.inputs.iter().position(|x| *x == la)?;
+            let cur = group_inputs.entry(top.clone()).or_insert_with(|| t.inputs.clone());
+            if cur[k] != la && cur[k] != lb {
+                return None;
+            }
+            cur[k] = lb;
+        }
+    }
+    // how a block is named after `<-`: a repeat / loop / call by its own line number when the block is that line's output
+    let ref_name = |l: &str| -> String {
+        let top = l.split('.').next().unwrap_or(l);
+        match e.tops.get(top) {
+            Some(t) if l.contains('.') && t.output == l => top.to_string(),
+            _ => l.to_string(),
+        }
+    };
+    let id_of_label: HashMap<&str, &str> = old.nodes.iter().map(|n| (n.label.as_str(), n.id.as_str())).collect();
+    let lines: Vec<&str> = text.lines().collect();
+    let strip = |l: &str| l.split('#').next().unwrap_or("").to_string();
+    // the text as entries: other lines (comments, let, def, blank) and top-level statements (with their lines, braces included)
+    enum Entry {
+        Other(usize),
+        Keep { label: String, from: usize, to: usize },
+        Line { id: String, from: Option<usize> },
+    }
+    let starts: HashMap<usize, &str> = e.tops.iter().map(|(l, t)| (t.line - 1, l.as_str())).collect();
+    let mut entries: Vec<Entry> = vec![];
+    let mut i = 0;
+    while i < lines.len() {
+        let Some(&top) = starts.get(&i) else {
+            entries.push(Entry::Other(i));
+            i += 1;
+            continue;
+        };
+        // the statement's last line: where its braces close
+        let mut depth = 0i64;
+        let mut end = i;
+        for (j, l) in lines.iter().enumerate().skip(i) {
+            let c = strip(l);
+            depth += c.matches('{').count() as i64 - c.matches('}').count() as i64;
+            end = j;
+            if depth <= 0 {
+                break;
+            }
+        }
+        let t = &e.tops[top];
+        if t.plain {
+            let id = *id_of_label.get(t.output.as_str())?;
+            match new_by_id.get(id) {
+                None => {} // removed on the canvas
+                Some(n) => {
+                    let o = old_by_id[id];
+                    let same = n.kind == o.kind && effective(&n.kind, &n.params) == effective(&o.kind, &o.params) && old.inputs_of(id) == g.inputs_of(id);
+                    entries.push(if same { Entry::Keep { label: top.to_string(), from: i, to: end } } else { Entry::Line { id: id.to_string(), from: Some(i) } });
+                }
+            }
+        } else {
+            entries.push(Entry::Keep { label: top.to_string(), from: i, to: end });
+        }
+        i = end + 1;
+    }
+    // new blocks, in an order where inputs come first, each right after the entry that makes its latest input
+    let mut added: Vec<&Node> = vec![];
+    let mut pending: Vec<&Node> = g.nodes.iter().filter(|n| !old_by_id.contains_key(n.id.as_str())).collect();
+    while !pending.is_empty() {
+        let k = pending.iter().position(|n| g.inputs_of(&n.id).iter().all(|s| old_by_id.contains_key(s) || added.iter().any(|a| a.id == *s)))?;
+        added.push(pending.remove(k));
+    }
+    let entry_of = |entries: &[Entry], id: &str| -> Option<usize> {
+        let l = label.get(id)?;
+        let top = l.split('.').next().unwrap_or(l);
+        entries.iter().position(|en| match en {
+            Entry::Keep { label, .. } => label == top,
+            Entry::Line { id: x, .. } => x == id,
+            Entry::Other(_) => false,
+        })
+    };
+    for n in added {
+        let at = g.inputs_of(&n.id).iter().filter_map(|s| entry_of(&entries, s)).max();
+        let pos = match at {
+            Some(p) => p + 1,
+            None => entries.iter().position(|en| !matches!(en, Entry::Other(_))).unwrap_or(entries.len()),
+        };
+        entries.insert(pos, Entry::Line { id: n.id.clone(), from: None });
+    }
+    // write the text; `prev` is the output of the last statement written (what a line without `<-` takes)
+    let mut out: Vec<String> = vec![];
+    let mut prev: Option<String> = None;
+    for en in &entries {
+        match en {
+            Entry::Other(i) => out.push(lines[*i].to_string()),
+            Entry::Keep { label: l, from, to } => {
+                let t = &e.tops[l];
+                let mut first = lines[*from].to_string();
+                let ins = group_inputs.get(l).cloned().unwrap_or_else(|| t.inputs.clone());
+                let changed = ins != t.inputs;
+                // its inputs were replaced, or it took the line above, which is now a different block: write its inputs
+                let implicit_ok = ins.len() == 1 && prev.as_deref() == Some(ins[0].as_str());
+                if (changed && !(implicit_ok && !t.explicit)) || (!t.explicit && !implicit_ok && !ins.is_empty()) {
+                    let r = format!("<- {}", ins.iter().map(|x| ref_name(x)).collect::<Vec<_>>().join(", "));
+                    let code_end = first.find('#').unwrap_or(first.len());
+                    let (code, comment) = (first[..code_end].to_string(), first[code_end..].to_string());
+                    let brace = code.rfind('{');
+                    let head = &code[..brace.unwrap_or(code.len())];
+                    // drop an old `<- …` and put the new one where it belongs (before the brace of a repeat / loop)
+                    let head = head.find("<-").map(|p| &head[..p]).unwrap_or(head).trim_end().to_string();
+                    first = match brace {
+                        Some(b) => format!("{head} {r} {}{}", code[b..].trim_end(), if comment.is_empty() { String::new() } else { format!("  {comment}") }),
+                        None => format!("{head} {r}{}", if comment.is_empty() { String::new() } else { format!("  {comment}") }),
+                    };
+                }
+                out.push(first);
+                out.extend(lines[from + 1..=*to].iter().map(|s| s.to_string()));
+                prev = Some(t.output.clone());
+            }
+            Entry::Line { id, from } => {
+                let n = new_by_id[id.as_str()];
+                let ins: Vec<String> = g.inputs_of(id).iter().map(|s| label[*s].clone()).collect();
+                let tail = if n.kind == "input" && ins.is_empty() {
+                    String::new()
+                } else if ins.is_empty() {
+                    " <- none".into()
+                } else if ins.len() == 1 && prev.as_deref() == Some(ins[0].as_str()) {
+                    String::new()
+                } else {
+                    format!(" <- {}", ins.iter().map(|l| ref_name(l)).collect::<Vec<_>>().join(", "))
+                };
+                let (indent, comment) = match from {
+                    Some(i) => {
+                        let l = lines[*i];
+                        (l.chars().take_while(|c| c.is_whitespace()).collect::<String>(), l.find('#').map(|c| format!("  {}", l[c..].trim_end())).unwrap_or_default())
+                    }
+                    None => (String::new(), String::new()),
+                };
+                out.push(format!("{indent}{} {}{tail}{comment}", label[id], block_text(&n.kind, &n.params)));
+                prev = Some(label[id].clone());
+            }
+        }
+    }
+    let mut text_out = out.join("\n");
+    text_out.push('\n');
+    // the edited text must give exactly the canvas design
+    let mut labelled = g.clone();
+    for n in &mut labelled.nodes {
+        n.label = label[&n.id].clone();
+    }
+    let check = expand(&text_out, &labelled).ok()?;
+    same_structure(&check.graph, &labelled).then_some((text_out, label))
 }
 
 /// after the text was edited: the blocks it describes (ids and positions kept by label), with the text

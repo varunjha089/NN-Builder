@@ -267,11 +267,20 @@ Done since (2026-11-05, later):
 - Found by testing and fixed: a label spelled like a block word; a name equal to a setting word; settings a block does not have were
   accepted silently; a loop on the canvas gave an unclear message; an unapplied text was lost on a tab switch.
 
+Done since (2026-11-05, latest):
+
+- **Structural canvas changes keep the hand-written text** (`dsl::patch_structure`): blocks added, removed or connected differently on
+  plain lines change only those lines; a new block gets the next free number after its input; a line that took "the line above" gets an
+  explicit `<-` when that changed; a block inserted in front of a function call or loop becomes its input (its line gets `<-`). Every
+  result is checked against the canvas, else the text is printed again. Tested on the everything design.
+- **Editor:** the text is coloured (labels, keywords, blocks, settings, numbers, functions, references, comments); ⌘-click on a number
+  selects its block; the canvas follows 0.25 s after typing stops. Canvas and text stay separate tabs (the owner's choice), always in step.
+- Computed numbers print short (0.1 + 0.2 is written 0.3) and compare equal, so a text is not printed again for a rounding difference.
+
 Left for later (also in FUTURE_PLAN.md):
 
-1. **Structural canvas changes and functions:** adding, removing or connecting blocks, or changing a block made by a function or loop,
-   still prints the text again. Next: add / remove a top-level line for a block added at the end or removed; change the function body when
-   every call's copy changed the same way.
-2. **Editor comfort:** CodeMirror with colours, completion and clickable numbers.
-3. **Clipboard:** the text form next to copied blocks.
+1. **A changed block made by a function or loop** still prints the text again (one call cannot change alone). Next: change the function
+   body when every call's copy changed the same way; or turn that one call into plain lines.
+2. Completion of block words and settings while typing.
+3. The text form on the clipboard next to copied blocks.
 4. Section 7 step 6: torchvision import, variables for sweeps, diff by block number.

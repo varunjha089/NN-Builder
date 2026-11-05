@@ -15,9 +15,9 @@ What is still open, in the suggested order. Done work is in git and CLAUDE.md; t
 
 ## 2. The text language (details in [PROGRAMMING_LANGUAGE.md](PROGRAMMING_LANGUAGE.md), section 9)
 
-- Keep functions and loops through **structural** canvas changes (adding, removing or connecting blocks; a changed block made by a
-  function or loop). Settings changes and moves already keep the hand-written text.
-- Editor comfort: CodeMirror (colours, completion, clickable block numbers).
+- A changed block that a function or loop made (on the canvas) still prints the text again; settings changes, moves, and blocks added,
+  removed or rewired on plain lines already keep the hand-written text.
+- Completion of block words and settings while typing (colours and ⌘-click on numbers are done).
 - The text form on the clipboard next to copied blocks.
 - Import a torchvision model as text; variables for sweeps; a diff of two designs by block number.
 

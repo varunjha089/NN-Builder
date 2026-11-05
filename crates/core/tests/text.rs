@@ -394,3 +394,98 @@ fn long_text_designs_wrap_into_rows() {
     pos.dedup();
     assert_eq!(pos.len(), g.nodes.len());
 }
+
+/// a canvas edit on the design `g`: (new blocks: id, kind, params), (edges removed: source label -> target label), (edges added, by
+/// label or new id); returns the synced design
+fn edit(g: &Graph, add: &[(&str, &str, serde_json::Value)], remove_edges: &[(&str, &str)], add_edges: &[(&str, &str)], remove: &[&str]) -> Graph {
+    let mut h = g.clone();
+    let id = |h: &Graph, l: &str| h.nodes.iter().find(|n| n.label == l || n.id == l).map(|n| n.id.clone()).unwrap_or_else(|| panic!("no {l}"));
+    for (nid, kind, p) in add {
+        h.nodes.push(Node { id: nid.to_string(), kind: kind.to_string(), params: p.as_object().cloned().unwrap_or_default(), x: 900.0, y: 400.0, ..Default::default() });
+    }
+    for (s, t) in remove_edges {
+        let (s, t) = (id(&h, s), id(&h, t));
+        h.edges.retain(|e| !(e.source == s && e.target == t));
+    }
+    for (s, t) in add_edges {
+        let (s, t) = (id(&h, s), id(&h, t));
+        h.edges.push(model::Edge { id: format!("x{s}{t}"), source: s, target: t });
+    }
+    for l in remove {
+        let r = id(&h, l);
+        h.nodes.retain(|n| n.id != r);
+        h.edges.retain(|e| e.source != r && e.target != r);
+    }
+    let s = sync(&h);
+    let e = expand(&s.text, &s).unwrap_or_else(|d| panic!("{d:?}\n{}", s.text));
+    assert!(same_structure(&e.graph, &s), "{}", s.text);
+    s
+}
+
+#[test]
+fn structural_canvas_changes_keep_the_hand_written_text() {
+    let text = "let w = 32\ndef pair(c) {\n  a conv c 3x3\n  b conv c 3x3\n}\n1 input\n2 conv w 3x3   # the stem\n3 pair(w * 2)\n4 dense 10\n5 output\n";
+    let g = build(text);
+    let kept = |s: &Graph| assert!(s.text.contains("def pair(c) {") && s.text.contains("let w = 32") && s.text.contains("pair(w * 2)") && s.text.contains("# the stem"), "{}", s.text);
+
+    // a block inserted between the stem and the function call: a new line after the stem, the call takes it (the line above)
+    let s = edit(&g, &[("nb", "batchnorm", json!({}))], &[("2", "3.a")], &[("2", "nb"), ("nb", "3.a")], &[]);
+    kept(&s);
+    assert!(s.text.contains("2 conv w 3x3   # the stem\n6 bn\n3 pair(w * 2)\n"), "{}", s.text);
+
+    // a block removed in the middle: the line goes, the next one takes what is now above it
+    let s = edit(&g, &[], &[("4", "5")], &[("3.b", "5")], &["4"]);
+    kept(&s);
+    assert!(!s.text.contains("dense"), "{}", s.text);
+
+    // a side branch from the stem: its line goes after the stem, and the call (which took the line above) now names its input
+    let s = edit(&g, &[("side", "dense", json!({"units": 5}))], &[], &[("2", "side")], &[]);
+    kept(&s);
+    assert!(s.text.contains("2 conv w 3x3   # the stem\n6 dense 5\n3 pair(w * 2) <- 2\n"), "{}", s.text);
+
+    // a skip connection around the call: an add of the call's output and the stem, wired into the dense block
+    let s = edit(&g, &[("sk", "add", json!({}))], &[("3.b", "4")], &[("3.b", "sk"), ("2", "sk"), ("sk", "4")], &[]);
+    kept(&s);
+    assert!(s.text.contains("add <- 3, 2"), "{}", s.text);
+
+    // a block made by the function changed on the canvas: the function cannot change for one call, so the text is printed again
+    let s = edit(&g, &[("nb", "batchnorm", json!({}))], &[("3.a", "3.b")], &[("3.a", "nb"), ("nb", "3.b")], &[]);
+    assert!(!s.text.contains("def pair"), "{}", s.text);
+}
+
+#[test]
+fn structural_change_in_the_everything_design() {
+    let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../doc/examples/everything.nnb")).unwrap();
+    let g = build(&text);
+    // a dropout between the decoder's add (11) and the patch embedding (12); and the CNN head (19) moved to take the dropout
+    let s = edit(&g, &[("dr", "dropout", json!({"rate": 0.3}))], &[("11", "12"), ("11", "19")], &[("11", "dr"), ("dr", "12"), ("dr", "19")], &[]);
+    for kept in ["def se(c, r = 4) {", "def mixer(c) {", "5 for c, s in (w, 2), (w * 2, 2) {", "6 repeat depth {", "7 up(32) <- 6, 5.2.m", "16 repeat depth {"] {
+        assert!(s.text.contains(kept), "lost '{kept}':\n{}", s.text);
+    }
+    assert!(s.text.contains("11 add <- 10, 8\n27 dropout 0.3\n"), "{}", s.text);
+    assert!(s.text.contains("19 avgpool 4x4 <- 27"), "{}", s.text);
+    assert_eq!(analyze(&s, &cifar()).total_params, analyze(&g, &cifar()).total_params);
+}
+
+#[test]
+fn computed_numbers_print_short_and_stay_in_step() {
+    let mut g = build("1 input\n2 conv 8 3x3\n3 dropout 0.3\n4 flatten\n5 dense 10\n6 output\n");
+    let i = g.nodes.iter().position(|n| n.kind == "dropout").unwrap();
+    g.nodes[i].params.insert("rate".into(), json!(0.1 + 0.2));
+    let s = sync(&g);
+    assert!(s.text.contains("3 dropout 0.3\n"), "{}", s.text);
+    // the text is kept (not printed again) although the stored number is 0.30000000000000004
+    assert_eq!(s.text, g.text);
+    g.text.clear();
+    assert!(sync(&g).text.contains("dropout 0.3\n"));
+}
+
+#[test]
+fn a_new_text_does_not_take_places_of_other_blocks() {
+    let g = build("1 input\n2 conv 8 3x3\n3 maxpool 2x2\n4 conv 16 3x3\n5 maxpool 2x2\n6 flatten\n7 dense 10\n8 output\n");
+    // the same numbers for different blocks: only blocks of the same kind keep their id
+    let h = apply("1 input\n2 conv 8 3x3\n3 global_pool\n4 output\n", &g).unwrap();
+    let same = |l: &str| g.nodes.iter().find(|n| n.label == l).map(|n| n.id.clone()) == h.nodes.iter().find(|n| n.label == l).map(|n| n.id.clone());
+    assert!(same("1") && same("2"));
+    assert!(!same("3") && !same("4"));
+}

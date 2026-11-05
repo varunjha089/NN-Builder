@@ -215,8 +215,21 @@ table.layers td:nth-child(n+2), table.layers th:nth-child(n+2) { white-space: no
 .text-tab .gutter div { padding: 0 8px; }
 .text-tab .gutter .err { color: var(--err); background: var(--errbg); font-weight: 700; }
 .text-tab .gutter .warn { color: var(--warn); background: var(--warnbg); }
-.text-tab textarea { flex: 1; border: 0; outline: none; resize: none; padding: 8px 10px; background: transparent; color: var(--ink);
-  font: 12px/19px ui-monospace, Menlo, monospace; white-space: pre; overflow: auto; tab-size: 2; }
+/* the coloured text (pre.shade) lies under a transparent textarea with the same font, padding and scroll position */
+.text-tab .code { position: relative; flex: 1; min-width: 0; }
+.text-tab .code textarea, .text-tab .code .shade { position: absolute; inset: 0; margin: 0; border: 0; padding: 8px 10px;
+  font: 12px/19px ui-monospace, Menlo, monospace; white-space: pre; tab-size: 2; overflow: auto; }
+.text-tab .code textarea { outline: none; resize: none; background: transparent; color: transparent; caret-color: var(--ink); width: 100%; height: 100%; }
+.text-tab .code textarea::selection { background: rgba(80, 140, 255, 0.35); }
+.text-tab .code .shade { color: var(--ink); overflow: hidden; pointer-events: none; }
+.hl-label { color: #8a5a00; font-weight: 600; } .hl-kw { color: #a626a4; font-weight: 600; } .hl-block { color: #0b6bcb; }
+.hl-set { color: #0f7b6c; } .hl-num { color: #b35900; } .hl-fn { color: #6f42c1; font-style: italic; } .hl-ref { color: #8a5a00; }
+.hl-com { color: var(--muted); font-style: italic; } .hl-str { color: #2e7d32; }
+[data-theme="night"] .hl-label, [data-theme="night"] .hl-ref { color: #ffd166; } [data-theme="night"] .hl-kw { color: #ff79c6; }
+[data-theme="night"] .hl-block { color: #5ee7ff; } [data-theme="night"] .hl-set { color: #7dffb0; } [data-theme="night"] .hl-num { color: #ffb86c; }
+[data-theme="night"] .hl-fn { color: #c792ff; } [data-theme="night"] .hl-str { color: #a5ff90; }
+
+
 .text-tab .text-problems { max-height: 180px; overflow: auto; }
 .text-tab .text-help { width: 100%; border-collapse: collapse; margin: 4px 0 10px; }
 .text-tab .text-help td { padding: 3px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }

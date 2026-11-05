@@ -55,6 +55,8 @@ export default function App() {
     setGraph(g);
     persist(g).catch(() => {});
   }, [persist]);
+  // Format: the text printed again from the blocks (one undo step)
+  const formatText = useCallback(() => api.designFormat().then((r) => { if (graphRef.current) remember(graphRef.current); setGraph(r.graph); setAnalysis(r.analysis); }), [remember]);
   // the Text tab: the design built from its text (one undo step), or the problems in the text
   const applyText = useCallback(async (text: string) => {
     const r = await api.designFromText(text);
@@ -100,7 +102,11 @@ export default function App() {
     });
     const un3 = listen<string>("menu", (e) => menuRef.current(e.payload));
     const un4 = listen<string>("toast", (e) => toast(e.payload));
-    const un5 = listen("project-changed", () => { reload().then(() => loadProject()).then(() => setTab("design")).catch((err) => toast(errText(err))); });
+    const un5 = listen("project-changed", () => {
+      // another project, or none (File → Close Project: back to the Projects page)
+      reload().then((s) => s.project ? loadProject().then(() => setTab("design")) : (setGraph(null), setAnalysis(null), setTab("project")))
+        .catch((err) => toast(errText(err)));
+    });
     return () => { [un, un2, un3, un4, un5].forEach((u) => u.then((f) => f())); };
   }, [reload, loadProject, toast]);
 
@@ -194,7 +200,7 @@ export default function App() {
         {tab === "design" && graph && <Design st={st} graph={graph} setGraph={setGraph} analysis={analysis} persist={persist} focus={selectId} toast={toast}
           reloadProject={() => { reload(); loadProject(true); }} remember={remember} />}
         {tab === "text" && graph && <TextTab graph={graph} analysis={analysis} persist={persist} applyText={applyText} toast={toast}
-          format={() => api.designFormat().then((r) => { if (graphRef.current) remember(graphRef.current); setGraph(r.graph); setAnalysis(r.analysis); })}
+          format={formatText}
           showBlock={(id) => { setSelectId(id); setTab("design"); }} />}
         {tab === "dataset" && ds && <DatasetTab st={st} ds={ds} setDs={setDs} problems={dsProblems} toast={toast} />}
         {tab === "code" && <CodeTab toast={toast} />}

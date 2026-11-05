@@ -800,6 +800,7 @@ fn build_menu(h: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .item(&item(h, "new-project", "New Project…", Some("CmdOrCtrl+N"))?)
         .item(&item(h, "open-project", "Open Project…", Some("CmdOrCtrl+O"))?)
         .item(&item(h, "save-project", "Save Project…", Some("CmdOrCtrl+S"))?)
+        .item(&item(h, "close-project", "Close Project", None)?)
         .item(&demos)
         .separator()
         .item(&item(h, "import-design", "Import Design…", None)?)
@@ -910,6 +911,16 @@ fn on_menu(h: &tauri::AppHandle, id: &str) {
                         Err(err) => toast(&h2, err),
                     }
                 });
+        }
+        "close-project" => {
+            // back to the Projects page with no project open; an unsaved demo is discarded (as when another project is opened)
+            let Some(p) = st.project.lock().unwrap().take() else { return toast(h, "No project is open.") };
+            if p.is_draft() {
+                let _ = store::discard_draft();
+            }
+            let _ = store::save_setting("last_project", Value::Null);
+            let _ = h.emit("project-changed", ());
+            toast(h, if p.is_draft() { "Closed the demo (it was not saved).".to_string() } else { format!("Closed {}.", p.name()) });
         }
         "reveal-project" => match st.project.lock().unwrap().clone() {
             Some(p) => reveal(&p.dir.join("project.json")),

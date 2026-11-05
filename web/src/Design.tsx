@@ -135,7 +135,10 @@ export function Design({ st, graph, setGraph, analysis, persist, focus, toast, r
   const titles = useMemo(() => Object.fromEntries(st.kinds.map((k) => [k.kind, k.title])), [st.kinds]);
   const defaults = useMemo(() => Object.fromEntries(st.kinds.map((k) => [k.kind, k.defaults])), [st.kinds]);
 
-  const save = useCallback((g: Graph) => {
+  const save = useCallback((changed: Graph) => {
+    // a canvas action may build the design as { nodes, edges }: keep its text, so that the Rust side edits only the lines the change
+    // concerns (functions, loops, names and comments stay) instead of printing a new text
+    const g = changed.text === undefined && graph.text ? { ...changed, text: graph.text } : changed;
     remember(graph);
     setGraph(g);
     window.clearTimeout(saveTimer.current);
