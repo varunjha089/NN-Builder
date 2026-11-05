@@ -39,6 +39,12 @@ crates/core/src/
                            + 2× layer outputs × batch, vs Kaggle/g4dn 16 GB or the SSH machine's nvidia-smi memory).
                            Kaggle live progress: while running, `kaggle kernels logs` (cloud::kaggle_logs) gives metrics.jsonl and log.txt
                            every 30 s (kaggle_live). runs::preflight refuses a run (before creating it) without tools / token / key.
+                           Phase 2: runs::start_seeds (one group "g<time>", ids "<time>-s<seed>"; RunInfo.seed / .group), summary
+                           (rows + mean / sample s.d. per group) and export (<project>/exports/runs-<time>.csv + .tex booktabs);
+                           Train tab seeds 1/3/5, Runs checkboxes, Compare panel (overlaid validation curves) + Export; Results: top-5,
+                           per-class precision/recall/F1 (from the confusion matrix); shapes.rs macs per node + total_macs (tests: MSG
+                           93,499,136 by hand, ResNet-18 1.80–1.83 G). Tests: summary.rs (incl. pdflatex of the table); CI recipe
+                           check uses 6 classes and checks val_top5 / test_top5.
                            Kaggle runs: data in /tmp/nnb_data (not /kaggle/working, the notebook output), checkpoint removed at the
                            end, kaggle_output deleted after metrics/results/model/log are copied; the run card shows the last check.
   dataset.rs               Dataset (builtin | huggingface | kaggle; task classify | segment; resize (built-in); hf_mask_col, kaggle_mask_dir;

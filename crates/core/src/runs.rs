@@ -88,6 +88,11 @@ pub struct RunInfo {
     /// Stop was pressed while the machine did not answer: stop it (and do not resume it) as soon as it answers
     #[serde(default)]
     pub cancel: bool,
+    /// the random seed of this run, and the group of runs started together with different seeds ("" = a single run)
+    #[serde(default)]
+    pub seed: u64,
+    #[serde(default)]
+    pub group: String,
 }
 
 /// what a run may need from the Keychain (the app passes them in; core never stores them)
@@ -157,7 +162,27 @@ fn end_event(d: &Path) -> Option<String> {
 // ---------------------------------------------------------------- start
 /// make the run folder and start it on the target; returns the run id. Long (AWS start, prepare): call it from a background job.
 pub fn start(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_tokens: bool, log: &Log) -> Result<String> {
-    let (g, ds, t) = (pr.graph(), pr.dataset(), pr.train());
+    start_seeded(pr, target, gpu, creds, copy_tokens, log, None, "")
+}
+
+/// start runs of the same design and settings with seeds base, base+1, ... (one group), to report a mean and its spread; returns the ids
+pub fn start_seeds(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_tokens: bool, count: usize, log: &Log) -> Result<Vec<String>> {
+    let base = pr.train().seed;
+    let group = format!("g{}", chrono::Local::now().format("%Y%m%d-%H%M%S"));
+    let mut ids = vec![];
+    for i in 0..count.clamp(1, 10) as u64 {
+        log(format!("--- seed {} ({} of {count}) ---", base + i, i + 1));
+        ids.push(start_seeded(pr, target, gpu, creds, copy_tokens, log, Some(base + i), &group)?);
+    }
+    Ok(ids)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn start_seeded(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_tokens: bool, log: &Log, seed: Option<u64>, group: &str) -> Result<String> {
+    let (g, ds, mut t) = (pr.graph(), pr.dataset(), pr.train());
+    if let Some(s) = seed {
+        t.seed = s;
+    }
     let a = shapes::analyze(&g, &ds);
     if !a.ok {
         bail!("The design has problems (red blocks or the Dataset tab). Fix them before training.");
@@ -166,7 +191,10 @@ pub fn start(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_tokens: 
         bail!("GPU: a number like 0, or 0,1 (empty = any).");
     }
     preflight(target, creds)?;
-    let id = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    let mut id = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    if !group.is_empty() {
+        id = format!("{id}-s{}", t.seed);
+    }
     let d = pr.runs_dir().join(&id);
     if d.exists() {
         bail!("A run was started this second; try again.");
@@ -184,7 +212,7 @@ pub fn start(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_tokens: 
         _ => format!("kaggle:{}", ds.kaggle_slug),
     };
     let mut info = RunInfo { id: id.clone(), target: target.into(), created: chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(), status: "starting".into(),
-        epochs: t.epochs, dataset: ds_label, ..Default::default() };
+        epochs: t.epochs, dataset: ds_label, seed: t.seed, group: group.into(), ..Default::default() };
     if target == KAGGLE {
         info.kind = "kaggle".into();
         save(&d, &info)?;
@@ -947,9 +975,92 @@ pub fn listing(pr: &Project) -> Vec<Value> {
     for d in dirs {
         let i = info(&d);
         let acc = read_events(&d, 0).iter().rev().find_map(|e| e["test_acc"].as_f64());
-        out.push(serde_json::json!({"id": i.id, "target": i.target, "kind": i.kind, "created": i.created, "dataset": i.dataset, "status": i.status, "test_acc": acc}));
+        out.push(serde_json::json!({"id": i.id, "target": i.target, "kind": i.kind, "created": i.created, "dataset": i.dataset, "status": i.status,
+            "test_acc": acc, "seed": i.seed, "group": i.group}));
     }
     out
+}
+
+/// one row per run for comparing and exporting: settings, epochs, best epoch, test accuracy (and top-5, mIoU), time; and mean / sample
+/// standard deviation per group (runs started together with different seeds; runs outside a group form their own)
+pub fn summary(pr: &Project, ids: &[String]) -> Result<Value> {
+    let mut rows = vec![];
+    for id in ids {
+        let d = run_dir(pr, id)?;
+        let i = info(&d);
+        let ev = read_events(&d, 0);
+        let start = ev.iter().find(|e| e["event"] == "start").cloned().unwrap_or(Value::Null);
+        let done = ev.iter().rev().find(|e| e["event"] == "done" || e["event"] == "stopped").cloned().unwrap_or(Value::Null);
+        let epochs: Vec<&Value> = ev.iter().filter(|e| e["event"] == "epoch").collect();
+        let t: codegen::TrainSettings = store::read_json(&d.join("train.json")).unwrap_or_default();
+        let res: Value = store::read_json(&d.join("results.json")).unwrap_or(Value::Null);
+        let best_val = epochs.iter().filter_map(|e| e["val_acc"].as_f64()).fold(None, |m: Option<f64>, v| Some(m.map_or(v, |m| m.max(v))));
+        rows.push(serde_json::json!({
+            "id": i.id, "group": if i.group.is_empty() { i.id.clone() } else { i.group.clone() }, "seed": t.seed, "target": i.target,
+            "dataset": i.dataset, "status": i.status, "params": start["params"], "gpu": start["gpu"],
+            "optimizer": t.optimizer, "lr": t.lr, "batch_size": t.batch_size, "schedule": t.schedule, "early_stop": t.early_stop,
+            "epochs_set": t.epochs, "epochs_done": epochs.len(), "best_epoch": done["best_epoch"], "best_val_acc": best_val,
+            "test_acc": res["test_acc"].as_f64().or(done["test_acc"].as_f64()), "test_top5": res["test_top5"].as_f64().or(done["test_top5"].as_f64()),
+            "test_miou": res["miou"].as_f64(),
+            "seconds": epochs.iter().filter_map(|e| e["seconds"].as_f64()).sum::<f64>(),
+        }));
+    }
+    let mut groups: Vec<Value> = vec![];
+    let mut names: Vec<String> = rows.iter().map(|r| r["group"].as_str().unwrap_or("").to_string()).collect();
+    names.dedup();
+    let mut seen = std::collections::HashSet::new();
+    for g in names.into_iter().filter(|g| seen.insert(g.clone())) {
+        let members: Vec<&Value> = rows.iter().filter(|r| r["group"] == g.as_str()).collect();
+        let stat = |key: &str| {
+            let v: Vec<f64> = members.iter().filter_map(|r| r[key].as_f64()).collect();
+            if v.is_empty() {
+                return serde_json::json!(null);
+            }
+            let mean = v.iter().sum::<f64>() / v.len() as f64;
+            let sd = if v.len() > 1 { (v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (v.len() - 1) as f64).sqrt() } else { 0.0 };
+            serde_json::json!({"mean": mean, "std": sd, "n": v.len()})
+        };
+        groups.push(serde_json::json!({"group": g, "runs": members.len(), "seeds": members.iter().map(|r| r["seed"].clone()).collect::<Vec<_>>(),
+            "test_acc": stat("test_acc"), "test_top5": stat("test_top5"), "test_miou": stat("test_miou"), "epochs_done": stat("epochs_done")}));
+    }
+    Ok(serde_json::json!({"rows": rows, "groups": groups}))
+}
+
+/// write the summary as CSV and as a LaTeX table (booktabs) into <project>/exports/; returns their paths
+pub fn export(pr: &Project, ids: &[String]) -> Result<(PathBuf, PathBuf)> {
+    let s = summary(pr, ids)?;
+    let dir = pr.dir.join("exports");
+    std::fs::create_dir_all(&dir)?;
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    let pct = |v: &Value| v.as_f64().map(|x| format!("{:.2}", x * 100.0)).unwrap_or_default();
+    let mut csv = String::from("run,group,seed,target,dataset,optimizer,lr,batch_size,schedule,epochs_set,epochs_done,best_epoch,test_acc,test_top5,test_miou,seconds\n");
+    for r in s["rows"].as_array().unwrap() {
+        let f = |k: &str| match &r[k] { Value::Null => String::new(), Value::String(x) => x.replace(',', ";"), v => v.to_string() };
+        csv += &[f("id"), f("group"), f("seed"), f("target"), f("dataset"), f("optimizer"), f("lr"), f("batch_size"), f("schedule"), f("epochs_set"),
+            f("epochs_done"), f("best_epoch"), f("test_acc"), f("test_top5"), f("test_miou"), format!("{:.1}", r["seconds"].as_f64().unwrap_or(0.0))].join(",");
+        csv.push('\n');
+    }
+    let has_top5 = s["rows"].as_array().unwrap().iter().any(|r| r["test_top5"].is_number());
+    let tex_esc = |x: &str| x.replace('_', "\\_").replace('%', "\\%").replace('&', "\\&");
+    let mut tex = format!("% NN Builder: results of {} run(s), {stamp}. Needs \\usepackage{{booktabs}}.\n\\begin{{tabular}}{{@{{}}lrrr{}@{{}}}}\n\\toprule\n\
+        Run & Seed & Epochs & Top-1 (\\%){} \\\\\n\\midrule\n", ids.len(), if has_top5 { "r" } else { "" }, if has_top5 { " & Top-5 (\\%)" } else { "" });
+    for r in s["rows"].as_array().unwrap() {
+        tex += &format!("{} & {} & {} & {}{} \\\\\n", tex_esc(r["id"].as_str().unwrap_or("")), r["seed"], r["epochs_done"], pct(&r["test_acc"]),
+            if has_top5 { format!(" & {}", pct(&r["test_top5"])) } else { String::new() });
+    }
+    let pm = |v: &Value| match (v["mean"].as_f64(), v["std"].as_f64()) {
+        (Some(m), Some(sd)) => format!("{:.2} $\\pm$ {:.2}", m * 100.0, sd * 100.0),
+        _ => String::new(),
+    };
+    for g in s["groups"].as_array().unwrap().iter().filter(|g| g["runs"].as_u64().unwrap_or(0) > 1) {
+        tex += &format!("\\midrule\nMean $\\pm$ s.d. ({} seeds) & & & {}{} \\\\\n", g["runs"], pm(&g["test_acc"]),
+            if has_top5 { format!(" & {}", pm(&g["test_top5"])) } else { String::new() });
+    }
+    tex += "\\bottomrule\n\\end{tabular}\n";
+    let (c, t) = (dir.join(format!("runs-{stamp}.csv")), dir.join(format!("runs-{stamp}.tex")));
+    std::fs::write(&c, csv)?;
+    std::fs::write(&t, tex)?;
+    Ok((c, t))
 }
 
 pub fn results(pr: &Project, id: &str) -> Result<Value> {

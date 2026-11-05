@@ -19,8 +19,10 @@ fn main() {
                     node("n4", "conv2d", json!({"filters": 32})), node("n5", "global_pool", json!({})), node("n6", "output", json!({}))],
         edges: (1..6).map(|i| Edge { id: format!("e{i}"), source: format!("n{i}"), target: format!("n{}", i + 1) }).collect(),
     };
+    // the recipe check uses six classes, so that top-5 accuracy is measured too
+    let names: &[&str] = if mode == "recipe" { &["a", "b", "c", "d", "e", "f"] } else { &["a", "b"] };
     let ds = Dataset { source: "kaggle".into(), kaggle_slug: "ci/shapes".into(), image_size: [32, 32], channels: 3,
-        classes: vec!["a".into(), "b".into()], ..Default::default() };
+        classes: names.iter().map(|s| s.to_string()).collect(), ..Default::default() };
     let a = analyze(&g, &ds);
     assert!(a.ok, "{:?}", a.problems);
     let t = if mode == "recipe" {

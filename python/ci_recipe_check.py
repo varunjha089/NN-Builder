@@ -17,7 +17,7 @@ from ci_resume_check import events, make_images  # noqa: E402
 def main(run):
     run = os.path.abspath(run)
     data = os.path.join(run, "data")
-    make_images(data)
+    make_images(data, classes=6, per_class=100)
     env = {**os.environ, "NNB_DATA": data, "PYTHONUNBUFFERED": "1"}
     with open(os.path.join(run, "log.txt"), "w") as log:
         code = subprocess.call([sys.executable, "train.py"], cwd=run, env=env, stdout=log, stderr=subprocess.STDOUT)
@@ -33,7 +33,10 @@ def main(run):
     assert abs(lrs[0] - 1e-3) < 1e-6, f"end of warm-up should be the full rate: {lrs}"
     assert lrs[0] > lrs[1] > lrs[2] > lrs[3] and lrs[3] < 1e-4, f"cosine decay: {lrs}"
     assert ev[-1]["event"] == "done", ev[-1]
-    print(f"recipe ran: learning rate per epoch {lrs}; test accuracy {ev[-1]['test_acc']}")
+    # six classes: top-5 accuracy per epoch and at the end, never below top-1
+    assert all("val_top5" in e for e in ev if e["event"] == "epoch"), "val_top5 missing"
+    assert ev[-1]["test_top5"] >= ev[-1]["test_acc"], ev[-1]
+    print(f"recipe ran: learning rate per epoch {lrs}; test accuracy {ev[-1]['test_acc']}, top-5 {ev[-1]['test_top5']}")
 
 
 if __name__ == "__main__":

@@ -347,10 +347,12 @@ def one_batch_check(model, loader, device):
 
 
 def evaluate(model, loader, device):
-    """loss, accuracy (per image, or per pixel for segmentation), confusion matrix, mean IoU (segmentation)"""
+    """loss, accuracy (per image, or per pixel for segmentation), confusion matrix, mean IoU (segmentation), top-5 accuracy
+    (classification with at least 6 classes; else None)"""
     model.eval()
     k = len(CLASSES)
     loss_sum, n_items, cm = 0.0, 0, torch.zeros(k * k, dtype=torch.long)
+    top5 = 0 if (not SEG and k > 5) else None
     with torch.no_grad():
         for x, y in loader:
             if INTERRUPT:
@@ -361,11 +363,14 @@ def evaluate(model, loader, device):
             n_items += len(y)
             pred = out.argmax(1)
             cm += torch.bincount((y * k + pred).flatten().cpu(), minlength=k * k)
+            if top5 is not None:
+                top5 += int((out.topk(5, dim=1).indices == y.unsqueeze(1)).any(1).sum())
     cm = cm.view(k, k)
     acc = float(cm.diag().sum()) / max(1, int(cm.sum()))
     iou = [float(cm[i, i]) / max(1, int(cm[i].sum() + cm[:, i].sum() - cm[i, i])) for i in range(k)]
     present = [iou[i] for i in range(k) if int(cm[i].sum() + cm[:, i].sum()) > 0]
-    return loss_sum / max(n_items, 1), acc, cm.tolist(), (sum(present) / max(1, len(present))), iou
+    return (loss_sum / max(n_items, 1), acc, cm.tolist(), (sum(present) / max(1, len(present))), iou,
+            None if top5 is None else top5 / max(1, n_items))
 
 
 def norm01(t):
@@ -588,12 +593,14 @@ def main():
                 if STOP:
                     stopped = True
                     break
-            val_loss, val_acc, _, miou, _ = evaluate(model, vl, device)
+            val_loss, val_acc, _, miou, _, val_top5 = evaluate(model, vl, device)
             ev = dict(epoch=epoch, train_loss=round(sums["loss_sum"] / max(sums["n"], 1), 5), train_acc=round(sums["correct"] / max(sums["units"], 1), 5),
                       val_loss=round(val_loss, 5), val_acc=round(val_acc, 5), seconds=round(sums["seconds"] + time.time() - t0, 2), partial=stopped,
                       lr=float(f"{opt.param_groups[0]['lr']:.3g}"))
             if SEG:
                 ev["val_miou"] = round(miou, 5)
+            if val_top5 is not None:
+                ev["val_top5"] = round(val_top5, 5)
             emit("epoch", **ev)
             # best epoch so far (lower validation loss, or higher validation accuracy / mIoU); its weights are kept in best_model.pt
             value = {"val_loss": val_loss, "val_acc": val_acc, "val_miou": miou}.get(monitor, val_loss)
@@ -626,18 +633,20 @@ def main():
         if early and os.path.exists(best_path):
             # the final model is the best epoch's, not the last one's
             model.load_state_dict(torch.load(best_path, map_location=device))
-        val_loss, val_acc, confusion, miou, iou = evaluate(model, test_l, device)
+        val_loss, val_acc, confusion, miou, iou, test_top5 = evaluate(model, test_l, device)
     except Interrupted:
         interrupted()
     torch.save(model.state_dict(), os.path.join(OUT, "model.pt"))
     res = {"task": TASK, "test_acc": val_acc, "test_loss": val_loss, "classes": CLASSES, "confusion": confusion}
+    if test_top5 is not None:
+        res["test_top5"] = test_top5
     if SEG:
         res.update(miou=miou, iou=iou)
     res.update(pictures(model, test, device))
     with open(os.path.join(OUT, "results.json"), "w", encoding="utf-8") as f:
         json.dump(res, f)
     emit("stopped" if stopped else "done", test_acc=round(val_acc, 5), **({"miou": round(miou, 5)} if SEG else {}),
-         **({"best_epoch": es["best_epoch"]} if early else {}))
+         **({"best_epoch": es["best_epoch"]} if early else {}), **({"test_top5": round(test_top5, 5)} if test_top5 is not None else {}))
     if ON_KAGGLE:
         # a Kaggle run is never resumed: the checkpoint would only make the output the app downloads bigger
         for f in (ck_path, best_path):

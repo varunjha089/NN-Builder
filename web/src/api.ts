@@ -9,10 +9,10 @@ export interface Graph { nodes: GNode[]; edges: GEdge[] }
 export interface NodeResult {
   id: string; kind: string; title: string; inputs: number[][]; out: number[] | null; params: number;
   status: "ok" | "warn" | "error" | "blocked" | "unconnected"; messages: string[]; formula: string[];
-  rf: [number, number] | null; padding: [number, number] | null; stride: [number, number] | null;
+  rf: [number, number] | null; padding: [number, number] | null; stride: [number, number] | null; macs: number;
 }
 export interface Analysis {
-  input: number[]; classes: number; nodes: NodeResult[]; edges: Record<string, number[]>; total_params: number; problems: string[]; ok: boolean;
+  input: number[]; classes: number; nodes: NodeResult[]; edges: Record<string, number[]>; total_params: number; total_macs: number; problems: string[]; ok: boolean;
 }
 
 export interface Dataset {
@@ -98,10 +98,13 @@ export const api = {
   kaggleFiles: (slug: string) => invoke<{ files: number; sample: string[]; folders: { folder: string; classes: string[] }[] }>("kaggle_files", { slug }),
   targets: () => invoke<{ name: string; kind: string; prepared?: boolean }[]>("targets"),
   runStart: (target: string, gpu: string, copyTokens: boolean) => invoke<void>("run_start", { target, gpu, copyTokens }),
-  runs: () => invoke<{ id: string; target: string; kind: string; created: string; dataset: string; status: string; test_acc: number | null }[]>("runs_list"),
+  runs: () => invoke<{ id: string; target: string; kind: string; created: string; dataset: string; status: string; test_acc: number | null; seed: number; group: string }[]>("runs_list"),
   runStatus: (id: string, since: number) => invoke<RunStatus>("run_status", { id, since }),
   runStop: (id: string) => invoke<string>("run_stop", { id }),
   runFetch: (id: string) => invoke<void>("run_fetch", { id }),
+  runStartSeeds: (target: string, gpu: string, copyTokens: boolean, count: number) => invoke<void>("run_start_seeds", { target, gpu, copyTokens, count }),
+  runsSummary: (ids: string[]) => invoke<{ rows: Record<string, any>[]; groups: Record<string, any>[] }>("runs_summary", { ids }),
+  runsExport: (ids: string[]) => invoke<string>("runs_export", { ids }),
   runResumeOn: (id: string, target: string, gpu: string, copyTokens: boolean) => invoke<void>("run_resume_on", { id, target, gpu, copyTokens }),
   runResults: (id: string) => invoke<any>("run_results", { id }),
   runReveal: (id: string) => invoke<void>("run_reveal", { id }),

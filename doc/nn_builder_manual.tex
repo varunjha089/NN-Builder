@@ -365,6 +365,11 @@ For a transposed convolution (up-sampling):
 \end{equation}
 so a 2$\times$2 kernel with stride 2 exactly doubles the size. Upsample multiplies the size by its scale.
 
+\subsection{Computation}
+The Design screen's summary also gives the \textbf{multiply--accumulate operations (MACs) per image}: convolutions (weights $\times$
+output positions), dense layers (per token on a sequence) and attention ($4Nd^2 + 2N^2d$); normalisation, activations, pooling and joins
+are counted as zero. ResNet-18 at $224\times224$ comes to the usual 1.8\,G.
+
 \subsection{Parameters}
 \begin{center}
 \begin{tabular}{@{}p{3.9cm}p{6.4cm}p{5cm}@{}}
@@ -631,7 +636,17 @@ GPU memory the training needs (16 bytes per parameter plus the layer outputs at 
 running with the epoch, interrupted, done, stopped, crashed, failed), the GPU, the training set size, the loss curves (per batch, training
 and validation per epoch) and the accuracy curves (and mIoU for segmentation), the last checkpoint, and the log. \ui{Stop} ends the run
 cleanly (the current epoch ends early, the model and results are saved). \ui{Fetch results} copies the outputs back (for a stopped EC2
-instance it starts the instance, copies, and stops it again). The \ui{Runs} table lists every run of the project with its test accuracy.
+instance it starts the instance, copies, and stops it again). The \ui{Runs} table lists every run of the project with its seed and test accuracy.
+
+\subsection{Several seeds, comparing runs, exporting results}
+\label{sec:compare}
+A single training run is one sample: the same design and settings with another random seed give a slightly different accuracy. Next to
+the Train button, \ui{seeds} starts 3 or 5 runs at once with seeds $s, s{+}1, \ldots$ (one group; on Kaggle one notebook per seed, which
+Kaggle may queue; on a server they share its GPU). Tick runs in the \ui{Runs} table (or select a whole group of seeds) and press
+\ui{Compare selected}: their validation curves are overlaid, and a table gives each run's recipe, epochs, best epoch, test accuracy
+(and top-5), training time, and for each group the mean $\pm$ sample standard deviation. \ui{Export CSV + LaTeX} writes the table to the
+project's \file{exports} folder as \file{runs-<time>.csv} and \file{runs-<time>.tex} (a \texttt{booktabs} tabular with a
+``Mean $\pm$ s.d.'' row, ready to \verb|\input| into a paper).
 
 \subsection{Independence from the connection}
 On a server or EC2, the run folder is copied with \texttt{rsync} and started detached (SLURM, systemd, tmux or nohup). The application only
@@ -671,7 +686,8 @@ augmentation and regularisation, or pre-training, to do well on small data~\cite
 
 %=====================================================================================================================================
 \section{The Results tab}
-For a finished run (open it in the Train tab): the test accuracy (and mIoU), the confusion matrix (rows: true class, columns: predicted;
+For a finished run (open it in the Train tab): the test accuracy (and top-5 accuracy with more than five classes, and mIoU), precision,
+recall and F1 of every class with their macro averages and the hardest classes, the confusion matrix (rows: true class, columns: predicted;
 the diagonal is correct), sample predictions with their confidence (wrong ones marked), the feature maps of the first test image (first
 eight channels of early layers), the first layer's filters as small pictures, and for segmentation the true and predicted masks and the IoU
 of every class. \ui{Show files} reveals \file{model.pt}, \file{train.py} and \file{results.json}. The weights load in PyTorch with

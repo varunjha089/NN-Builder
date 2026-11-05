@@ -21,6 +21,7 @@ export function ResultsTab({ runId }: { runId: string | null }) {
       {r.task === "segment" && <p className="muted small">"Test accuracy" is the share of pixels classified correctly; mean IoU (overlap of predicted and true areas per class) is the usual segmentation measure.</p>}
       <div className="row cards">
         <div className="card"><div className="muted">Test accuracy</div><div className="big">{(r.test_acc * 100).toFixed(2)}%</div></div>
+        {r.test_top5 != null && <div className="card"><div className="muted">Top-5 accuracy</div><div className="big">{(r.test_top5 * 100).toFixed(2)}%</div></div>}
         {r.miou != null && <div className="card"><div className="muted">Mean IoU</div><div className="big">{(r.miou * 100).toFixed(2)}%</div></div>}
         {r.test_loss != null && <div className="card"><div className="muted">Test loss</div><div className="big">{Number(r.test_loss).toFixed(4)}</div></div>}
         <button onClick={() => api.runReveal(runId)}>Show files (model.pt, train.py, results.json)</button>
@@ -39,6 +40,7 @@ export function ResultsTab({ runId }: { runId: string | null }) {
           })}
         </tbody></table>
       </>}
+      {r.task !== "segment" && conf.length > 0 && <PerClass classes={classes} conf={conf} />}
       {r.task === "segment" && r.samples?.length > 0 && <><h3>Sample predictions (image · true mask · predicted mask)</h3><div className="thumbs">
         {r.samples.map((s: any, i: number) => <div key={i} className="thumb seg"><div className="row">
           <Img img={s.image} scale={Math.max(1, Math.round(96 / s.image[0].length))} /><Img img={s.truth} scale={Math.max(1, Math.round(96 / s.truth[0].length))} />
@@ -57,4 +59,26 @@ export function ResultsTab({ runId }: { runId: string | null }) {
       </>}
     </div>
   );
+}
+
+/** precision (of the images predicted as a class, how many are it), recall (of the images of a class, how many were found) and F1 per
+ *  class, from the confusion matrix; with their macro averages */
+function PerClass({ classes, conf }: { classes: string[]; conf: number[][] }) {
+  const k = conf.length;
+  const rows = conf.map((row, i) => {
+    const tp = row[i], actual = row.reduce((a, b) => a + b, 0), predicted = conf.reduce((a, r) => a + r[i], 0);
+    const p = predicted ? tp / predicted : 0, rc = actual ? tp / actual : 0;
+    return { name: classes[i] ?? String(i), p, r: rc, f1: p + rc ? (2 * p * rc) / (p + rc) : 0, n: actual };
+  });
+  const avg = (f: (x: (typeof rows)[number]) => number) => rows.reduce((a, x) => a + f(x), 0) / Math.max(1, k);
+  const worst = [...rows].sort((a, b) => a.f1 - b.f1).slice(0, 3).map((x) => x.name);
+  return <>
+    <h3>Per class</h3>
+    <p className="muted small">Macro average: precision {(avg((x) => x.p) * 100).toFixed(2)}%, recall {(avg((x) => x.r) * 100).toFixed(2)}%,
+      F1 {(avg((x) => x.f1) * 100).toFixed(2)}%. Hardest classes (lowest F1): {worst.join(", ")}.</p>
+    <details><summary>Precision, recall and F1 of every class</summary>
+      <table className="grid small"><tbody><tr><th>Class</th><th className="num">Test images</th><th className="num">Precision</th><th className="num">Recall</th><th className="num">F1</th></tr>
+        {rows.map((x, i) => <tr key={i}><td>{x.name}</td><td className="num">{x.n}</td><td className="num">{(x.p * 100).toFixed(1)}%</td>
+          <td className="num">{(x.r * 100).toFixed(1)}%</td><td className="num">{(x.f1 * 100).toFixed(1)}%</td></tr>)}</tbody></table></details>
+  </>;
 }

@@ -457,7 +457,9 @@ function Inspector({ node, result, analysis, st, setParam, setParams, candidates
     return (
       <div className="inspector">
         <h3>Design</h3>
-        {analysis && <p><strong>{analysis.total_params.toLocaleString()}</strong> trainable parameters · input {fmt(analysis.input)} · {analysis.classes} classes</p>}
+        {analysis && <p><strong>{analysis.total_params.toLocaleString()}</strong> trainable parameters · input {fmt(analysis.input)} · {analysis.classes} classes
+          {analysis.total_macs > 0 && <> · <span title="multiply-accumulate operations for one image (convolutions, dense layers, attention)">
+            {analysis.total_macs >= 1e9 ? `${(analysis.total_macs / 1e9).toFixed(2)} G` : `${(analysis.total_macs / 1e6).toFixed(1)} M`} MACs per image</span></>}</p>}
         {analysis?.problems.map((p) => <div key={p} className="msg error">{p}</div>)}
         {analysis?.ok && <div className="msg ok">The design is complete: every shape fits. Next: Dataset, then Train.</div>}
         <p className="muted">Click a block to set its filters, kernel, stride, padding or pooling, and to see how its output size is computed.</p>

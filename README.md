@@ -37,6 +37,8 @@ Version 0.3.0 · MIT licence · Rust (Tauri 2) + React; the generated training c
   image and its mask are flipped and rotated together.
 - **Code tab:** the standalone `train.py` the GPU machine runs: the model, the data loading, a training loop with mixed precision, a
   checkpoint every epoch and automatic resume, a one-batch shape check before training, and the results. Export it to run it anywhere.
+- **Compare and report:** run the same training with 3 or 5 seeds in one go, compare runs (overlaid curves, a table with mean ± s.d.),
+  export the table as CSV and as a LaTeX table; top-5 accuracy and per-class precision / recall / F1; the design's MACs per image.
 - **Train tab:** one button. On **Kaggle** the script is pushed as a private GPU notebook (with the dataset attached); the curves follow
   the notebook's log every 30 s and the results are downloaded when it ends. On an **SSH machine** or **AWS** it is copied there and started detached (SLURM, systemd-run, tmux or
   nohup+setsid, whichever the machine allows), so it keeps going when your Mac sleeps or the network drops; the curves update while the app is

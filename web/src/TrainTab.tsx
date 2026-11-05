@@ -37,6 +37,9 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
   const [runs, setRuns] = useState<Awaited<ReturnType<typeof api.runs>>>([]);
   const [status, setStatus] = useState<RunStatus | null>(null);
   const [moveTo, setMoveTo] = useState("");
+  const [seeds, setSeeds] = useState(1);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [comparing, setComparing] = useState<string[] | null>(null);
   const events = useRef<Record<string, any>[]>([]);
   const since = useRef(0);
 
@@ -67,7 +70,10 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
   const kind = targets.find((t) => t.name === target)?.kind ?? "kaggle";
   const set = (p: Partial<TrainSettings>) => setTrain({ ...train, ...p });
   const start = async () => {
-    try { await api.runStart(target, gpu, copyTokens); startJob(); toast(`Starting on ${target} …`); } catch (e) { toast(errText(e)); }
+    try {
+      if (seeds > 1) await api.runStartSeeds(target, gpu, copyTokens, seeds); else await api.runStart(target, gpu, copyTokens);
+      startJob(); toast(seeds > 1 ? `Starting ${seeds} runs (seeds ${train.seed}–${train.seed + seeds - 1}) on ${target} …` : `Starting on ${target} …`);
+    } catch (e) { toast(errText(e)); }
   };
   const ep = (status?.events ?? []).filter((e) => e.event === "epoch"), bt = (status?.events ?? []).filter((e) => e.event === "batch");
   const startEv = status?.events.find((e) => e.event === "start");
@@ -165,7 +171,13 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
             {" "}A rough estimate: the first epoch shows the real use.</p>}
         </>;
       })()}
-      <p className="row"><button className="primary" onClick={start} disabled={!ok}>Train on {target} ▶</button>
+      <p className="row"><button className="primary" onClick={start} disabled={!ok}>Train on {target}{seeds > 1 ? ` ×${seeds}` : ""} ▶</button>
+        <label className="small">seeds<select value={seeds} onChange={(e) => setSeeds(Number(e.target.value))}
+          title="Repeat the same training with different random seeds, to report a mean and its spread">
+          <option value={1}>1 (seed {train.seed})</option><option value={3}>3 (seeds {train.seed}–{train.seed + 2})</option>
+          <option value={5}>5 (seeds {train.seed}–{train.seed + 4})</option></select></label>
+        {seeds > 1 && kind !== "kaggle" && <span className="muted small">The runs start together on the machine and share its GPU.</span>}
+        {seeds > 1 && kind === "kaggle" && <span className="muted small">One Kaggle notebook per seed; Kaggle may queue some of them.</span>}
         {!ok && <span className="st-error">Fix the design and the dataset first.</span>}</p>
 
       {status && <div className="card">
@@ -212,13 +224,62 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
         <details><summary>Log</summary><pre className="log">{status.log.join("\n")}</pre></details>
       </div>}
 
-      <h3>Runs</h3>
+      <div className="row"><h3 style={{ margin: 0 }}>Runs</h3><span className="grow" />
+        {picked.length > 0 && <span className="muted small">{picked.length} selected</span>}
+        <button disabled={picked.length < 1} onClick={() => setComparing([...picked])}>Compare selected</button>
+        {picked.length > 0 && <button className="small" onClick={() => setPicked([])}>Clear</button>}</div>
       <table className="grid"><tbody>
-        <tr><th>Run</th><th>Where</th><th>Data</th><th>State</th><th className="num">Test acc.</th></tr>
-        {runs.map((r) => <tr key={r.id} className={`click ${r.id === runId ? "sel" : ""}`} onClick={() => openRun(r.id)}><td>{r.id}</td><td>{r.target}</td>
-          <td>{r.dataset}</td><td>{r.status}</td><td className="num">{r.test_acc != null ? `${(r.test_acc * 100).toFixed(2)}%` : ""}</td></tr>)}
+        <tr><th></th><th>Run</th><th>Where</th><th>Data</th><th className="num">Seed</th><th>State</th><th className="num">Test acc.</th></tr>
+        {runs.map((r) => <tr key={r.id} className={`click ${r.id === runId ? "sel" : ""}`} onClick={() => openRun(r.id)}>
+          <td onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={picked.includes(r.id)}
+            onChange={(e) => setPicked(e.target.checked ? [...picked, r.id] : picked.filter((x) => x !== r.id))} /></td>
+          <td>{r.id}{r.group && <span className="muted small" title="started together with other seeds"> · group</span>}</td><td>{r.target}</td>
+          <td>{r.dataset}</td><td className="num">{r.seed}</td><td>{r.status}</td><td className="num">{r.test_acc != null ? `${(r.test_acc * 100).toFixed(2)}%` : ""}</td></tr>)}
         {!runs.length && <tr><td className="muted">No runs yet.</td></tr>}
       </tbody></table>
+      {runs.some((r) => r.group) && <p className="row small"><span className="muted">Select a group of seeds:</span>
+        {[...new Set(runs.filter((r) => r.group).map((r) => r.group))].map((g) => <button key={g} className="small"
+          onClick={() => setPicked(runs.filter((r) => r.group === g).map((r) => r.id))}>{g.replace(/^g/, "")}</button>)}</p>}
+      {comparing && <Compare ids={comparing} toast={toast} close={() => setComparing(null)} />}
+    </div>
+  );
+}
+
+const PALETTE = ["#2f6fde", "#e76f51", "#2a9d8f", "#9c6ac6", "#d9822b", "#c0392b", "#3c8d7f", "#b03a5b", "#4b5bb5", "#6c7a89"];
+const pct = (v: number | null | undefined) => (v == null ? "" : `${(v * 100).toFixed(2)}%`);
+const pm = (s: { mean: number; std: number; n: number } | null) => (s ? `${(s.mean * 100).toFixed(2)} ± ${(s.std * 100).toFixed(2)}%` : "");
+
+/** the chosen runs side by side: validation curves overlaid, a table per run, mean ± s.d. per group of seeds, export to CSV / LaTeX */
+function Compare({ ids, toast, close }: { ids: string[]; toast: (m: string) => void; close: () => void }) {
+  const [sum, setSum] = useState<{ rows: Record<string, any>[]; groups: Record<string, any>[] } | null>(null);
+  const [curves, setCurves] = useState<Record<string, [number, number, number][]>>({});
+  useEffect(() => {
+    api.runsSummary(ids).then(setSum).catch((e) => toast(errText(e)));
+    Promise.all(ids.map((id) => api.runStatus(id, 0).then((s) => [id, s.events.filter((e) => e.event === "epoch").map((e) => [e.epoch, e.val_acc, e.val_loss] as [number, number, number])] as const)))
+      .then((all) => setCurves(Object.fromEntries(all))).catch((e) => toast(errText(e)));
+  }, [ids, toast]);
+  const series = (i: 1 | 2) => ids.map((id, k) => ({ name: id.slice(9), color: PALETTE[k % PALETTE.length], pts: (curves[id] ?? []).map((c) => [c[0], c[i]] as [number, number]) }));
+  const top5 = sum?.rows.some((r) => r.test_top5 != null);
+  return (
+    <div className="card">
+      <div className="row"><strong>Comparing {ids.length} run{ids.length > 1 ? "s" : ""}</strong><span className="grow" />
+        <button onClick={() => api.runsExport(ids).then(toast).catch((e) => toast(errText(e)))}
+          title="A CSV file and a LaTeX table (booktabs) in the project's exports folder">Export CSV + LaTeX</button>
+        <button className="small" onClick={close}>×</button></div>
+      <Chart title="Validation accuracy" percent series={series(1)} />
+      <Chart title="Validation loss" series={series(2)} />
+      {sum && <table className="grid small"><tbody>
+        <tr><th>Run</th><th className="num">Seed</th><th>Recipe</th><th className="num">Epochs</th><th className="num">Best epoch</th>
+          <th className="num">Test acc.</th>{top5 && <th className="num">Top-5</th>}<th className="num">Training time</th></tr>
+        {sum.rows.map((r, k) => <tr key={r.id}><td><span style={{ color: PALETTE[k % PALETTE.length] }}>■</span> {r.id}</td><td className="num">{r.seed}</td>
+          <td className="small">{r.optimizer} {r.lr} · {r.schedule} · batch {r.batch_size}{r.early_stop ? " · early stop" : ""}</td>
+          <td className="num">{r.epochs_done}/{r.epochs_set}</td><td className="num">{r.best_epoch ?? ""}</td><td className="num">{pct(r.test_acc)}</td>
+          {top5 && <td className="num">{pct(r.test_top5)}</td>}<td className="num">{(r.seconds / 60).toFixed(1)} min</td></tr>)}
+        {sum.groups.filter((g) => g.runs > 1).map((g) => <tr key={g.group}><td><strong>Mean ± s.d.</strong> ({g.runs} seeds: {g.seeds.join(", ")})</td>
+          <td></td><td></td><td className="num">{g.epochs_done ? g.epochs_done.mean.toFixed(1) : ""}</td><td></td>
+          <td className="num"><strong>{pm(g.test_acc)}</strong></td>{top5 && <td className="num">{pm(g.test_top5)}</td>}<td></td></tr>)}
+      </tbody></table>}
+      <p className="muted small">s.d. is the sample standard deviation over the seeds. Runs that have not finished show their curves so far and no test accuracy.</p>
     </div>
   );
 }

@@ -22,16 +22,19 @@ def events(run):
         return [json.loads(line) for line in f if line.strip()]
 
 
-def make_images(data):
+def make_images(data, classes=2, per_class=300):
+    """a generated image folder: class a = a box, b = a dot, and (for more classes) c-f = other colours of box and dot"""
     from PIL import Image, ImageDraw
     root = os.path.join(data, "kaggle", "ci__shapes")
-    for label, shape in (("a", "box"), ("b", "dot")):
+    colours = [(220, 200, 60), (220, 200, 60), (60, 200, 220), (60, 200, 220), (220, 60, 160), (220, 60, 160)]
+    for c in range(classes):
+        label, shape = "abcdef"[c], ("box", "dot")[c % 2]
         os.makedirs(os.path.join(root, label), exist_ok=True)
-        for i in range(300):
+        for i in range(per_class):
             im = Image.new("RGB", (32, 32), (i % 50, 20, 40))
             d = ImageDraw.Draw(im)
             x, y = 4 + i % 16, 4 + (i * 7) % 16
-            (d.rectangle if shape == "box" else d.ellipse)([x, y, x + 10, y + 10], fill=(220, 200, 60))
+            (d.rectangle if shape == "box" else d.ellipse)([x, y, x + 10, y + 10], fill=colours[c])
             im.save(os.path.join(root, label, f"{i}.png"))
 
 

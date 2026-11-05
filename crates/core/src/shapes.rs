@@ -30,6 +30,9 @@ pub struct NodeResult {
     /// the padding and stride actually used (conv/pool), for the code and the sliding preview
     pub padding: Option<[usize; 2]>,
     pub stride: Option<[usize; 2]>,
+    /// multiply-accumulate operations for one image (convolutions, dense layers, attention; normalisation, activations, pooling and
+    /// joins are counted as 0)
+    pub macs: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -41,6 +44,7 @@ pub struct Analysis {
     /// edge id -> the shape it carries
     pub edges: BTreeMap<String, Vec<usize>>,
     pub total_params: u64,
+    pub total_macs: u64,
     pub problems: Vec<String>,
     pub ok: bool,
 }
@@ -243,6 +247,11 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
             nodes.push(r);
         }
     }
+    for r in nodes.iter_mut().filter(|r| r.out.is_some() && !matches!(r.status.as_str(), "error" | "blocked" | "unconnected")) {
+        let bias = g.node(&r.id).map(|n| n.params.get("bias").and_then(|b| b.as_bool()).unwrap_or(true)).unwrap_or(true);
+        r.macs = macs(r, bias);
+    }
+    let total_macs = nodes.iter().map(|r| r.macs).sum();
     let mut edge_shapes = BTreeMap::new();
     for e in &g.edges {
         if let Some(s) = nodes.iter().find(|n| n.id == e.source).and_then(|n| n.out.clone()) {
@@ -253,7 +262,36 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
     if classes < 2 {
         problems.push("The dataset has no classes yet (Dataset tab).".into());
     }
-    Analysis { input: input_shape, classes, nodes, edges: edge_shapes, total_params: total, problems, ok: ok && classes >= 2 }
+    Analysis { input: input_shape, classes, nodes, edges: edge_shapes, total_params: total, total_macs, problems, ok: ok && classes >= 2 }
+}
+
+/// multiply-accumulates of one layer for one image, from its weights and its input / output size
+fn macs(r: &NodeResult, bias: bool) -> u64 {
+    let out = r.out.as_ref().unwrap();
+    let inp = r.inputs.first();
+    let prod = |v: &[usize]| v.iter().map(|&x| x as u64).product::<u64>();
+    match r.kind.as_str() {
+        // weights (without the bias) × output positions; the output's first dimension is the channels
+        "conv2d" | "dwconv2d" => {
+            let w = r.params.saturating_sub(if bias { out[0] as u64 } else { 0 });
+            w * prod(&out[1..])
+        }
+        "seg_output" => r.params.saturating_sub(out[0] as u64) * prod(&out[1..]),
+        // every input position meets every weight
+        "convtranspose2d" => r.params.saturating_sub(out[0] as u64) * inp.map(|x| prod(&x[1..])).unwrap_or(0),
+        // per token on a sequence: (in × units) for each of the N tokens
+        "dense" | "output" => {
+            let units = *out.last().unwrap() as u64;
+            let tokens = if out.len() == 2 { out[0] as u64 } else { 1 };
+            r.params.saturating_sub(units) * tokens
+        }
+        // query/key/value/output projections 4·N·d², attention scores and mixing 2·N²·d
+        "attention" => {
+            let (n, d) = (out[0] as u64, out[1] as u64);
+            4 * n * d * d + 2 * n * n * d
+        }
+        _ => 0,
+    }
 }
 
 fn err(r: &mut NodeResult, m: &str) {

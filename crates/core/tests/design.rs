@@ -255,6 +255,13 @@ fn every_template_is_valid_and_compiles() {
     // ViT-g/14, counted by hand: 40 blocks × 25,250,176 (attention 4d²+4d, MLP 2·d·6144 + 6144 + d, two LayerNorms) + patch convolution
     // 829,312 + class token and 257 positions 363,264 + final LayerNorm 2,816 + head 14,090
     assert_eq!(p("vit_g14"), 1_011_216_522);
+    // multiply-accumulates per image. MSG-Former by hand: stem 884,736; block 1 36,702,208 (branches 3·9·32·32·32², fuse, shortcut,
+    // gate); block 2 36,708,352; two encoders 19,202,560 (4Nd² + 2N²d attention, 2·N·d·256 MLP, N=65, d=128); head 1,280
+    let m = |k: &str| analyze(&nnb_core::templates::build(k).unwrap(), &dataset_for(nnb_core::templates::get(k).unwrap())).total_macs;
+    assert_eq!(m("msg_former"), 93_499_136);
+    // ResNet-18 at 224×224: the usual figure is 1.8 G multiply-accumulates (BatchNorm and ReLU not counted)
+    let r18 = m("resnet18") as f64;
+    assert!((1.80e9..1.83e9).contains(&r18), "resnet18 {r18}");
     // a transformer's MLP layers are large by design: no "large Dense after Flatten" warning on tokens (VGG's first Dense still warns)
     let warns = |k: &str| analyze(&nnb_core::templates::build(k).unwrap(), &dataset_for(nnb_core::templates::get(k).unwrap())).nodes.iter()
         .filter(|n| n.status == "warn" && n.messages.iter().any(|m| m.contains("instead of Flatten"))).count();

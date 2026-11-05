@@ -481,6 +481,36 @@ async fn run_start(st: State<'_, App>, target: String, gpu: String, copy_tokens:
     if ok { Ok(()) } else { Err("Another task is running.".into()) }
 }
 
+/// the same design and settings with seeds s, s+1, ... (one group of runs)
+#[tauri::command]
+async fn run_start_seeds(st: State<'_, App>, target: String, gpu: String, copy_tokens: bool, count: usize) -> R<()> {
+    let p = project(&st)?;
+    if p.is_draft() {
+        return Err("Save the demo first (File → Save Project… ⌘S): runs are kept with a saved project.".into());
+    }
+    runs::preflight(&target, &creds()).map_err(e)?;
+    let ok = st.jobs.start(&format!("Train on {target}, {count} seeds"), move |log: Log| {
+        let ids = runs::start_seeds(&p, &target, gpu.trim(), &creds(), copy_tokens, count, &log).map_err(e)?;
+        Ok(format!("RUN {}", ids[0]))
+    });
+    if ok { Ok(()) } else { Err("Another task is running.".into()) }
+}
+
+#[tauri::command]
+async fn runs_summary(st: State<'_, App>, ids: Vec<String>) -> R<Value> {
+    let p = project(&st)?;
+    blocking(move || runs::summary(&p, &ids).map_err(e)).await
+}
+
+/// CSV + LaTeX table of the chosen runs in <project>/exports/ (shown in Finder)
+#[tauri::command]
+async fn runs_export(st: State<'_, App>, ids: Vec<String>) -> R<String> {
+    let p = project(&st)?;
+    let (csv, tex) = blocking(move || runs::export(&p, &ids).map_err(e)).await?;
+    reveal(&tex);
+    Ok(format!("Saved {} and {}", csv.display(), tex.display()))
+}
+
 #[tauri::command]
 async fn runs_list(st: State<'_, App>) -> R<Value> {
     Ok(json!(runs::listing(&project(&st)?)))
@@ -782,7 +812,7 @@ fn main() {
             app_state, templates_list, template_apply, project_from_template, project_save_as, project_new, project_open, set_projects_dir, project_load, save_graph, save_dataset, save_train, code, export_code,
             set_kaggle, set_hf, set_aws, clear_secret, test_kaggle, test_hf, test_aws, tools_install,
             machine_save, machine_delete, machine_test, machine_connect, machine_prepare, hf_info, kaggle_files,
-            update_settings, set_auto_update, update_check, update_install, update_restart, targets, run_start, run_resume_on, runs_list, run_status, run_stop, run_fetch, run_results, run_reveal, job_status, open_url
+            update_settings, set_auto_update, update_check, update_install, update_restart, targets, run_start, run_start_seeds, runs_summary, runs_export, run_resume_on, runs_list, run_status, run_stop, run_fetch, run_results, run_reveal, job_status, open_url
         ])
         .build(tauri::generate_context!())
         .expect("error while running NN Builder")
