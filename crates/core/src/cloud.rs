@@ -158,6 +158,73 @@ pub fn kaggle_push(c: &KaggleCreds, dir: &Path, title: &str, dataset_slug: Optio
     Ok(reference)
 }
 
+/// the owner's own dataset folder as a private Kaggle dataset <user>/<key>, so a Kaggle notebook can attach it: created the first time,
+/// a new version when the folder changed (signature kept in <settings>/uploads.json), nothing when it did not. Subfolders go up as zip
+/// files, which Kaggle unpacks. The folder itself is not written to: the upload is made from a folder of links next to the tools.
+pub fn kaggle_upload(c: &KaggleCreds, dir: &Path, key: &str, log: &Log) -> Result<String> {
+    let slug = format!("{}/{}", c.username, key);
+    let sig = crate::localdata::signature(dir)?;
+    let uploads_path = store::home().join("uploads.json");
+    let mut uploads: serde_json::Map<String, Value> = std::fs::read_to_string(&uploads_path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    if uploads.get(&slug).and_then(|v| v.as_str()) == Some(sig.as_str()) {
+        log(format!("Your files are already on Kaggle as {slug} (unchanged since the last upload)."));
+        return Ok(slug);
+    }
+    let stage = tools_dir().join("kaggle-upload").join(key);
+    if stage.exists() {
+        std::fs::remove_dir_all(&stage)?; // only links and the metadata file: the owner's files are never inside
+    }
+    std::fs::create_dir_all(&stage)?;
+    for e in std::fs::read_dir(dir)?.flatten() {
+        let name = e.file_name();
+        if name.to_string_lossy().starts_with('.') {
+            continue;
+        }
+        link(&e.path(), &stage.join(&name))?;
+    }
+    let meta = serde_json::json!({"title": key, "id": slug, "licenses": [{"name": "other"}]});
+    store::write_json(&stage.join("dataset-metadata.json"), &meta)?;
+    let exists = capture(kaggle(c)?.args(["datasets", "files", &slug, "--csv"]), None).0 == 0;
+    log(format!("{} your files on Kaggle as the private dataset {slug} ({sig}) ...", if exists { "Updating" } else { "Uploading" }));
+    let mut cmd = kaggle(c)?;
+    if exists {
+        cmd.args(["datasets", "version", "-p"]).arg(&stage).args(["-m", "NN Builder: the folder changed", "--dir-mode", "zip"]);
+    } else {
+        cmd.args(["datasets", "create", "-p"]).arg(&stage).args(["--dir-mode", "zip"]);
+    }
+    let (code, out) = stream(&mut cmd, None, log);
+    if code != 0 {
+        bail!("Kaggle upload failed: {}", out.last().map(|l| l.as_str()).unwrap_or("no answer"));
+    }
+    // Kaggle unpacks and checks the files before a notebook can attach them
+    for _ in 0..120 {
+        let (code, out) = capture(kaggle(c)?.args(["datasets", "status", &slug]), None);
+        let l = out.to_lowercase();
+        if code != 0 || l.contains("ready") {
+            break; // ready, or a CLI without the status command: the notebook waits for the data itself
+        }
+        if code == 0 && l.contains("error") {
+            bail!("Kaggle could not process the upload: {}", last_line(&out));
+        }
+        std::thread::sleep(std::time::Duration::from_secs(5));
+    }
+    uploads.insert(slug.clone(), Value::String(sig));
+    std::fs::write(&uploads_path, serde_json::to_string_pretty(&uploads)?)?;
+    let _ = std::fs::remove_dir_all(&stage);
+    Ok(slug)
+}
+
+#[cfg(unix)]
+fn link(from: &Path, to: &Path) -> Result<()> {
+    std::os::unix::fs::symlink(from, to).context("making the upload folder")
+}
+
+#[cfg(windows)]
+fn link(from: &Path, to: &Path) -> Result<()> {
+    let r = if from.is_dir() { std::os::windows::fs::symlink_dir(from, to) } else { std::os::windows::fs::symlink_file(from, to) };
+    r.context("making the upload folder (Windows needs Developer Mode for links)")
+}
+
 /// "running" | "done" | "error" | "stopped"
 pub fn kaggle_status(c: &KaggleCreds, reference: &str) -> Result<(String, String)> {
     let (code, out) = capture(kaggle(c)?.args(["kernels", "status", reference]), None);

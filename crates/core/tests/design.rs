@@ -394,7 +394,7 @@ fn multiband_datasets() {
     let bad = |f: &dyn Fn(&mut Dataset)| { let mut d = ds.clone(); f(&mut d); d.problems().join(" ") };
     assert!(bad(&|d| d.bands = s(&["B04", "B99"])).contains("B99 is not in the bands of the files"));
     assert!(bad(&|d| d.bands = s(&["B04", "B04"])).contains("chosen twice"));
-    assert!(bad(&|d| d.source = "huggingface".into()).contains("Kaggle dataset of GeoTIFF"));
+    assert!(bad(&|d| d.source = "huggingface".into()).contains("your own files or a Kaggle dataset"));
     // Sentinel-1: two bands
     let s1 = Dataset { sensor: "s1".into(), s1_db: true, band_order: s(SENTINEL1_BANDS), bands: s(SENTINEL1_BANDS), ..ds.clone() };
     assert!(s1.problems().is_empty());
@@ -402,4 +402,102 @@ fn multiband_datasets() {
     // ordinary images are unchanged: 1 or 3 channels
     let plain = Dataset { bands: vec![], channels: 2, ..ds };
     assert!(plain.problems().join(" ").contains("Channels must be 1"));
+}
+
+/// a little-endian TIFF with one IFD: width × height, `bands` float samples and GDAL's band names (tag 42112)
+fn tiny_tiff(path: &std::path::Path, width: u32, height: u32, names: &[&str], big_endian: bool) {
+    let xml = format!("<GDALMetadata>{}</GDALMetadata>\0",
+        names.iter().enumerate().map(|(i, n)| format!("<Item name=\"DESCRIPTION\" sample=\"{i}\" role=\"description\">{n}</Item>")).collect::<String>());
+    let w16 = |v: u16| if big_endian { v.to_be_bytes() } else { v.to_le_bytes() };
+    let w32 = |v: u32| if big_endian { v.to_be_bytes() } else { v.to_le_bytes() };
+    let mut f: Vec<u8> = if big_endian { b"MM".to_vec() } else { b"II".to_vec() };
+    f.extend(w16(42));
+    f.extend(w32(8));
+    let tags: Vec<(u16, u16, u32, u32)> = vec![(256, 4, 1, width), (257, 4, 1, height), (258, 3, 1, 32), (277, 3, 1, names.len() as u32),
+        (339, 3, 1, 3), (42112, 2, xml.len() as u32, 8 + 2 + 5 * 12 + 4 + 2 * 12)];
+    let tags: Vec<_> = tags.into_iter().filter(|t| t.0 != 42112 || !names.is_empty()).collect();
+    f.extend(w16(tags.len() as u16));
+    for (tag, typ, count, value) in &tags {
+        f.extend(w16(*tag));
+        f.extend(w16(*typ));
+        f.extend(w32(*count));
+        if *typ == 3 {
+            f.extend(w16(*value as u16));
+            f.extend([0, 0]);
+        } else {
+            f.extend(w32(*value));
+        }
+    }
+    f.extend(w32(0));
+    while f.len() < 8 + 2 + 5 * 12 + 4 + 2 * 12 {
+        f.push(0);
+    }
+    f.extend(xml.as_bytes());
+    std::fs::write(path, f).unwrap();
+}
+
+#[test]
+fn own_files_and_earth_engine_exports() {
+    use nnb_core::dataset::{band_key, SENTINEL2_GEE};
+    use nnb_core::localdata;
+    let s = |v: &[&str]| v.iter().map(|b| b.to_string()).collect::<Vec<_>>();
+    // Earth Engine's B4 and the app's B04 are the same band; B8A stays B8A
+    assert_eq!((band_key("B4"), band_key("b04"), band_key("B8A"), band_key("B11"), band_key("vv")), ("B04".into(), "B04".into(), "B8A".into(), "B11".into(), "VV".into()));
+    let ds = Dataset { source: "local".into(), local_dir: "/data/Sentinel 2 export".into(), sensor: "s2".into(), band_order: s(SENTINEL2_GEE),
+        bands: s(&["B04", "B03", "B02", "B8"]), classes: s(&["forest", "water"]), image_size: [64, 64], ..Default::default() };
+    assert!(ds.problems().is_empty(), "{:?}", ds.problems());
+    assert_eq!(ds.input_shape(), vec![4, 64, 64]);
+    let bad = |f: &dyn Fn(&mut Dataset)| { let mut d = ds.clone(); f(&mut d); d.problems().join(" ") };
+    assert!(bad(&|d| d.local_dir = "".into()).contains("full path"));
+    assert!(bad(&|d| d.local_dir = "relative/path".into()).contains("full path"));
+    assert!(bad(&|d| d.local_dir = "/a/$(rm)".into()).contains("may not contain"));
+    assert!(bad(&|d| d.bands = s(&["B4", "B04"])).contains("chosen twice"));
+    assert!(bad(&|d| d.band_order = s(&["B4", "B04"])).contains("appears twice"));
+    assert!(bad(&|d| d.layout = "scene".into()).contains("for segmentation"));
+    // segmentation of multispectral images: images + masks, or a scene with a label image
+    let seg = Dataset { task: "segment".into(), kaggle_train_dir: "images".into(), kaggle_mask_dir: "masks".into(), ..ds.clone() };
+    assert!(seg.problems().is_empty(), "{:?}", seg.problems());
+    let scene = Dataset { layout: "scene".into(), scene_image: "nnb_image".into(), scene_label: "nnb_label".into(), kaggle_train_dir: "".into(), ..seg.clone() };
+    assert!(scene.problems().is_empty(), "{:?}", scene.problems());
+    assert!(Dataset { scene_label: "".into(), ..scene.clone() }.problems().join(" ").contains("label image"));
+    // the key: stable, in Kaggle's letters, 3-50 characters, different for two folders with the same name
+    let k = ds.local_key();
+    assert!(k.starts_with("nnb-sentinel-2-export-") && k.len() <= 50 && k.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'), "{k}");
+    assert_eq!(k, ds.clone().local_key());
+    assert_ne!(k, Dataset { local_dir: "/other/Sentinel 2 export".into(), ..ds.clone() }.local_key());
+    assert!(Dataset { local_dir: "/".into(), ..ds.clone() }.local_key().len() >= 6);
+    // train.py for a scene: knows the key, and compiles
+    let g = chain(vec![("input", json!({})), ("conv2d", json!({"filters": 2, "kernel": 1})), ("seg_output", json!({}))]);
+    let a = analyze(&g, &scene);
+    assert!(a.ok, "{:?}", a.problems);
+    let code = train_script(&g, &scene, &a, &TrainSettings::default(), "t").unwrap();
+    assert!(code.contains(&format!("\"local_key\": \"{k}\"")) && code.contains("\"layout\": \"scene\""));
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("train.py"), &code).unwrap();
+    if let Some(out) = py_compile(&dir.path().join("train.py")) {
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    }
+
+    // the folder on the Mac: class folders, and the band names Earth Engine / GDAL write into a GeoTIFF (little and big endian)
+    let root = dir.path().join("export");
+    for c in ["forest", "water"] {
+        std::fs::create_dir_all(root.join(c)).unwrap();
+    }
+    tiny_tiff(&root.join("forest/a.tif"), 64, 48, &["B4", "B3", "B2", "B8"], false);
+    tiny_tiff(&root.join("water/b.tif"), 64, 48, &[], true);
+    std::fs::write(root.join(".DS_Store"), "x").unwrap();
+    let i = localdata::tiff_info(&root.join("forest/a.tif")).unwrap();
+    assert_eq!((i.width, i.height, i.bands, i.bits, i.float), (64, 48, 4, 32, true));
+    assert_eq!(i.names, s(&["B4", "B3", "B2", "B8"]));
+    let j = localdata::tiff_info(&root.join("water/b.tif")).unwrap();
+    assert_eq!((j.width, j.bands, j.names.len()), (64, 0, 0), "big endian; no names (and no samples tag value here)");
+    assert!(localdata::tiff_info(&dir.path().join("train.py")).is_err());
+    let d = localdata::describe(&root).unwrap();
+    assert_eq!(d["files"], 2, "hidden files left out: {d}");
+    assert_eq!(d["tifs"], 2);
+    assert_eq!(d["folders"][0]["classes"], json!(["forest", "water"]));
+    assert_eq!(d["tif"]["names"], json!(["B4", "B3", "B2", "B8"]));
+    let sig = localdata::signature(&root).unwrap();
+    assert!(sig.starts_with("2 files"), "{sig}");
+    assert!(localdata::describe(&dir.path().join("missing")).is_err());
 }

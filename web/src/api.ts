@@ -17,13 +17,17 @@ export interface Analysis {
   input: number[]; classes: number; nodes: NodeResult[]; edges: Record<string, number[]>; total_params: number; total_macs: number; problems: string[]; ok: boolean;
 }
 
+export type LocalScan = { files: number; bytes: number; complete: boolean; tifs: number; npys: number; folders: { folder: string; classes: string[] }[];
+  dirs: string[]; top: string[]; tif: { file: string; width: number; height: number; bands: number; bits: number; float: boolean; names: string[] } | null };
+
 export interface Dataset {
-  source: "builtin" | "huggingface" | "kaggle"; task: "classify" | "segment"; resize: boolean; builtin: string; hf_mask_col: string; kaggle_mask_dir: string;
+  source: "builtin" | "huggingface" | "kaggle" | "local"; task: "classify" | "segment"; resize: boolean; builtin: string; hf_mask_col: string; kaggle_mask_dir: string;
   hf_repo: string; hf_config: string; hf_train_split: string; hf_test_split: string; hf_image_col: string; hf_label_col: string;
   kaggle_slug: string; kaggle_train_dir: string; kaggle_test_dir: string;
   image_size: [number, number]; channels: number; classes: string[];
   /** multispectral / radar images: the bands the model uses (in order), the bands in the files, the sensor, Sentinel-1 in dB */
   bands?: string[]; band_order?: string[]; sensor?: "" | "s2" | "s1" | "other"; s1_db?: boolean;
+  local_dir?: string; local_on_machine?: boolean; layout?: "" | "scene"; scene_image?: string; scene_label?: string;
 }
 
 export interface TrainSettings {
@@ -108,6 +112,8 @@ export const api = {
     invoke<{ frequencies: [string, number][]; samples: { src: string; label: unknown }[] }>("hf_preview", { repo, config, split, labelCol, samples }),
   hfInfo: (repo: string) => invoke<{ configs: { name: string; columns: { name: string; type: string; names: string[] | null }[]; splits: { name: string; n: number }[] }[] }>("hf_info", { repo }),
   kaggleFiles: (slug: string) => invoke<{ files: number; sample: string[]; folders: { folder: string; classes: string[] }[] }>("kaggle_files", { slug }),
+  localScan: (dir: string) => invoke<LocalScan>("local_scan", { dir }),
+  pickFolder: (title: string) => invoke<string | null>("pick_folder", { title }),
   targets: () => invoke<{ name: string; kind: string; prepared?: boolean }[]>("targets"),
   runStart: (target: string, gpu: string, copyTokens: boolean) => invoke<void>("run_start", { target, gpu, copyTokens }),
   runs: () => invoke<{ id: string; target: string; kind: string; created: string; dataset: string; status: string; test_acc: number | null; seed: number; group: string }[]>("runs_list"),

@@ -209,6 +209,7 @@ fn start_seeded(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_token
     let ds_label = match ds.source.as_str() {
         "builtin" => ds.builtin.clone(),
         "huggingface" => format!("hf:{}", ds.hf_repo),
+        "local" => format!("own:{}", ds.local_dir.trim_end_matches('/').rsplit('/').next().unwrap_or("")),
         _ => format!("kaggle:{}", ds.kaggle_slug),
     };
     let mut info = RunInfo { id: id.clone(), target: target.into(), created: chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(), status: "starting".into(),
@@ -217,8 +218,14 @@ fn start_seeded(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_token
         info.kind = "kaggle".into();
         save(&d, &info)?;
         let c = creds.kaggle.as_ref().ok_or_else(|| anyhow!("Add your Kaggle token first (Connection tab)."))?;
+        let attach = match ds.source.as_str() {
+            "kaggle" => Ok(Some(ds.kaggle_slug.clone())),
+            "local" if ds.local_on_machine => Err(anyhow!("Your files are on a training machine, not on this Mac: Kaggle cannot reach them. Train on that machine, or choose a folder on this Mac.")),
+            "local" => cloud::kaggle_upload(c, &local_path(&ds.local_dir), &ds.local_key(), log).map(Some),
+            _ => Ok(None),
+        };
         log("Pushing the notebook to Kaggle (private, GPU and internet on) ...".into());
-        let res = cloud::kaggle_push(c, &d, &title, (ds.source == "kaggle").then_some(ds.kaggle_slug.as_str()));
+        let res = attach.and_then(|a| cloud::kaggle_push(c, &d, &title, a.as_deref()));
         match res {
             Ok(r) => {
                 info.url = format!("https://www.kaggle.com/code/{r}");
@@ -240,7 +247,7 @@ fn start_seeded(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_token
     let mut m = remote::machine(target).ok_or_else(|| anyhow!("Unknown machine {target:?} (Connection tab)."))?;
     info.kind = m.kind.clone();
     save(&d, &info)?;
-    let res = start_remote(pr, &d, &mut info, &mut m, &t, gpu, creds, copy_tokens, ds.source.as_str(), log);
+    let res = start_remote(pr, &d, &mut info, &mut m, &t, gpu, creds, copy_tokens, &ds, log);
     if let Err(e) = &res {
         info.status = "failed".into();
         info.error = e.to_string();
@@ -339,7 +346,8 @@ pub fn prepare(m: &Machine, log: &Log) -> Result<Prepared> {
 
 #[allow(clippy::too_many_arguments)]
 fn start_remote(pr: &Project, d: &Path, info: &mut RunInfo, m: &mut Machine, t: &codegen::TrainSettings, gpu: &str, creds: &Creds, copy_tokens: bool,
-    source: &str, log: &Log) -> Result<()> {
+    ds: &crate::dataset::Dataset, log: &Log) -> Result<()> {
+    let source = ds.source.as_str();
     if m.kind == "aws" {
         let v = aws_up(m, creds, log)?;
         info.host = m.host.clone();
@@ -374,6 +382,9 @@ fn start_remote(pr: &Project, d: &Path, info: &mut RunInfo, m: &mut Machine, t: 
                 log("Hugging Face token copied to ~/.cache/huggingface/token on the machine (readable only by you).".into());
             }
         }
+    }
+    if source == "local" && !ds.local_on_machine {
+        upload_local(m, ds, log)?;
     }
     let method = remote::choose_launch(m, &p);
     let rdir = format!("{}/runs/{}", m.workdir.trim_end_matches('/'), info.id);
@@ -422,6 +433,42 @@ fn start_remote(pr: &Project, d: &Path, info: &mut RunInfo, m: &mut Machine, t: 
     info.last_poll = 0.0;
     save(d, info)?;
     let _ = pr;
+    Ok(())
+}
+
+/// a folder on this Mac: "~/" means the home folder
+pub fn local_path(dir: &str) -> PathBuf {
+    match dir.strip_prefix("~/") {
+        Some(rest) => PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(rest),
+        None => PathBuf::from(dir),
+    }
+}
+
+/// the owner's own files to <workdir>/data/local/<key> on the machine, where train.py looks for them; skipped when the machine already has
+/// this version (.nnb_signature there), and rsync copies only what changed
+fn upload_local(m: &Machine, ds: &crate::dataset::Dataset, log: &Log) -> Result<()> {
+    let local = local_path(&ds.local_dir);
+    let sig = crate::localdata::signature(&local)?;
+    let ddir = format!("{}/data/local/{}", m.workdir.trim_end_matches('/'), ds.local_key());
+    let rpath = remote::remote_path(&ddir);
+    let (_, out) = m.run_script(&format!("cat {rpath}/.nnb_signature 2>/dev/null; echo; echo NNB_OK"));
+    if out.lines().any(|l| l.trim() == sig) {
+        log(format!("Your files are already on the machine ({sig})."));
+        return Ok(());
+    }
+    let (code, out) = m.run_script(&format!("mkdir -p {rpath} && echo NNB_OK"));
+    if code != 0 || !out.contains("NNB_OK") {
+        bail!("Could not make the data folder on the machine: {}", out.trim().lines().last().unwrap_or(""));
+    }
+    log(format!("Copying your files ({sig}) to {}:{ddir} (only the first time and after changes) ...", m.dest()));
+    let (code, out) = m.upload_dir(&local, ddir.strip_prefix("~/").unwrap_or(&ddir));
+    if code != 0 {
+        bail!("Copying your files failed: {}", out.trim().lines().last().unwrap_or(""));
+    }
+    let (_, out) = m.run_script(&format!("printf '%s\\n' {} > {rpath}/.nnb_signature && echo NNB_OK", sh_quote(&sig)));
+    if !out.contains("NNB_OK") {
+        log("Note: could not record the copy on the machine; the files will be copied again next time.".into());
+    }
     Ok(())
 }
 
@@ -942,8 +989,8 @@ pub fn resume_on(pr: &Project, from: &str, target: &str, gpu: &str, creds: &Cred
     save(&d, &info)?;
     log(format!("Continuing run {from} on {target} from its checkpoint{} ...",
         if ck.is_null() { String::new() } else { format!(" (epoch {}, batch {}/{})", ck["epoch"], ck["step"], ck["steps"]) }));
-    let source = store::read_json::<crate::dataset::Dataset>(&d.join("dataset.json")).map(|x| x.source).unwrap_or_default();
-    let res = start_remote(pr, &d, &mut info, &mut m, &t, gpu, creds, copy_tokens, &source, log);
+    let ds = store::read_json::<crate::dataset::Dataset>(&d.join("dataset.json")).unwrap_or_default();
+    let res = start_remote(pr, &d, &mut info, &mut m, &t, gpu, creds, copy_tokens, &ds, log);
     if let Err(e) = &res {
         info.status = "failed".into();
         info.error = e.to_string();

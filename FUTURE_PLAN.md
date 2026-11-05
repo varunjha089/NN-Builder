@@ -17,8 +17,12 @@ What is still open, in the suggested order. Done work is in git and CLAUDE.md; t
 
 1. **Sentinel-1/2 data** (section 5): images with 2-32 bands from GeoTIFF / .npy, band choice, per-band normalisation, radar in dB,
    composites for display; then multi-label (BigEarthNet). *Done (2026-11-05): N-band input from Kaggle .tif / .npy folders, band choice, per-band statistics, dB, composites (CI-tested).
-   Next in this step: multi-label (BigEarthNet), Hugging Face band arrays, multispectral segmentation, first-conv expansion for ImageNet
-   weights.*
+   Also done (2026-11-05): own files ("My own files" source, e.g. Google Earth Engine exports): folder on the Mac copied to the machine
+   (rsync, signature) or uploaded as a private Kaggle dataset, or a folder already on the machine; GEE band names (B4 = B04), NaN pixels,
+   S1 already in dB recognised; multispectral segmentation (images + masks, and a split scene + label image cut into tiles, no-data
+   labels ignored); a generated GEE export script (Code Editor for scene + WorldCover labels, Python for class patches; not run against a
+   real GEE account). Next in this step: multi-label (BigEarthNet), Hugging Face band arrays, first-conv expansion for ImageNet weights,
+   a spatially separate test region for scenes.*
 2. **Several inputs and outputs:** more than one Input block (each bound to a data source or a band group: S1 + S2 fusion, Siamese
    pairs) and more than one Output (multi-task heads, each with its loss and weight); shapes, codegen, text language and harness.
 3. **Weight sharing:** a block that reuses another block's weights (Siamese / twin networks).

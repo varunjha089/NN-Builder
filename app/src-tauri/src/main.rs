@@ -659,6 +659,17 @@ async fn kaggle_files(slug: String) -> R<Value> {
     }).await
 }
 
+/// the owner's own dataset folder (e.g. GeoTIFFs from Google Earth Engine): files, class folders, the first GeoTIFF's size and band names
+#[tauri::command]
+async fn local_scan(dir: String) -> R<Value> {
+    blocking(move || nnb_core::localdata::describe(&runs::local_path(dir.trim())).map_err(e)).await
+}
+
+#[tauri::command]
+async fn pick_folder(app: tauri::AppHandle, title: String) -> R<Option<String>> {
+    Ok(app.dialog().file().set_title(title).blocking_pick_folder().map(|f| f.to_string()))
+}
+
 // ---------------------------------------------------------------- runs
 #[tauri::command]
 async fn targets() -> R<Value> {
@@ -1049,7 +1060,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             app_state, templates_list, template_apply, project_from_template, project_save_as, project_new, project_open, set_projects_dir, project_delete, set_max_blocks, project_load, save_graph, design_from_text, design_format, save_dataset, save_train, code, export_code,
             set_kaggle, set_hf, set_aws, clear_secret, test_kaggle, test_hf, test_aws, tools_install,
-            machine_save, machine_delete, machine_test, machine_connect, machine_prepare, hf_info, hf_preview, kaggle_files,
+            machine_save, machine_delete, machine_test, machine_connect, machine_prepare, hf_info, hf_preview, kaggle_files, local_scan, pick_folder,
             update_settings, set_auto_update, update_check, update_install, update_restart, targets, run_start, run_start_seeds, runs_summary, runs_export, run_resume_on, runs_list, run_status, run_stop, run_fetch, run_results, run_reveal, job_status, open_url
         ])
         .build(tauri::generate_context!())

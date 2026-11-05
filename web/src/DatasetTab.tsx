@@ -1,7 +1,7 @@
 // Where the data comes from. Only metadata is read here (Hugging Face datasets-server, Kaggle file list): the data itself is downloaded
 // on the GPU machine when a run starts.
 import { useEffect, useState } from "react";
-import { api, errText, type AppState, type Dataset } from "./api";
+import { api, errText, type AppState, type Dataset, type LocalScan } from "./api";
 
 export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; ds: Dataset; setDs: (d: Dataset) => void; problems: string[]; toast: (m: string) => void }) {
   const [hf, setHf] = useState<Awaited<ReturnType<typeof api.hfInfo>> | null>(null);
@@ -50,9 +50,9 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
       </div>
       <div className="row">
         <strong>Source:</strong>
-        {(["builtin", "huggingface", "kaggle"] as const).filter((s) => !(s === "builtin" && ds.task === "segment")).map((s) => (
+        {(["builtin", "huggingface", "kaggle", "local"] as const).filter((s) => !(s === "builtin" && ds.task === "segment")).map((s) => (
           <label key={s} className="radio"><input type="radio" checked={ds.source === s} onChange={() => up({ source: s })} />
-            {{ builtin: "Built-in (torchvision)", huggingface: "Hugging Face", kaggle: "Kaggle" }[s]}</label>
+            {{ builtin: "Built-in (torchvision)", huggingface: "Hugging Face", kaggle: "Kaggle", local: "My own files (e.g. Sentinel from Google Earth Engine)" }[s]}</label>
         ))}
       </div>
 
@@ -105,8 +105,10 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
               : <input value={ds.kaggle_train_dir} onChange={(e) => up({ kaggle_train_dir: e.target.value.trim() })} placeholder="e.g. data/train" />}</label>
           <label>Test folder (optional)<input value={ds.kaggle_test_dir} onChange={(e) => up({ kaggle_test_dir: e.target.value.trim() })} placeholder="empty = 10% of the training images" /></label>
         </div>}
-        {ds.task !== "segment" && <BandsBox ds={ds} up={up} />}
+        <BandsBox ds={ds} up={up} />
       </>}
+
+      {ds.source === "local" && <LocalBox ds={ds} up={up} toast={toast} />}
 
       {(ds.source !== "builtin" || ds.resize) && <div className="form">
         <label>Image height<input type="number" min={8} max={1024} value={ds.image_size[0]} onChange={(e) => up({ image_size: [Number(e.target.value), ds.image_size[1]] })} /></label>
@@ -168,6 +170,10 @@ const S2 = ["B01", "B02", "B03", "B04", "B05", "B06", "B07", "B08", "B09", "B10"
 const S2_INFO: Record<string, string> = { B01: "aerosol 443 nm, 60 m", B02: "blue 490 nm, 10 m", B03: "green 560 nm, 10 m", B04: "red 665 nm, 10 m",
   B05: "red edge 705 nm, 20 m", B06: "red edge 740 nm, 20 m", B07: "red edge 783 nm, 20 m", B08: "near infrared 842 nm, 10 m",
   B8A: "narrow NIR 865 nm, 20 m", B09: "water vapour 945 nm, 60 m", B10: "cirrus 1375 nm, 60 m", B11: "SWIR 1610 nm, 20 m", B12: "SWIR 2190 nm, 20 m" };
+/** Earth Engine's names (COPERNICUS/S2_SR_HARMONIZED, no B10) and band order; B4 and B04 are the same band everywhere in the app */
+const S2_GEE = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B9", "B11", "B12"];
+const bandKey = (b: string) => { const u = b.trim().toUpperCase(); return /^B\d$/.test(u) ? `B0${u[1]}` : u; };
+const info = (b: string) => S2_INFO[bandKey(b)];
 const S2_PRESETS: [string, string[]][] = [["all 13", S2], ["10 m + 20 m (10)", ["B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B11", "B12"]],
   ["true colour (B04 B03 B02)", ["B04", "B03", "B02"]], ["colour + near infrared", ["B04", "B03", "B02", "B08"]]];
 
@@ -185,7 +191,8 @@ function BandsBox({ ds, up }: { ds: Dataset; up: (p: Partial<Dataset>) => void }
   const toggle = (b: string) => up({ bands: chosen.includes(b) ? chosen.filter((x) => x !== b) : order.filter((x) => x === b || chosen.includes(x)) });
   return <div className="wide aug">
     <strong>Image bands</strong>
-    <span className="muted small"> (satellite images: GeoTIFF .tif or .npy files with any number of bands, one folder per class, as in EuroSAT-MS)</span>
+    <span className="muted small"> (satellite images: GeoTIFF .tif or .npy files with any number of bands, as in EuroSAT-MS or an Earth Engine export;
+      empty pixels (NaN) are filled with the band's mean)</span>
     <p className="row">
       <label className="radio"><input type="radio" checked={sensor === ""} onChange={() => set("")} />ordinary pictures (grey / colour)</label>
       <label className="radio"><input type="radio" checked={sensor === "s2"} onChange={() => set("s2")} />Sentinel-2 (13 bands)</label>
@@ -195,14 +202,200 @@ function BandsBox({ ds, up }: { ds: Dataset; up: (p: Partial<Dataset>) => void }
     {sensor !== "" && <>
       <label className="wide">Bands in the files, in their order (space-separated; check the dataset's description)
         <input value={order.join(" ")} onChange={(e) => { const o = e.target.value.split(/\s+/).filter((x) => x); up({ band_order: o, bands: chosen.filter((b) => o.includes(b)) }); }} /></label>
-      {sensor === "s2" && <p className="row small">{S2_PRESETS.map(([name, bs]) => <button key={name} className="small" onClick={() => up({ bands: order.filter((b) => bs.includes(b)) })}>{name}</button>)}</p>}
-      <div className="bandgrid">{order.map((b) => <label key={b} className="chk" title={S2_INFO[b] ?? ""}>
-        <input type="checkbox" checked={chosen.includes(b)} onChange={() => toggle(b)} />{b}{sensor === "s2" && S2_INFO[b] ? <span className="muted small"> {S2_INFO[b]}</span> : null}</label>)}</div>
+      {sensor === "s2" && <p className="row small"><span className="muted">Files:</span>
+        <button className="small" onClick={() => up({ band_order: S2, bands: S2 })}>EuroSAT-MS order (13)</button>
+        <button className="small" onClick={() => up({ band_order: S2_GEE, bands: S2_GEE })}>Earth Engine SR (12, B1 … B12)</button>
+        <span className="muted">Use:</span>
+        {S2_PRESETS.map(([name, bs]) => <button key={name} className="small" onClick={() => up({ bands: order.filter((b) => bs.includes(bandKey(b))) })}>{name}</button>)}</p>}
+      <div className="bandgrid">{order.map((b) => <label key={b} className="chk" title={info(b) ?? ""}>
+        <input type="checkbox" checked={chosen.includes(b)} onChange={() => toggle(b)} />{b}{sensor === "s2" && info(b) ? <span className="muted small"> {info(b)}</span> : null}</label>)}</div>
       {sensor === "s1" && <label className="chk"><input type="checkbox" checked={!!ds.s1_db} onChange={(e) => up({ s1_db: e.target.checked })} />
-        the files hold linear backscatter: convert to decibels (10·log10) first</label>}
+        the files hold linear backscatter: convert to decibels (10·log10) first (Earth Engine's S1_GRD is already in decibels: such files are
+        recognised by their negative values and left alone)</label>}
       <p className="muted small">The network receives {chosen.length} channels ({chosen.join(" ") || "none"}). Every band is normalised by its own mean and
         spread, measured on the training images on the GPU machine. Flips and quarter turns are used for augmentation; the result pictures
         show {sensor === "s2" ? "true colour (B04 B03 B02)" : sensor === "s1" ? "VV / VH / VV−VH" : "the first three bands"}.</p>
     </>}
   </div>;
+}
+
+// ---------------------------------------------------------------- the owner's own files (e.g. exported from Google Earth Engine)
+const WORLDCOVER = ["tree cover", "shrubland", "grassland", "cropland", "built-up", "bare / sparse vegetation", "snow and ice", "permanent water",
+  "herbaceous wetland", "mangroves", "moss and lichen"];
+const size = (n: number) => n > 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n > 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.round(n / 1e3)} kB`;
+
+/** a folder of the owner's files: on this Mac (copied to the training machine, or uploaded to Kaggle as a private dataset, when a run
+ * starts) or already on the training machine; class folders, images + masks, or large images with a label image (Earth Engine) */
+function LocalBox({ ds, up, toast }: { ds: Dataset; up: (p: Partial<Dataset>) => void; toast: (m: string) => void }) {
+  const [scan, setScan] = useState<LocalScan | null>(null);
+  const [busy, setBusy] = useState(false);
+  const read = async (dir = ds.local_dir ?? "") => {
+    setBusy(true);
+    try {
+      const r = await api.localScan(dir);
+      setScan(r);
+      const p: Partial<Dataset> = {};
+      const f = r.folders[0];
+      if (ds.task !== "segment" && f && !ds.kaggle_train_dir) Object.assign(p, { kaggle_train_dir: f.folder, classes: f.classes });
+      // band names written into the GeoTIFF (GDAL / Earth Engine): the files' band order, without typing it
+      const names = r.tif?.names ?? [];
+      if (names.length && names.join(" ") !== (ds.band_order ?? []).join(" ")) {
+        const s1 = names.some((n) => /^V[VH]$/i.test(n)), s2 = names.some((n) => /^B\d/i.test(n));
+        Object.assign(p, { band_order: names, bands: names.filter((n) => !/^(QA|SCL|MSK|angle)/i.test(n)), sensor: s1 ? "s1" : s2 ? "s2" : "other" });
+        toast(`Band names read from ${r.tif!.file}: ${names.join(" ")}`);
+      } else if (r.tif && !names.length && r.tif.bands !== (ds.band_order ?? []).length && (ds.band_order ?? []).length) {
+        toast(`${r.tif.file} has ${r.tif.bands} bands, but the band order below lists ${(ds.band_order ?? []).length}: check it.`);
+      }
+      up(p);
+    } catch (e) { toast(errText(e)); setScan(null); } finally { setBusy(false); }
+  };
+  const choose = async () => {
+    const d = await api.pickFolder("The folder with your dataset files").catch(() => null);
+    if (d) { up({ local_dir: d }); read(d); }
+  };
+  const scene = ds.layout === "scene";
+  return <>
+    <div className="row">
+      <input className="grow" placeholder={ds.local_on_machine ? "the folder's path on the training machine, e.g. ~/data/sentinel2" : "the folder on this Mac"}
+        value={ds.local_dir ?? ""} onChange={(e) => up({ local_dir: e.target.value })} />
+      {!ds.local_on_machine && <button onClick={choose} disabled={busy}>Choose…</button>}
+      {!ds.local_on_machine && <button onClick={() => read()} disabled={busy || !ds.local_dir}>Read folder</button>}
+    </div>
+    <p className="row small">
+      <label className="radio"><input type="radio" checked={!ds.local_on_machine} onChange={() => up({ local_on_machine: false })} />on this Mac</label>
+      <label className="radio"><input type="radio" checked={!!ds.local_on_machine} onChange={() => up({ local_on_machine: true })} />already on the training machine (SSH / AWS)</label>
+    </p>
+    <p className="muted small">{ds.local_on_machine
+      ? "train.py reads the folder where it is; nothing is copied. Kaggle cannot reach it."
+      : "When a run starts, the folder is copied to the training machine (rsync: only the first time and after changes) or, for Kaggle, uploaded "
+        + "once as a private Kaggle dataset under your account (again only when it changed). Nothing in the folder is changed."}</p>
+    {scan && <p className="muted small">{scan.files.toLocaleString()}{scan.complete ? "" : "+"} files, {size(scan.bytes)}; {scan.tifs.toLocaleString()} GeoTIFF,
+      {" "}{scan.npys.toLocaleString()} .npy{scan.tif ? `; ${scan.tif.file}: ${scan.tif.width}×${scan.tif.height} pixels, ${scan.tif.bands} bands`
+        + `${scan.tif.float ? " (float)" : ` (${scan.tif.bits}-bit)`}${scan.tif.names.length ? `: ${scan.tif.names.join(" ")}` : ", no band names in the file"}` : ""}.</p>}
+    {ds.task === "segment" && <p className="row small">
+      <label className="radio"><input type="radio" checked={!scene} onChange={() => up({ layout: "" })} />images + masks (same file names)</label>
+      <label className="radio"><input type="radio" checked={scene} onChange={() => up({ layout: "scene" })} />large images + a label image on the same grid (Earth Engine export), cut into tiles</label>
+    </p>}
+    {ds.task !== "segment" ? <div className="form">
+      <label>Training folder (one subfolder per class)
+        {scan?.folders.length ? <select value={ds.kaggle_train_dir} onChange={(e) => { const f = scan.folders.find((x) => x.folder === e.target.value); up({ kaggle_train_dir: e.target.value, classes: f?.classes ?? ds.classes }); }}>
+          {scan.folders.map((f) => <option key={f.folder} value={f.folder}>{f.folder || "(the folder itself)"} — {f.classes.length} classes</option>)}</select>
+          : <input value={ds.kaggle_train_dir} onChange={(e) => up({ kaggle_train_dir: e.target.value.trim() })} placeholder="empty = the folder itself" />}</label>
+      <label>Test folder (optional)<input value={ds.kaggle_test_dir} onChange={(e) => up({ kaggle_test_dir: e.target.value.trim() })} placeholder="empty = 10% of the training images" /></label>
+    </div> : scene ? <div className="form">
+      <label>Image file or folder<input value={ds.scene_image ?? ""} onChange={(e) => up({ scene_image: e.target.value.trim() })} placeholder="e.g. nnb_image" /></label>
+      <label>Label file or folder (class numbers 0, 1, 2 …)<input value={ds.scene_label ?? ""} onChange={(e) => up({ scene_label: e.target.value.trim() })} placeholder="e.g. nnb_label" /></label>
+      <p className="muted small wide">An export split into several files (name-0000000000-0000000000.tif) is fine: image and label files are paired by name. The
+        images are cut into tiles of the image size below; tiles that are mostly empty are left out, and label pixels that are not a class
+        (no data, 255) are not scored. 10% of the tiles are the test data.{scan ? ` Seen: ${[...scan.dirs, ...scan.top].slice(0, 10).join(", ")}` : ""}</p>
+    </div> : <div className="form">
+      <label>Images folder<input value={ds.kaggle_train_dir} onChange={(e) => up({ kaggle_train_dir: e.target.value.trim() })} placeholder="e.g. images" /></label>
+      <label>Masks folder (same file names)<input value={ds.kaggle_mask_dir} onChange={(e) => up({ kaggle_mask_dir: e.target.value.trim() })} placeholder="e.g. masks" /></label>
+      {scan && <p className="muted small wide">Folders seen: {scan.dirs.slice(0, 10).join(", ")}</p>}
+    </div>}
+    <BandsBox ds={ds} up={up} />
+    <GeeBox ds={ds} up={up} toast={toast} />
+  </>;
+}
+
+/** a Google Earth Engine script that exports exactly what the Dataset tab expects (the chosen bands in this order, on one grid) */
+function GeeBox({ ds, up, toast }: { ds: Dataset; up: (p: Partial<Dataset>) => void; toast: (m: string) => void }) {
+  const [start, setStart] = useState("2024-01-01");
+  const [end, setEnd] = useState("2024-12-31");
+  const [cloud, setCloud] = useState(20);
+  const [crs, setCrs] = useState("EPSG:3857");
+  const s1 = ds.sensor === "s1";
+  const seg = ds.task === "segment";
+  // Earth Engine's own names for the chosen bands (B04 -> B4)
+  const gee = (s1 ? (ds.bands?.length ? ds.bands : ["VV", "VH"]) : (ds.bands?.length ? ds.bands : ["B2", "B3", "B4", "B8"]))
+    .map((b) => { const k = bandKey(b); return /^B0\d$/.test(k) ? `B${k[2]}` : k; });
+  const toa = gee.includes("B10");
+  const scale = 10;
+  const list = gee.map((b) => `'${b}'`).join(", ");
+  const [h, w] = ds.image_size;
+  const collection = s1 ? `// Sentinel-1 GRD (already in decibels: leave "convert to decibels" as it is, the app sees the negative values)
+var image = ee.ImageCollection('COPERNICUS/S1_GRD')
+  .filterBounds(geometry).filterDate(start, end)
+  .filter(ee.Filter.eq('instrumentMode', 'IW'))
+  .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV'))
+  .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
+  .select([${list}]).median().toFloat();`
+    : toa ? `// Sentinel-2 top of atmosphere (B10 is only in this collection; EuroSAT-MS is this level too); clouds masked with QA60
+function clear(img) { var qa = img.select('QA60'); return img.updateMask(qa.bitwiseAnd(1 << 10).eq(0).and(qa.bitwiseAnd(1 << 11).eq(0))); }
+var image = ee.ImageCollection('COPERNICUS/S2_HARMONIZED')
+  .filterBounds(geometry).filterDate(start, end)
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', ${cloud}))
+  .map(clear).select([${list}]).median().toFloat();`
+    : `// Sentinel-2 surface reflectance; clouds, cirrus and cloud shadows masked with the scene classification (SCL 3, 8, 9, 10)
+function clear(img) { var scl = img.select('SCL'); return img.updateMask(scl.neq(3).and(scl.lt(8).or(scl.gt(10)))); }
+var image = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+  .filterBounds(geometry).filterDate(start, end)
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', ${cloud}))
+  .map(clear).select([${list}]).median().toFloat();`;
+  const pyCollection = s1 ? `image = (ee.ImageCollection("COPERNICUS/S1_GRD")   # already in decibels
+         .filterBounds(geometry).filterDate(start, end)
+         .filter(ee.Filter.eq("instrumentMode", "IW"))
+         .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VV"))
+         .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VH"))
+         .select([${list}]).median().toFloat())`
+    : `def clear(img):
+    ${toa ? `qa = img.select("QA60")   # clouds and cirrus
+    return img.updateMask(qa.bitwiseAnd(1 << 10).eq(0).And(qa.bitwiseAnd(1 << 11).eq(0)))`
+      : `scl = img.select("SCL")    # cloud shadow 3, clouds 8 and 9, cirrus 10
+    return img.updateMask(scl.neq(3).And(scl.lt(8).Or(scl.gt(10))))`}
+
+
+image = (ee.ImageCollection("${toa ? "COPERNICUS/S2_HARMONIZED" : "COPERNICUS/S2_SR_HARMONIZED"}")
+         .filterBounds(geometry).filterDate(start, end)
+         .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", ${cloud}))
+         .map(clear).select([${list}]).median().toFloat())`;
+  const script = seg ? `// NN Builder: ${s1 ? "Sentinel-1" : "Sentinel-2"} image + label image for segmentation. In code.earthengine.google.com: draw your
+// region with the drawing tools (it becomes "geometry"), press Run, then in Tasks press Run on both exports. Download the two Drive
+// folders nnb_image and nnb_label into one folder, choose it in the Dataset tab (image folder nnb_image, label folder nnb_label).
+var start = '${start}', end = '${end}';
+var crs = '${crs}', scale = ${scale};  // both exports use the same grid; a UTM zone (e.g. EPSG:32643) keeps pixels square
+${collection}
+// the label: ESA WorldCover 2021 as class numbers 0-10 (replace with your own labelled image of class numbers 0, 1, 2 ...)
+var label = ee.ImageCollection('ESA/WorldCover/v200').first().select('Map')
+  .remap([10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 100], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]).rename('label');
+// pixels without image data get no class (255: left out of the loss and the scores)
+label = label.updateMask(image.mask().reduce(ee.Reducer.min())).unmask(255).toByte();
+var common = {region: geometry, scale: scale, crs: crs, maxPixels: 1e10, fileNamePrefix: 'scene', fileDimensions: ${Math.max(256, Math.ceil(2048 / 256) * 256)}};
+Export.image.toDrive(Object.assign({image: image.unmask(0), description: 'nnb_image', folder: 'nnb_image'}, common));
+Export.image.toDrive(Object.assign({image: label, description: 'nnb_label', folder: 'nnb_label'}, common));`
+    : `# NN Builder: ${s1 ? "Sentinel-1" : "Sentinel-2"} patches of ${w}×${h} pixels, one Drive folder per class, for classification.
+# Python with the Earth Engine API (pip install earthengine-api): it starts every export itself (the Code Editor would need a click per task).
+# points: your labelled points (an Earth Engine asset) with a property "class" holding the class name.
+# Download the class folders from Drive into one folder and choose it in the Dataset tab.
+import ee
+ee.Authenticate()
+ee.Initialize(project="YOUR-CLOUD-PROJECT")
+points = ee.FeatureCollection("projects/YOUR-CLOUD-PROJECT/assets/points")
+geometry = points.geometry().bounds()
+start, end, crs, scale = "${start}", "${end}", "${crs}", ${scale}
+${pyCollection}
+for i, f in enumerate(points.getInfo()["features"]):
+    c = f["properties"]["class"]
+    region = ee.Geometry.Point(f["geometry"]["coordinates"]).buffer(${Math.max(h, w) / 2} * scale).bounds()
+    ee.batch.Export.image.toDrive(image=image.unmask(0), description=f"nnb_{i}", folder=str(c), fileNamePrefix=f"{c}_{i}",
+                                  region=region, scale=scale, crs=crs).start()   # about ${w}×${h} pixels; the app resizes to exactly that
+print("started", i + 1, "exports: see the Tasks tab or ee.batch.Task.list()")`;
+  return <details className="wide aug" style={{ marginTop: 8 }}>
+    <summary><strong>Get Sentinel-1/2 data from Google Earth Engine</strong> <span className="muted small">(a script that exports exactly what this tab expects)</span></summary>
+    <p className="muted small">The bands are the ones chosen above ({gee.join(" ")}), in that order; the files carry their names, so Read folder fills the
+      band order by itself. {seg ? "For segmentation: an image and a label image on one grid (Code Editor script)." : "For classification: one patch per labelled point (Python script)."}</p>
+    <div className="form">
+      <label>From<input value={start} onChange={(e) => setStart(e.target.value)} /></label>
+      <label>To<input value={end} onChange={(e) => setEnd(e.target.value)} /></label>
+      {!s1 && <label>Most clouds per scene (%)<input type="number" min={0} max={100} value={cloud} onChange={(e) => setCloud(Number(e.target.value))} /></label>}
+      <label>Projection (crs)<input value={crs} onChange={(e) => setCrs(e.target.value.trim())} /></label>
+    </div>
+    <textarea readOnly rows={14} className="mono small" style={{ width: "100%" }} value={script} />
+    <p className="row small">
+      <button className="small" onClick={() => navigator.clipboard.writeText(script).then(() => toast("Script copied")).catch((e) => toast(errText(e)))}>Copy script</button>
+      <button className="small" onClick={() => up({ band_order: gee, bands: gee, sensor: s1 ? "s1" : "s2", ...(s1 ? { s1_db: false } : {}),
+        ...(seg ? { layout: "scene", scene_image: "nnb_image", scene_label: "nnb_label", classes: WORLDCOVER } : {}) })}>
+        Set this tab to match the export</button>
+      <span className="muted">not run by the app: check it in Earth Engine (it needs your Earth Engine account)</span></p>
+  </details>;
 }

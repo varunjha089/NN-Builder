@@ -71,6 +71,10 @@ case "$1 $2" in
   "kernels status") n=$(cat "$S"); echo $((n+1)) > "$S"; if [ "$n" -ge 1 ]; then echo "$3 has status \"KernelWorkerStatus.COMPLETE\""; else echo "$3 has status \"KernelWorkerStatus.RUNNING\""; fi ;;
   "kernels logs") echo 'Warning: a newer version of the client exists'
      echo '[{"stream_name":"stderr","time":1,"data":"downloading\r 50%\r100%\n"},{"stream_name":"stdout","time":2,"data":"NNB_EVENT {\"event\": \"start\", \"epochs\": 2}\nNNB_EVENT {\"event\": \"epoch\", \"epoch\": 1, \"val_acc\": 0.7}\n"}]' ;;
+  "datasets files") [ -f "$NNB_FAKE_REMOTE/uploaded.json" ] && echo "name,size" || { echo "404 Not Found"; exit 1; } ;;
+  "datasets create"|"datasets version") [ "$3" = "-p" ] || exit 4; cp "$4/dataset-metadata.json" "$NNB_FAKE_REMOTE/uploaded.json"
+     ls -L "$4" > "$NNB_FAKE_REMOTE/uploaded.txt"; echo "$2" >> "$NNB_FAKE_REMOTE/uploads.log"; echo "Dataset is being created. Please check progress at ..." ;;
+  "datasets status") echo "ready" ;;
   "kernels output") mkdir -p "$5"; echo '{"event": "done", "test_acc": 0.8}' > "$5/metrics.jsonl"; echo '{"test_acc": 0.8, "classes": []}' > "$5/results.json"
      echo '[{"stream_name":"stdout","time":1,"data":"training...\n"}]' > "$5/nnb-x.log" ;;
   *) echo "unexpected $*"; exit 2 ;;
@@ -230,12 +234,70 @@ fn remote_and_kaggle_runs() {
     assert!(local.join("results.json").exists() && local.join("model.pt").exists() && !local.join("model.part").exists(), "fetched with cat");
     std::env::remove_var("NNB_NO_RSYNC");
 
+    // ---- the owner's own files (e.g. GeoTIFFs from Earth Engine), in a folder on this Mac with a space in its name: copied to
+    //      <workdir>/data/local/<key> on the machine the first time, not again while unchanged
+    let mine = b.join("my data");
+    for c in ["forest", "water"] {
+        std::fs::create_dir_all(mine.join(c)).unwrap();
+        std::fs::write(mine.join(c).join("p1.npy"), c).unwrap();
+    }
+    let own = nnb_core::dataset::Dataset { source: "local".into(), local_dir: mine.to_string_lossy().into(), classes: vec!["forest".into(), "water".into()],
+        sensor: "s2".into(), band_order: vec!["B2".into(), "B3".into(), "B4".into()], bands: vec!["B04".into(), "B03".into()], ..Default::default() };
+    assert!(own.problems().is_empty(), "{:?}", own.problems());
+    pr.save_dataset(&own).unwrap();
+    std::thread::sleep(Duration::from_millis(1100));
+    let id = runs::start(&pr, "college", "", &Creds::default(), false, &log).unwrap_or_else(|e| panic!("{e}\n{:?}", lines.lock().unwrap()));
+    let there = remote_home.join(".nn_builder/data/local").join(own.local_key());
+    assert!(there.join("forest/p1.npy").exists() && there.join(".nnb_signature").exists(), "own files copied to {there:?}");
+    let script_text = std::fs::read_to_string(pr.runs_dir().join(&id).join("train.py")).unwrap();
+    assert!(script_text.contains(&format!("\"local_key\": \"{}\"", own.local_key())), "train.py knows where the files are");
+    for _ in 0..40 {
+        std::thread::sleep(Duration::from_millis(1100));
+        if !["starting", "running"].contains(&runs::status(&pr, &id, 0, &Creds::default()).unwrap().state.as_str()) {
+            break;
+        }
+    }
+    std::fs::write(there.join("forest/p1.npy"), "changed there").unwrap();
+    lines.lock().unwrap().clear();
+    std::thread::sleep(Duration::from_millis(1100));
+    runs::start(&pr, "college", "", &Creds::default(), false, &log).unwrap();
+    assert!(lines.lock().unwrap().iter().any(|l| l.contains("already on the machine")), "{:?}", lines.lock().unwrap());
+    assert_eq!(std::fs::read_to_string(there.join("forest/p1.npy")).unwrap(), "changed there", "unchanged folder: not copied again");
+    std::thread::sleep(Duration::from_millis(2500));
+    // a folder already on the machine is not copied at all, and Kaggle refuses it
+    let on_machine = nnb_core::dataset::Dataset { local_on_machine: true, local_dir: "~/elsewhere".into(), ..own.clone() };
+    pr.save_dataset(&on_machine).unwrap();
+
     // ---- Kaggle with a stand-in kaggle CLI in the tools folder
     let tools_bin = settings.join("tools/bin");
     std::fs::create_dir_all(&tools_bin).unwrap();
     script(&tools_bin, "kaggle", FAKE_KAGGLE);
     script(&tools_bin, "python", "#!/bin/bash\nexit 0\n");
     let creds = Creds { kaggle: Some(KaggleCreds { username: "someone".into(), key: "k".into() }), ..Default::default() };
+    std::thread::sleep(Duration::from_millis(1100));
+    let e = runs::start(&pr, KAGGLE, "", &creds, false, &log).unwrap_err().to_string();
+    assert!(e.contains("Kaggle cannot reach them"), "{e}");
+    // own files on this Mac: uploaded once as a private Kaggle dataset someone/<key> and attached to the notebook
+    pr.save_dataset(&own).unwrap();
+    std::thread::sleep(Duration::from_millis(1100));
+    let id = runs::start(&pr, KAGGLE, "", &creds, false, &log).unwrap_or_else(|e| panic!("{e}\n{:?}", lines.lock().unwrap()));
+    let slug = format!("someone/{}", own.local_key());
+    let up: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(remote_home.join("uploaded.json")).unwrap()).unwrap();
+    assert_eq!(up["id"], slug.as_str());
+    let listed = std::fs::read_to_string(remote_home.join("uploaded.txt")).unwrap();
+    assert!(listed.contains("forest") && listed.contains("water") && listed.contains("dataset-metadata.json"), "{listed}");
+    assert!(!mine.join("dataset-metadata.json").exists(), "the owner's folder is not written to");
+    let pushed: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(remote_home.join("pushed.json")).unwrap()).unwrap();
+    assert_eq!(pushed["dataset_sources"], serde_json::json!([slug]));
+    let _ = id;
+    std::thread::sleep(Duration::from_millis(1100));
+    runs::start(&pr, KAGGLE, "", &creds, false, &log).unwrap();
+    assert_eq!(std::fs::read_to_string(remote_home.join("uploads.log")).unwrap().lines().count(), 1, "unchanged: uploaded once");
+    std::fs::write(mine.join("water/p2.npy"), "new").unwrap();
+    std::thread::sleep(Duration::from_millis(1100));
+    runs::start(&pr, KAGGLE, "", &creds, false, &log).unwrap();
+    assert_eq!(std::fs::read_to_string(remote_home.join("uploads.log")).unwrap(), "create\nversion\n", "changed: a new version");
+    pr.save_dataset(&nnb_core::dataset::Dataset::default()).unwrap();
     assert!(runs::start(&pr, KAGGLE, "", &Creds::default(), false, &log).is_err(), "needs the token");
     std::thread::sleep(Duration::from_millis(1100));
     let id = runs::start(&pr, KAGGLE, "", &creds, false, &log).unwrap();

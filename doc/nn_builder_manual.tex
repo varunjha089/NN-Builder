@@ -565,11 +565,49 @@ $3\times3$ convolution with 16 filters: $13\cdot9\cdot16+16 = 1\,888$). On the G
   \item shows the result pictures as composites: true colour (B04 B03 B02) for Sentinel-2, VV / VH / VV$-$VH for Sentinel-1, else the
         first three bands, each stretched between its 2nd and 98th percentile.
 \end{itemize}
-Not yet: ImageNet weights for more than three bands, multispectral segmentation, Hugging Face datasets with band arrays, one label per
-band combination (multi-label, BigEarthNet), and Sentinel-1 and Sentinel-2 together in one network (fusion). These are the next steps in
-\file{FUTURE\_PLAN.md}. GitHub Actions trains on generated Sentinel-2 (mixed \file{.tif} and \file{.npy}) and Sentinel-1 folders on every
-change and checks the bands, the statistics and the accuracy.
+Not yet: ImageNet weights for more than three bands, Hugging Face datasets with band arrays, one label per band combination (multi-label,
+BigEarthNet), and Sentinel-1 and Sentinel-2 together in one network (fusion). These are the next steps in \file{FUTURE\_PLAN.md}.
+GitHub Actions trains on generated Sentinel-2 (mixed \file{.tif} and \file{.npy}) and Sentinel-1 folders on every change and checks the
+bands, the statistics and the accuracy; it also trains on every layout of the next section.
 
+\subsection{Your own files, e.g.\ Sentinel-1/2 from Google Earth Engine}
+\label{sec:own-files}
+Sentinel data is usually exported from Google Earth Engine (GEE) to Google Drive and downloaded, so it is not on Kaggle or Hugging Face.
+Choose \ui{Source: My own files}, then the folder (\ui{Choose\dots}) and \ui{Read folder}. The app lists the files, finds class folders,
+and reads the first GeoTIFF's header: its size, number of bands and, when GEE or GDAL wrote them, the band names, which fill
+\ui{Bands in the files} by themselves (nothing is opened beyond the header, and nothing in the folder is changed).
+\begin{description}[nosep]
+  \item[Where the files are.] \ui{on this Mac}: when a run starts, the folder is copied to the training machine
+        (\file{\textasciitilde/.nn\_builder/data/local/nnb-<folder>-<code>}, with rsync, so only the first time and after a change), or, for
+        Kaggle, uploaded under your account as a \emph{private} Kaggle dataset of the same name and attached to the notebook (again only
+        when it changed; the folders go up as zip files, which Kaggle unpacks). \ui{already on the training machine}: give its path there
+        (e.g.\ a large export copied to the college server yourself); nothing is copied, and Kaggle cannot be used.
+  \item[Classification.] One subfolder per class (\file{forest/}, \file{water/} \dots) of \file{.tif} or \file{.npy} patches, or ordinary
+        pictures. An optional test folder; else 10\,\% of the images.
+  \item[Segmentation: images + masks.] An images folder and a masks folder with the same file names (a mask may add \file{\_mask}); masks
+        may be PNG, GeoTIFF or \file{.npy} with class numbers 0, 1, 2 \dots
+  \item[Segmentation: a large image and a label image.] What GEE exports for a region: one image (possibly split into several files named
+        \file{scene-0000000000-0000000000.tif} \dots) and a label image on the same grid with the same file names (in another folder). The
+        images are cut into tiles of the image size; a tile is used when at least half of its pixels have data and at least one has a
+        class, and 10\,\% of the tiles are the test data (neighbouring tiles are alike, so this test is optimistic; a test region exported
+        separately is the honest check). The arrays are kept as \file{.npy} files in the data folder and read with memory mapping, so a
+        scene larger than the memory works.
+\end{description}
+GEE's conventions are handled: band names B1 \dots\ B9 are the same as B01 \dots\ B09 everywhere in the app (\ui{Earth Engine SR (12,
+B1 \dots\ B12)} sets that band order; the surface-reflectance collection has no B10); empty (masked) pixels written as NaN are left out
+of the band statistics and filled with the band's mean; label values that are not a class (no data, 255, negative) are left out of the
+loss and of the scores; and Sentinel-1 from \texttt{COPERNICUS/S1\_GRD} is already in dB: such files are recognised by their negative
+values and not converted again, even with \ui{convert to decibels} ticked.
+
+\paragraph{The export script.} Under \ui{Get Sentinel-1/2 data from Google Earth Engine} the Dataset tab writes a script that exports
+exactly what the tab expects: the ticked bands in their order, from the chosen dates, with clouds masked (Sentinel-2 SR: the scene
+classification band; with B10: the top-of-atmosphere collection and its QA60 band) or the median of Sentinel-1 IW scenes with VV and VH.
+For segmentation it is a Code Editor script: draw the region, \ui{Run}, then run the two tasks; it exports the image and the ESA
+WorldCover 2021 map (11 classes, as class numbers 0--10; replace it by your own labelled image) on one grid into the Drive folders
+\file{nnb\_image} and \file{nnb\_label}. For classification it is a Python script (\texttt{earthengine-api}) that exports one patch per
+labelled point into a Drive folder per class, starting every export itself. \ui{Set this tab to match the export} fills in the band
+order, the layout and (WorldCover) the class names. The app does not run the script: it needs your Earth Engine account, so check it
+there.
 
 %=====================================================================================================================================
 \section{The Code tab: what the generated script does}

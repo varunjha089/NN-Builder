@@ -326,23 +326,45 @@ def kaggle_root():
     return root
 
 
+def local_root():
+    """the owner's own files: a folder already on this machine, the private Kaggle dataset the app uploaded (attached to the notebook),
+    or the copy the app made in <data>/local/<key>"""
+    key = DATASET["local_key"]
+    if DATASET.get("local_on_machine"):
+        root = os.path.expanduser(DATASET["local_dir"])
+    elif ON_KAGGLE:
+        found = [c for c in [f"/kaggle/input/{key}"] + glob.glob(f"/kaggle/input/**/{key}", recursive=True) if os.path.isdir(c)]
+        if not found:
+            raise SystemExit(f"DATA: your files (the Kaggle dataset {key}) are not attached to this notebook (looked in /kaggle/input).")
+        root = found[0]
+    else:
+        root = os.path.join(DATA, "local", key)
+    if not os.path.isdir(root):
+        raise SystemExit(f"DATA: the folder with your files is not on this machine ({root}).")
+    return root
+
+
+def data_root():
+    return local_root() if DATASET["source"] == "local" else kaggle_root()
+
+
 def kaggle_folder(root, sub):
     p = os.path.join(root, sub) if sub else root
     if os.path.isdir(p):
         return p
     found = [d for d in glob.glob(os.path.join(root, "**", sub), recursive=True) if os.path.isdir(d)] if sub else []
     if not found:
-        raise SystemExit(f"DATA: the folder {sub!r} is not in the Kaggle dataset.")
+        raise SystemExit(f"DATA: the folder {sub!r} is not in the dataset.")
     return found[0]
 
 
-def kaggle_pairs(root):
+def kaggle_pairs(root, ext_ok=IMAGE_EXT):
     """images and masks with the same name (masks may add _mask / _lab / _label, or use another extension)"""
     idir, mdir = kaggle_folder(root, DATASET["kaggle_train_dir"]), kaggle_folder(root, DATASET["kaggle_mask_dir"])
     masks = {}
     for f in os.listdir(mdir):
         stem, ext = os.path.splitext(f)
-        if ext.lower() in IMAGE_EXT:
+        if ext.lower() in IMAGE_EXT + (".npy",):
             for suffix in ("_mask", "_lab", "_label", "-mask", ""):
                 if suffix and stem.endswith(suffix):
                     masks.setdefault(stem[: -len(suffix)], os.path.join(mdir, f))
@@ -350,7 +372,7 @@ def kaggle_pairs(root):
     pairs = []
     for f in sorted(os.listdir(idir)):
         stem, ext = os.path.splitext(f)
-        if ext.lower() in IMAGE_EXT and stem in masks:
+        if ext.lower() in ext_ok and stem in masks:
             pairs.append((os.path.join(idir, f), masks[stem]))
     if not pairs:
         raise SystemExit(f"DATA: no image in {DATASET['kaggle_train_dir']!r} has a mask with the same name in {DATASET['kaggle_mask_dir']!r}.")
@@ -361,8 +383,18 @@ def kaggle_pairs(root):
 BAND_EXT = (".tif", ".tiff", ".npy")
 
 
-def read_bands(path):
-    """one image file as a float32 tensor (bands, H, W) with the chosen bands, in the chosen order (decibels for Sentinel-1 if asked)"""
+def band_key(b):
+    """a band name for comparing: upper case, Earth Engine's B1 … B9 as B01 … B09 (the same rule as dataset::band_key in the app)"""
+    u = str(b).strip().upper()
+    return "B0" + u[1:] if len(u) == 2 and u[0] == "B" and u[1].isdigit() else u
+
+
+BAND_IDX = None    # positions of the chosen bands in the files' band order
+DB_NOTE = [False]  # the "already in decibels" note is given once
+
+
+def read_array(path):
+    """a GeoTIFF / .npy file as a float32 array, bands first when the band axis can be told by the number of bands of the files"""
     import numpy as np
     if path.lower().endswith(".npy"):
         a = np.load(path)
@@ -383,14 +415,93 @@ def read_bands(path):
     if a.ndim != 3 or a.shape[0] != len(order):
         raise SystemExit(f"DATA: {os.path.basename(path)} has shape {tuple(a.shape)}, but the files should have {len(order)} bands "
                          f"({' '.join(order)}); check the band order in the Dataset tab.")
-    a = a[[order.index(b) for b in BANDS]]
+    return a
+
+
+def pick_bands(a):
+    """the chosen bands of a (bands, H, W) array, in the chosen order; Sentinel-1 in decibels when asked (values that are already
+    decibels, as Earth Engine's S1_GRD exports them, are recognised by their negative values and left alone)"""
+    import numpy as np
+    global BAND_IDX
+    if BAND_IDX is None:
+        keys = [band_key(b) for b in (DATASET.get("band_order") or BANDS)]
+        BAND_IDX = [keys.index(band_key(b)) for b in BANDS]
+    a = a[BAND_IDX]
     if DATASET.get("sensor") == "s1" and DATASET.get("s1_db"):
-        a = 10.0 * np.log10(np.clip(a, 1e-6, None))
-    t = torch.from_numpy(np.ascontiguousarray(a))
+        if np.nanmin(a) < 0:
+            if not DB_NOTE[0]:
+                DB_NOTE[0] = True
+                emit("warning", message="the Sentinel-1 values are already in decibels (negative values): not converted again")
+        else:
+            a = 10.0 * np.log10(np.clip(a, 1e-6, None))
+    return a
+
+
+def read_bands(path, resize=True):
+    """one image file as a float32 tensor (bands, H, W) with the chosen bands, in the chosen order; empty pixels (NaN, as Earth Engine
+    writes masked pixels of float images) stay NaN until normalised"""
+    import numpy as np
+    t = torch.from_numpy(np.ascontiguousarray(pick_bands(read_array(path))))
     h, w = DATASET["image_size"]
-    if tuple(t.shape[1:]) != (h, w):
+    if resize and tuple(t.shape[1:]) != (h, w):
         t = nn.functional.interpolate(t[None], size=(h, w), mode="bilinear", align_corners=False, antialias=True)[0]
     return t
+
+
+def normalise(x):
+    """per-band (x - mean) / std; empty pixels (NaN / infinite) become 0 = the band's mean"""
+    if BAND_STATS is not None:
+        m, s = BAND_STATS
+        x = (x - torch.tensor(m).view(-1, 1, 1)) / torch.tensor(s).view(-1, 1, 1)
+    return torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
+
+
+def read_mask(path, size=None):
+    """a label image (PNG / GeoTIFF / .npy) as int64 class numbers; values that are not a class (Earth Engine's no-data, 255 in a
+    multi-class mask, negative numbers) become -100, which the loss and the scores leave out. Binary masks stored as 0/255 = 0/1."""
+    import numpy as np
+    if path.lower().endswith((".npy", ".tif", ".tiff")):
+        if path.lower().endswith(".npy"):
+            m = np.load(path)
+        else:
+            import tifffile
+            m = tifffile.imread(path)
+        m = np.asarray(m)
+        if m.ndim == 3:
+            m = m[0] if m.shape[0] < m.shape[-1] else m[..., 0]
+    else:
+        from PIL import Image
+        m = np.array(Image.open(path).convert("L"))
+    return mask_classes(m, size)
+
+
+def mask_classes(m, size=None):
+    import numpy as np
+    m = np.nan_to_num(np.asarray(m, dtype=np.float64), nan=-1)
+    if len(CLASSES) == 2 and set(np.unique(m).tolist()) <= {0.0, 255.0}:
+        m = (m > 0).astype(np.float64)
+    m = np.where((m >= 0) & (m < len(CLASSES)) & (m == np.floor(m)), m, -100).astype(np.int64)
+    t = torch.from_numpy(m)
+    if size and tuple(t.shape) != tuple(size):
+        t = nn.functional.interpolate(t[None, None].float(), size=tuple(size), mode="nearest")[0, 0].long()
+    return t
+
+
+def flips(x, y=None):
+    """training augmentation for satellite images: flips and quarter turns (no "up"), on the image and its mask together"""
+    turn = AUG.get("rotate") and x.shape[-1] == x.shape[-2]
+    ops = []
+    if AUG.get("hflip") and random.random() < 0.5:
+        ops.append(lambda t: t.flip(-1))
+    if AUG.get("vflip") and random.random() < 0.5:
+        ops.append(lambda t: t.flip(-2))
+    if turn:
+        k = random.randint(0, 3)
+        ops.append(lambda t, k=k: torch.rot90(t, k, (-2, -1)))
+    for op in ops:
+        x = op(x)
+        y = None if y is None else op(y)
+    return x, y
 
 
 class BandFolder(torch.utils.data.Dataset):
@@ -403,18 +514,116 @@ class BandFolder(torch.utils.data.Dataset):
 
     def __getitem__(self, i):
         path, label = self.files[i]
-        x = read_bands(path)
-        if BAND_STATS is not None:
-            m, s = BAND_STATS
-            x = (x - torch.tensor(m).view(-1, 1, 1)) / torch.tensor(s).view(-1, 1, 1)
-        if self.train and not SEG:
-            if AUG.get("hflip") and random.random() < 0.5:
-                x = x.flip(-1)
-            if AUG.get("vflip") and random.random() < 0.5:
-                x = x.flip(-2)
-            if AUG.get("rotate") and x.shape[-1] == x.shape[-2]:
-                x = torch.rot90(x, random.randint(0, 3), (-2, -1))  # satellite images have no "up": quarter turns
+        x = normalise(read_bands(path))
+        if self.train:
+            x, _ = flips(x)
         return x, label
+
+
+class BandPairs(torch.utils.data.Dataset):
+    """segmentation of multiband images: (image file, mask file) pairs with the same name; image and mask flipped / turned together"""
+    def __init__(self, pairs, train):
+        self.pairs, self.train = pairs, train
+
+    def __len__(self):
+        return len(self.pairs)
+
+    def __getitem__(self, i):
+        img, mask = self.pairs[i]
+        x = normalise(read_bands(img))
+        y = read_mask(mask, x.shape[1:])
+        if self.train:
+            x, y = flips(x, y)
+        return x, y
+
+
+class SceneTiles(torch.utils.data.Dataset):
+    """large images (an Earth Engine export) and their label images cut into tiles of image_size; the arrays are kept as .npy files in
+    the data folder and read with memory mapping, so a scene larger than the memory works"""
+    def __init__(self, tiles, train):
+        self.tiles, self.train, self.open = tiles, train, {}
+
+    def __len__(self):
+        return len(self.tiles)
+
+    def arr(self, path):
+        import numpy as np
+        if path not in self.open:
+            self.open[path] = np.load(path, mmap_mode="r")
+        return self.open[path]
+
+    def raw(self, i):
+        """tile i before normalising (for the band statistics)"""
+        import numpy as np
+        img, _, y0, x0 = self.tiles[i]
+        h, w = DATASET["image_size"]
+        return torch.from_numpy(np.array(self.arr(img)[:, y0:y0 + h, x0:x0 + w], dtype=np.float32))
+
+    def __getitem__(self, i):
+        import numpy as np
+        lab, y0, x0 = self.tiles[i][1:]
+        h, w = DATASET["image_size"]
+        x = normalise(self.raw(i))
+        y = torch.from_numpy(np.array(self.arr(lab)[y0:y0 + h, x0:x0 + w], dtype=np.int64))
+        if self.train:
+            x, y = flips(x, y)
+        return x, y
+
+
+def scene_files(root, what):
+    p = os.path.join(root, what)
+    if os.path.isfile(p):
+        return [p]
+    d = kaggle_folder(root, what)
+    files = sorted(os.path.join(d, f) for f in os.listdir(d) if f.lower().endswith(BAND_EXT))
+    if not files:
+        raise SystemExit(f"DATA: no .tif / .tiff / .npy files in {what!r}.")
+    return files
+
+
+def scene_tiles(root):
+    """(image .npy, label .npy, row, column) of every tile with enough data: at least half of its pixels have a value in the image and at
+    least one has a class in the label image. A large Earth Engine export may be split into several files (name-0000000000-0000000000.tif):
+    each image file needs a label file with the same name (or one image file and one label file)."""
+    import hashlib
+    import numpy as np
+    imgs, labs = scene_files(root, DATASET["scene_image"]), scene_files(root, DATASET["scene_label"])
+    if len(imgs) == 1 and len(labs) == 1:
+        pairs = [(imgs[0], labs[0])]
+    else:
+        by_name = {os.path.splitext(os.path.basename(f))[0]: f for f in labs}
+        pairs = [(f, by_name[os.path.splitext(os.path.basename(f))[0]]) for f in imgs if os.path.splitext(os.path.basename(f))[0] in by_name]
+        if not pairs:
+            raise SystemExit("DATA: no image file has a label file with the same name.")
+    cache = os.path.join(DATA, "scenes", DATASET.get("local_key") or DATASET.get("kaggle_slug", "").replace("/", "__"))
+    os.makedirs(cache, exist_ok=True)
+    h, w = DATASET["image_size"]
+    tag = hashlib.sha1(json.dumps([BANDS, DATASET.get("band_order"), DATASET.get("s1_db"), len(CLASSES)]).encode()).hexdigest()[:8]
+    tiles = []
+    for img, lab in pairs:
+        stem = os.path.splitext(os.path.basename(img))[0]
+        ip, lp = os.path.join(cache, f"{stem}-{tag}.npy"), os.path.join(cache, f"{stem}-{tag}-label.npy")
+        if not (os.path.exists(ip) and os.path.exists(lp)):
+            a = pick_bands(read_array(img))
+            m = read_mask(lab).numpy()
+            if m.shape != a.shape[1:]:
+                raise SystemExit(f"DATA: {os.path.basename(img)} is {a.shape[2]}×{a.shape[1]} pixels but its label image "
+                                 f"{os.path.basename(lab)} is {m.shape[1]}×{m.shape[0]}: export both on the same grid (same region, scale "
+                                 "and projection).")
+            for path, arr in ((ip, a), (lp, m)):
+                np.save(path + ".tmp.npy", arr)
+                os.replace(path + ".tmp.npy", path)
+            emit("info", message=f"{os.path.basename(img)}: {a.shape[2]}×{a.shape[1]} pixels, {a.shape[0]} bands")
+        a, m = np.load(ip, mmap_mode="r"), np.load(lp, mmap_mode="r")
+        for y0 in range(0, a.shape[1] - h + 1, h):
+            for x0 in range(0, a.shape[2] - w + 1, w):
+                lt = m[y0:y0 + h, x0:x0 + w]
+                if (lt >= 0).any() and np.isfinite(a[:, y0:y0 + h, x0:x0 + w]).all(0).mean() >= 0.5:
+                    tiles.append((ip, lp, y0, x0))
+    if len(tiles) < 2:
+        raise SystemExit(f"DATA: the images give {len(tiles)} tile(s) of {h}×{w} with data: use a smaller image size or a larger region.")
+    emit("info", message=f"{len(tiles)} tiles of {h}×{w} pixels from {len(pairs)} image(s)")
+    return tiles
 
 
 def band_files(folder):
@@ -428,7 +637,7 @@ def band_files(folder):
     return files
 
 
-def multiband_stats(files, seed):
+def multiband_stats(files, seed, load=None):
     """mean and standard deviation of every band over up to 256 training images; kept in band_stats.json next to train.py, so a resumed
     run normalises exactly as before"""
     global BAND_STATS
@@ -440,12 +649,15 @@ def multiband_stats(files, seed):
             BAND_STATS = (tuple(d["mean"]), tuple(d["std"]))
             return
     pick = random.Random(seed).sample(files, min(256, len(files)))
-    total, sq, n = None, None, 0
-    for p, _ in pick:
-        x = read_bands(p).double().flatten(1)
+    total, sq, n = None, None, None
+    for item in pick:
+        x = (load(item) if load else read_bands(item[0])).double().flatten(1)
+        ok = torch.isfinite(x)                 # empty pixels are left out of the statistics
+        x = torch.where(ok, x, torch.zeros_like(x))
         total = x.sum(1) if total is None else total + x.sum(1)
         sq = (x * x).sum(1) if sq is None else sq + (x * x).sum(1)
-        n += x.shape[1]
+        n = ok.sum(1) if n is None else n + ok.sum(1)
+    n = n.clamp_min(1)
     mean = total / n
     std = (sq / n - mean * mean).clamp_min(1e-12).sqrt()
     BAND_STATS = (tuple(round(float(v), 6) for v in mean), tuple(round(max(float(v), 1e-6), 6) for v in std))
@@ -460,13 +672,16 @@ def composite(x):
     m, s = BAND_STATS
     x = x * torch.tensor(s).view(-1, 1, 1) + torch.tensor(m).view(-1, 1, 1)
     pick = None
-    if DATASET.get("sensor") == "s2" and all(b in BANDS for b in ("B04", "B03", "B02")):
-        pick = [x[BANDS.index(b)] for b in ("B04", "B03", "B02")]
-    elif DATASET.get("sensor") == "s1" and all(b in BANDS for b in ("VV", "VH")):
-        vv, vh = x[BANDS.index("VV")], x[BANDS.index("VH")]
+    keys = [band_key(b) for b in BANDS]
+    if DATASET.get("sensor") == "s2" and all(b in keys for b in ("B04", "B03", "B02")):
+        pick = [x[keys.index(b)] for b in ("B04", "B03", "B02")]
+    elif DATASET.get("sensor") == "s1" and all(b in keys for b in ("VV", "VH")):
+        vv, vh = x[keys.index("VV")], x[keys.index("VH")]
         pick = [vv, vh, vv - vh]
     if pick is None:
         pick = [x[i] for i in range(min(3, x.shape[0]))]
+        if len(pick) == 2:
+            pick.append(pick[0] - pick[1])  # two bands: a colour picture like Sentinel-1's VV / VH / VV-VH
     out = []
     for c in pick:
         lo, hi = torch.quantile(c.flatten().float(), torch.tensor([0.02, 0.98]))
@@ -507,10 +722,27 @@ def load_data(cfg):
             train, test, train_eval = SegPairs(HFPairs(tr), True), SegPairs(HFPairs(te), False), SegPairs(HFPairs(tr), False)
         else:
             train, test, train_eval = HFImages(tr, train_t), HFImages(te, test_t), HFImages(tr, test_t)
+    elif MULTI and SEG:
+        if TRAIN.get("pretrained"):
+            raise SystemExit("DATA: ImageNet weights expect 3-channel pictures; train multispectral images from scratch for now.")
+        root = data_root()
+        if DATASET.get("layout") == "scene":
+            tiles = scene_tiles(root)
+            tr_i, te_i = split(len(tiles), cfg["seed"])
+            tr, te = [tiles[i] for i in tr_i], [tiles[i] for i in te_i]
+            plain = SceneTiles(tr, False)
+            multiband_stats(list(range(len(tr))), cfg["seed"], load=plain.raw)
+            train, test, train_eval = SceneTiles(tr, True), SceneTiles(te, False), SceneTiles(tr, False)
+        else:
+            pairs = kaggle_pairs(root, BAND_EXT)
+            tr_i, te_i = split(len(pairs), cfg["seed"])
+            tr, te = [pairs[i] for i in tr_i], [pairs[i] for i in te_i]
+            multiband_stats(tr, cfg["seed"])
+            train, test, train_eval = BandPairs(tr, True), BandPairs(te, False), BandPairs(tr, False)
     elif MULTI:
         if TRAIN.get("pretrained"):
             raise SystemExit("DATA: ImageNet weights expect 3-channel pictures; train multispectral images from scratch for now.")
-        root = kaggle_root()
+        root = data_root()
         files = band_files(kaggle_folder(root, DATASET["kaggle_train_dir"]))
         if DATASET["kaggle_test_dir"]:
             tr_files, te_files = files, band_files(kaggle_folder(root, DATASET["kaggle_test_dir"]))
@@ -520,7 +752,7 @@ def load_data(cfg):
         multiband_stats(tr_files, cfg["seed"])
         train, test, train_eval = BandFolder(tr_files, True), BandFolder(te_files, False), BandFolder(tr_files, False)
     else:
-        root = kaggle_root()
+        root = data_root()
         if SEG:
             pairs = kaggle_pairs(root)
             tr_i, te_i = split(len(pairs), cfg["seed"])
@@ -587,10 +819,12 @@ def evaluate(model, loader, device):
                 raise Interrupted()
             x, y = x.to(device), y.to(device)
             out = model(x).float()
-            loss_sum += nn.functional.cross_entropy(out, y).item() * len(y)
+            if not SEG or bool((y >= 0).any()):  # a batch with no labelled pixel has no loss
+                loss_sum += nn.functional.cross_entropy(out, y).item() * len(y)
             n_items += len(y)
             pred = out.argmax(1)
-            cm += torch.bincount((y * k + pred).flatten().cpu(), minlength=k * k)
+            keep = y >= 0                      # segmentation: pixels without a class (-100) are not scored
+            cm += torch.bincount((y[keep] * k + pred[keep]).flatten().cpu(), minlength=k * k)
             if top5 is not None:
                 top5 += int((out.topk(5, dim=1).indices == y.unsqueeze(1)).any(1).sum())
     cm = cm.view(k, k)
@@ -675,7 +909,7 @@ def pictures(model, test, device):
         img = look(test[i][0])
         if SEG:
             pred = out[j].argmax(0).cpu()
-            truth = test[i][1]
+            truth = test[i][1].clamp_min(0)
             res["samples"].append({"image": small(img, 64), "truth": small((truth.float() / k).unsqueeze(0), 64),
                                    "pred": small((pred.float() / k).unsqueeze(0), 64),
                                    "pixel_acc": round(float((pred == truth).float().mean()), 3)})
@@ -927,6 +1161,8 @@ def main():
                             with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp):
                                 out = model(xs)
                                 loss = nn.functional.cross_entropy(out, ys, label_smoothing=smoothing) * (len(ys) / len(y))
+                                if SEG and not bool((ys >= 0).any()):
+                                    loss = out.float().sum() * 0.0  # no labelled pixel in this piece: nothing to learn (and no NaN)
                             scaler.scale(loss).backward()
                             batch_loss += loss.item()
                             batch_correct += int((out.argmax(1) == ys).sum())
@@ -953,7 +1189,7 @@ def main():
                 sums["loss_sum"] += batch_loss * len(y)
                 sums["n"] += len(y)
                 sums["correct"] += batch_correct
-                sums["units"] += y.numel()
+                sums["units"] += int((y >= 0).sum()) if SEG else y.numel()
                 pos.update(step=step, sums=sums)
                 dirty["v"] = True
                 if step % every == 0 or step == steps:

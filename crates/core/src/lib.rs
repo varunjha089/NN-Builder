@@ -6,6 +6,7 @@ pub mod codegen;
 pub mod dataset;
 pub mod dsl;
 pub mod jobs;
+pub mod localdata;
 pub mod model;
 pub mod remote;
 pub mod runs;

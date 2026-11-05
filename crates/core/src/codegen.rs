@@ -486,7 +486,10 @@ pub fn train_script(g: &Graph, ds: &Dataset, a: &Analysis, t: &TrainSettings, ti
         bail!("{p}");
     }
     let model = model_code_opts(g, a, t.save_memory)?;
-    let ds_json = serde_json::to_value(ds)?;
+    let mut ds_json = serde_json::to_value(ds)?;
+    if ds.source == "local" {
+        ds_json["local_key"] = json!(ds.local_key()); // the folder's name on the training machine and on Kaggle
+    }
     // the project's name, and the design's own name when its text has one (net "…")
     let title = match crate::dsl::design_name(&g.text) {
         Some(n) if n != title => format!("{title} (design {n})"),
@@ -508,7 +511,11 @@ pub fn train_script(g: &Graph, ds: &Dataset, a: &Analysis, t: &TrainSettings, ti
          DATASET = {}\nTRAIN = {}\nCLASSES = {}\n\n\n",
         env!("CARGO_PKG_VERSION"),
         if ds.source == "huggingface" { ", datasets and pillow" } else { "" },
-        if ds.source == "kaggle" { " (and the kaggle package with a token when not on Kaggle)" } else { "" },
+        match ds.source.as_str() {
+            "kaggle" => " (and the kaggle package with a token when not on Kaggle)",
+            "local" if ds.multiband() => " (and tifffile for GeoTIFF files, installed when missing)",
+            _ => "",
+        },
         py_json(&ds_json),
         py_json(&t_json),
         py_json(&json!(ds.class_names())),

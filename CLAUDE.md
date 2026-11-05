@@ -96,8 +96,21 @@ crates/core/src/
                            Kaggle runs: data in /tmp/nnb_data (not /kaggle/working, the notebook output), checkpoint removed at the
                            end, kaggle_output deleted after metrics/results/model/log are copied; the run card shows the last check.
   dataset.rs               Multispectral / radar: bands, band_order, sensor (s2 | s1 | other), s1_db; SENTINEL2_BANDS (EuroSAT order),
-                           SENTINEL1_BANDS; input channels = bands.len() (≤ 32); Kaggle folders of .tif / .npy only. harness: read_bands,
-                           BandFolder, multiband_stats (band_stats.json), composite(); CI ci_multiband_check.py (examples/multiband_case.rs).
+                           SENTINEL2_GEE, SENTINEL1_BANDS, band_key (B4 = B04, used in problems() and harness band_key); input channels =
+                           bands.len() (≤ 32); from Kaggle or own files. Source "local" (own files, e.g. Google Earth Engine exports):
+                           local_dir (Mac path, or local_on_machine = a path on the SSH machine), layout "" | "scene" (scene_image +
+                           scene_label, segmentation tiles); kaggle_train/test/mask_dir are reused as the subfolders; local_key() =
+                           nnb-<name>-<fnv hash> = the folder's name on the machine (<workdir>/data/local/<key>, runs::upload_local with
+                           .nnb_signature) and on Kaggle (cloud::kaggle_upload: private dataset <user>/<key>, staged as links in
+                           tools/kaggle-upload, signature in <settings>/uploads.json; create / version --dir-mode zip). codegen adds
+                           local_key to DATASET. localdata.rs: files, signature, describe (class folders, first GeoTIFF header via
+                           tiff_info: size, bands, GDAL band names from tag 42112; TIFF + BigTIFF). main.rs: local_scan, pick_folder.
+                           harness: data_root/local_root, read_array + pick_bands (S1 already in dB = negative values: not converted),
+                           normalise (NaN -> 0), read_mask/mask_classes (non-class values -> -100, ignored in loss, evaluate, units),
+                           BandFolder, BandPairs (multiband images + masks), SceneTiles (scene -> cached .npy, memory-mapped tiles;
+                           tiles need ≥ 50 % data and one labelled pixel), multiband_stats (NaN-aware), composite() (2 bands -> a, b, a-b).
+                           DatasetTab LocalBox + GeeBox (generated GEE script: Code Editor scene + WorldCover, Python class patches).
+                           CI ci_multiband_check.py (examples/multiband_case.rs): Kaggle S2/S1 + gee, s1gee, scene, segfiles cases.
   dataset.rs               Dataset (builtin | huggingface | kaggle; task classify | segment; resize (built-in); hf_mask_col, kaggle_mask_dir;
                            image_size, channels, classes), BUILTINS, input_shape, problems()
   shapes.rs                analyze(graph, dataset) -> Analysis: computation order (Kahn), per-node in/out shapes, params, rf, padding/stride

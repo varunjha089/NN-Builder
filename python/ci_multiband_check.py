@@ -5,6 +5,10 @@ Generates class folders like EuroSAT-MS (13 Sentinel-2 bands, half the files Geo
 chosen bands in the chosen order reached the network, per-band statistics were measured (and in dB for Sentinel-1), the network learnt the
 two classes, and the result pictures are 3-channel composites.
 
+Then the owner's own files as Google Earth Engine exports them: Sentinel-2 named B1 … B12 with empty (NaN) pixels in class folders
+(found in <data>/local/<key>, where the app copies them), Sentinel-1 already in dB (not converted twice), a scene split into two files with
+a label image (no-data 255, an empty tile) cut into tiles for segmentation, and multiband images + masks.
+
 usage: python ci_multiband_check.py <folder from the multiband_case example>
 """
 import json
@@ -44,6 +48,69 @@ def make_s1(root):
             np.save(os.path.join(root, cls, f"{i}.npy"), a)
 
 
+GEE = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B9", "B11", "B12"]
+
+
+def make_gee(root):
+    """class folders of 12-band GeoTIFFs (bands last) with Earth Engine's names; every image has an empty 4×4 corner (NaN in all bands)"""
+    import tifffile
+    rng = np.random.default_rng(2)
+    for cls in ["forest", "water"]:
+        os.makedirs(os.path.join(root, cls), exist_ok=True)
+        for i in range(100):
+            a = rng.normal(1000, 200, size=(12, 40, 40)).astype(np.float32)
+            a[GEE.index("B8")] += 1500 if cls == "forest" else -400
+            a[GEE.index("B11")] += 300 if cls == "water" else 0
+            a[:, :4, :4] = np.nan
+            tifffile.imwrite(os.path.join(root, cls, f"{cls}_{i}.tif"), a.transpose(1, 2, 0))
+
+
+def make_s1_db(root):
+    """Sentinel-1 as Earth Engine's S1_GRD gives it: VV, VH already in decibels, plus the incidence angle"""
+    rng = np.random.default_rng(3)
+    for cls in ["flood", "land"]:
+        os.makedirs(os.path.join(root, cls), exist_ok=True)
+        for i in range(100):
+            level = -20.0 if cls == "flood" else -8.0
+            a = np.stack([rng.normal(level, 1.5, (32, 32)), rng.normal(level - 6, 1.5, (32, 32)), rng.normal(35, 3, (32, 32))]).astype(np.float32)
+            np.save(os.path.join(root, cls, f"{i}.npy"), a)
+
+
+def make_scene(root):
+    """a scene exported in two files (scene-0000000000-0000000000.tif, scene-0000000000-0000000128.tif) and a label image with the same
+    names: classes land 0 / water 1 / forest 2 in 8×8 patches, the first two rows without a class (255), one 16×16 tile without data"""
+    import tifffile
+    rng = np.random.default_rng(4)
+    for d in ("nnb_image", "nnb_label"):
+        os.makedirs(os.path.join(root, d), exist_ok=True)
+    for name in ("scene-0000000000-0000000000", "scene-0000000000-0000000128"):
+        lab = np.kron(rng.integers(0, 3, (16, 16)), np.ones((8, 8), dtype=np.int64)).astype(np.uint8)
+        img = rng.normal(1000, 150, size=(4, 128, 128)).astype(np.float32)
+        img[3] += np.choose(lab, [0.0, -700.0, 1800.0])   # B8 (near infrared): water dark, forest bright
+        img[2] += np.choose(lab, [400.0, 0.0, -300.0])    # B4 (red)
+        lab[:2] = 255
+        img[:, 16:32, 16:32] = np.nan
+        tifffile.imwrite(os.path.join(root, "nnb_image", name + ".tif"), img.transpose(1, 2, 0))
+        tifffile.imwrite(os.path.join(root, "nnb_label", name + ".tif"), lab)
+
+
+def make_segfiles(root):
+    """multiband images (.npy, 5 bands first) and GeoTIFF masks with the same names: a field where b5 is high; a few pixels 255"""
+    import tifffile
+    rng = np.random.default_rng(5)
+    for d in ("images", "masks"):
+        os.makedirs(os.path.join(root, d), exist_ok=True)
+    for i in range(120):
+        m = np.zeros((16, 16), dtype=np.uint8)
+        y, x = rng.integers(0, 10, 2)
+        m[y:y + 6, x:x + 6] = 1
+        a = rng.normal(0, 1, size=(5, 16, 16)).astype(np.float32)
+        a[4] += 3 * m
+        m[0, :3] = 255
+        np.save(os.path.join(root, "images", f"p{i}.npy"), a)
+        tifffile.imwrite(os.path.join(root, "masks", f"p{i}_mask.tif"), m)
+
+
 def run(folder, data, slug):
     env = {**os.environ, "NNB_DATA": data, "PYTHONUNBUFFERED": "1"}
     with open(os.path.join(folder, "log.txt"), "w") as log:
@@ -80,5 +147,50 @@ def main(root):
               f"test accuracy {done['test_acc']}")
 
 
+def own_files(root):
+    root = os.path.abspath(root)
+    data = os.path.join(root, "data")
+    key = open(os.path.join(root, "gee", "local_key.txt")).read().strip()
+    make_gee(os.path.join(data, "local", key))
+    make_s1_db(os.path.join(root, "own", "s1"))
+    make_scene(os.path.join(root, "own", "scene"))
+    make_segfiles(os.path.join(root, "own", "segfiles"))
+
+    ev = run(os.path.join(root, "gee"), data, "gee")
+    st = json.load(open(os.path.join(root, "gee", "band_stats.json")))
+    bands = ["B04", "B03", "B02", "B8", "B11"]
+    assert st["bands"] == bands, st
+    assert 1450 < st["mean"][3] < 1650 and all(np.isfinite(st["mean"] + st["std"])), f"B8 by Earth Engine name, NaN left out: {st}"
+    assert all(np.isfinite(e["train_loss"]) for e in ev if e["event"] == "epoch"), "empty pixels must not give NaN losses"
+    done = next(e for e in ev if e["event"] == "done")
+    assert done["test_acc"] >= 0.9, done
+    print(f"gee: names B1 … B12, NaN corners -> B8 mean {st['mean'][3]:.1f}, test accuracy {done['test_acc']}")
+
+    ev = run(os.path.join(root, "s1gee"), data, "s1gee")
+    st = json.load(open(os.path.join(root, "s1gee", "band_stats.json")))
+    assert all(-25 < m < -5 for m in st["mean"]), f"already-dB values converted again: {st}"
+    assert any(e["event"] == "warning" and "already in decibels" in e.get("message", "") for e in ev)
+    done = next(e for e in ev if e["event"] == "done")
+    assert done["test_acc"] >= 0.9, done
+    print(f"s1gee: already in dB, mean {[round(m, 1) for m in st['mean']]}, test accuracy {done['test_acc']}")
+
+    ev = run(os.path.join(root, "scene"), data, "scene")
+    tiles = next(e for e in ev if e["event"] == "info" and "tiles of 16×16" in e.get("message", ""))
+    assert tiles["message"].startswith("126 tiles"), tiles  # 2 × 64 tiles, one without data in each
+    check = next(e for e in ev if e["event"] == "check")
+    assert check["batch"][1:] == [2, 16, 16], check
+    done = next(e for e in ev if e["event"] == "done")
+    assert done["test_acc"] >= 0.75 and done["miou"] >= 0.5, done
+    res = json.load(open(os.path.join(root, "scene", "results.json")))
+    assert len(res["samples"][0]["image"]) == 3, "composite pictures"
+    print(f"scene: {tiles['message']}, pixel accuracy {done['test_acc']}, mean IoU {done['miou']}")
+
+    ev = run(os.path.join(root, "segfiles"), data, "segfiles")
+    done = next(e for e in ev if e["event"] == "done")
+    assert done["test_acc"] >= 0.8, done
+    print(f"segfiles: images + masks, pixel accuracy {done['test_acc']}, mean IoU {done['miou']}")
+
+
 if __name__ == "__main__":
     main(sys.argv[1])
+    own_files(sys.argv[1])
