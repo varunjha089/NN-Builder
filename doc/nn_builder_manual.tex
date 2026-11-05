@@ -19,6 +19,7 @@
 \usepackage{caption}
 \usepackage[hidelinks]{hyperref}
 \usepackage{url}
+\usepackage{fancyvrb}
 
 \definecolor{nnaccent}{HTML}{2F6FDE}
 \definecolor{nnconv}{HTML}{D9822B}
@@ -488,63 +489,7 @@ U-Net~\cite{ronneberger2015unet}. The training script uses a per-pixel cross-ent
 intersection over union (mIoU) of the classes.
 
 %=====================================================================================================================================
-\section{The Text tab: the design as numbered lines}
-\label{sec:text}
-The Text tab shows the design as text, one block per line, and the two views are kept in step. Typing changes the canvas half a second
-after the text is valid (one undo step). A change on the canvas rewrites the text: moving blocks keeps it as written, any other change prints
-it again from the blocks. Each block shows its label (the number of its line) in its header, so the canvas, the text and the layer table
-use the same numbers. A text with a problem is not applied: the problem is listed with its line, and the canvas stays as it was.
-
-\begin{verbatim}
-net "Mini ResNet"
-let w = 32                         # a name for a value
-def basic(c, s = 1) {              # a function: blocks with values
-  a conv c 3x3 stride s
-  b conv c 3x3 none
-  p conv c 1x1 stride s none <- in # "in" = the call's input
-  d add <- b, p
-  e relu
-}
-1 input
-2 conv w 3x3
-3 for c, s in (w, 1), (w * 2, 2), (w * 4, 2) {
-    x basic(c, s)                  # once per value, each pass after the previous one
-  }
-4 repeat 2 {
-    a conv 128 * i 1x1             # i = 1, 2
-  }
-5 global_pool
-6 output
-\end{verbatim}
-
-\begin{longtable}{@{}p{5.4cm}p{9.6cm}@{}}
-\toprule
-\textbf{Written} & \textbf{Meaning}\\
-\midrule\endhead
-\texttt{2 conv 64 3x3 stride 2 relu} & a label, the block and its settings in any order; left-out settings take their defaults. Convolutions: filters, kernel, \texttt{stride}, \texttt{pad 1}, \texttt{same}/\texttt{valid}, \texttt{dil 2}, \texttt{nobias}, an activation (\texttt{none} = without)\\
-\texttt{maxpool 2x2}, \texttt{avgpool 3x3 stride 1 pad 1} & pools; also \texttt{global\_pool max}, \texttt{upsample x2 bilinear}, \texttt{convT 64 2x2 stride 2 outpad 1}, \texttt{dwconv x2 3x3}\\
-\texttt{bn}, \texttt{ln}, \texttt{gn 8}, \texttt{dropout 0.3}, \texttt{flatten}, \texttt{relu}, \texttt{gelu} & normalisation, dropout, activations\\
-\texttt{dense 128 gelu}, \texttt{output}, \texttt{seg\_output} & dense layers and the outputs (their classes come from the dataset)\\
-\texttt{to\_tokens}, \texttt{cls\_pos}, \texttt{attention heads 8 drop 0.1}, \texttt{token\_pool mean} & transformer blocks\\
-\texttt{add <- 2, 5}, \texttt{concat <- 3, 7}, \texttt{mul <- 4, 6} & inputs: the line above, unless named after \texttt{<-} (\texttt{<- none}: no input)\\
-\texttt{repeat 12 \{ \dots\ \}} & a group repeated, each pass taking the previous pass's output; inside, \texttt{i} is the pass number and \texttt{in} the group's input\\
-\texttt{for c, s in (64, 1), (128, 2) \{ \dots\ \}} & the group once per value (a value may be a tuple), chained like \texttt{repeat}\\
-\texttt{def name(c, s = 1) \{ \dots\ \}} & a function; a line \texttt{9 name(256, 2) <- 8, 3} calls it (inside: \texttt{in}, \texttt{in2}); functions may call functions\\
-\texttt{let w = 64}, \texttt{conv w * 2 3x3}, \texttt{stride=2} & names, arithmetic (\texttt{+ - * / // \% \^{}}) and any setting as \emph{name}=\emph{value}\\
-\texttt{<- 7.3.b} & a block inside a repeat, loop or call: line 7, pass 3, block b (for U-Net skips)\\
-\bottomrule
-\end{longtable}
-Labels may be left out (they are then numbered), and \texttt{\#} starts a comment. \ui{Format} prints the text again from the blocks;
-\ui{Copy} puts it on the clipboard, e.g.\ for a paper's appendix. A design of identical consecutive groups prints as a \texttt{repeat}:
-ViT-g/14's 287 blocks take 16 lines. What a change on the canvas does to a hand-written text: moving blocks keeps it; a changed
-setting of a block on its own line rewrites only that line; a block added, removed or connected differently on a plain line changes only
-the lines concerned (a new block gets the next free number and goes after its input; a line that took ``the line above'' gets an explicit
-\texttt{<-} when that changed; a block inserted in front of a function call or loop becomes its input). Names, functions, loops and
-comments stay. Only a change to a block made by a function or loop (which would change every call) prints the text again with functions
-written out as lines (Undo brings the hand-written text back). The text is coloured by kind of word (labels, keywords, blocks, settings,
-numbers, functions, comments), and \kbd{Cmd}-click on a number selects that block on the canvas. In the layer table, the blocks of one \texttt{repeat}, \texttt{for} or function line form one group named after
-the line. A long design typed into an empty canvas is laid out in rows of 24 columns. \ui{File → Export Design\dots} saves the design as
-\file{.json} (with positions) or as design text (\file{.nnb}); \ui{Import Design\dots} reads both.
+\input{language}
 
 %=====================================================================================================================================
 \section{The Dataset tab}
@@ -807,6 +752,7 @@ weighted by how strongly the predicted class depends on them~\cite{selvaraju2016
 
 %=====================================================================================================================================
 \section{The demo architectures}
+\label{sec:demos}
 
 Each demo opens unsaved on the canvas (Projects page, \ui{File} $\rightarrow$ \ui{New from Demo}, or \ui{Famous architectures} in the
 Design tab) at the input size it was made for. Parameter counts below are the application's, with a 10-class output (2 classes for the

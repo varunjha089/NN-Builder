@@ -1,0 +1,212 @@
+% The design language (NNB text): included by nn_builder_manual.tex. Every example is a file in examples/ that the tests build
+% (crates/core/tests/text.rs, manual_examples_build), so what is shown here works as printed.
+\section{Writing designs as text: the NNB language}
+\label{sec:text}
+
+Every design can also be written as text, in the \ui{Text} tab. The text and the canvas are two views of the same design and are kept in
+step both ways: typing changes the canvas a moment after the text is valid, and a change on the canvas changes the text. This chapter
+teaches the language from the first line to functions and loops, then lists every block and every rule.
+
+Why write text at all? A network of fifty blocks is fifty short lines, typed in a minute; every number of every block is visible at once;
+repeated parts are written once (\texttt{repeat 40 \{ \dots\ \}}); and the text can be copied into a paper, an e-mail or a chat and pasted
+back unchanged (\ui{Copy}, or \ui{File} $\rightarrow$ \ui{Export Design\dots} as a \file{.nnb} file).
+
+\subsection{A first design, line by line}
+The smallest useful design is a chain of blocks. LeNet-5 (Section~\ref{sec:demos}) for the $1\times28\times28$ MNIST digits:
+
+\VerbatimInput[fontsize=\small,frame=single,numbers=left,numbersep=6pt,label=\file{lenet5.nnb}]{examples/lenet5.nnb}
+
+\begin{itemize}[nosep]
+  \item \texttt{net "LeNet-5"} names the design (optional).
+  \item Each further line is one block: a \textbf{label} (\texttt{1}, \texttt{2}, \dots), the \textbf{block} (\texttt{conv},
+        \texttt{avgpool}, \dots) and its \textbf{settings} in any order. Left-out settings take the same defaults as the canvas (a
+        \texttt{conv} without a kernel is $3\times3$, without an activation it uses ReLU, \dots).
+  \item A block takes its input from \textbf{the line above} unless it says otherwise.
+  \item \texttt{\#} starts a comment, to the end of the line. Blank lines and indentation do not matter.
+  \item The first block is \texttt{input}: its shape comes from the Dataset tab, not from the text. \texttt{output} gets as many
+        classes as the dataset has.
+\end{itemize}
+Typed into the Text tab, this draws the nine blocks on the canvas, each with its label in its header, and the shapes and parameters are
+those of Section~\ref{sec:math}: 61\,706 parameters.
+
+\subsection{Settings: words and numbers}
+Settings are written the way you would say them. For a convolution, the first plain number is the number of filters, \texttt{5x5} is
+the kernel, and words set the rest:
+
+\begin{verbatim}
+2 conv 64 3x3                      # 64 filters, 3×3, stride 1, padding "same", ReLU
+3 conv 128 3x3 stride 2 pad 1 gelu # stride 2, padding 1, GELU
+4 conv 128 1x1 valid none nobias   # no padding, no activation, no bias
+5 conv 64 3x3 dil 2                # dilation 2
+6 conv filters=64 kernel=7x7 stride=2 padding=3   # any setting as name=value
+\end{verbatim}
+Every setting also has a \emph{name}\texttt{=}\emph{value} form (the names are those of the inspector), useful when a value is computed
+(\texttt{kernel=s+2}, below). A word that a block does not know is an error, never ignored: \texttt{conv 64 stide 2} says
+``\texttt{'stide' means nothing for conv (did you mean 'stride'?)}''. A value outside its range (a kernel of 40, 100\,000 filters) is an
+error on its block.
+
+\subsection{Connections: \texttt{<-}}
+A block with a different input, or with several (Add, Concat, Multiply), names them after \texttt{<-}:
+
+\begin{verbatim}
+1 input
+2 conv 64 3x3
+3 conv 64 3x3 none
+4 add <- 2, 3          # residual: the output of block 2 plus that of block 3
+5 relu
+6 conv 32 1x1 <- 2     # a side branch from block 2 (not from the line above)
+7 concat <- 5, 6       # channels joined in this order: 5's first, then 6's
+\end{verbatim}
+A block may only use blocks above it (a network computes each block once, from the blocks before it), so the text can never contain a
+loop. \texttt{<- none} makes a block without input (shown as not connected).
+
+\subsection{Labels}
+Labels are names, not positions: \texttt{1, 2, 5, 9} is fine, and so is a word (\texttt{stem conv 32 3x3}, then \texttt{<- stem}). The
+label may also be left out: \texttt{conv 32 3x3} on its own gets the next free number. Two lines may not have the same label. The labels
+are what the canvas shows in each block's header and what the layer table uses, so canvas, text and table name blocks the same way.
+
+\subsection{Names and arithmetic: \texttt{let}}
+\texttt{let} gives a value a name; every number may be an expression of names and numbers with \texttt{+ - * /}, \texttt{//}
+(whole-number division), \texttt{\%} (remainder), \texttt{\^{}} (power) and parentheses:
+\begin{verbatim}
+let w = 32
+let depth = 6
+2 conv w 3x3
+3 conv w * 2 3x3 stride 2
+4 dense 2 ^ 10 gelu        # 1024
+\end{verbatim}
+Changing \texttt{w} changes every block that uses it: the quickest way to try a wider or narrower network.
+
+\subsection{Repeating a group: \texttt{repeat}}
+Identical parts are written once. A \texttt{repeat} line has a label, a count and the group in braces; the passes are chained (each
+pass takes the previous pass's output), and the line's output is the last pass's last block:
+\VerbatimInput[fontsize=\small,frame=single,numbers=left,numbersep=6pt,label=\file{vit\_small.nnb}]{examples/vit_small.nnb}
+Inside the braces:
+\begin{itemize}[nosep]
+  \item blocks have \textbf{local labels} (\texttt{a}, \texttt{b}, \dots); on the canvas they become \texttt{5.1.a} \dots\
+        \texttt{5.6.g} (line, pass, block);
+  \item \texttt{in} is the group's input (for the first pass, the block above the \texttt{repeat} line);
+  \item \texttt{i} is the pass number, 1, 2, \dots: \texttt{conv 32 * i 3x3} gets wider in every pass;
+  \item the count may be a name (\texttt{repeat depth}); \texttt{repeat 12 as enc} names the group for readers.
+\end{itemize}
+This ViT has 49 blocks and 1\,806\,538 parameters at $3\times32\times32$; ViT-g/14 is the same pattern with \texttt{repeat 40} and
+16 lines in all.
+
+\subsection{A loop over values: \texttt{for}}
+\texttt{for} repeats a group once per value, chained like \texttt{repeat}. A value can be a tuple, for several names at once:
+\begin{verbatim}
+5 for c in 64, 128, 256 { a conv c 3x3 }
+6 for c, s in (64, 1), (128, 2), (256, 2) {
+    x conv c 3x3 stride s
+    y bn
+  }
+\end{verbatim}
+\texttt{i} is also the pass number in a \texttt{for}.
+
+\subsection{Functions: \texttt{def}}
+A function is a group of blocks with values, written once and used many times. It is defined with \texttt{def}, its parameters may have
+defaults, and a line calls it like a block:
+\VerbatimInput[fontsize=\small,frame=single,numbers=left,numbersep=6pt,label=\file{resnet\_small.nnb}]{examples/resnet_small.nnb}
+\begin{itemize}[nosep]
+  \item \texttt{basic(c, s)} passes the values by position; \texttt{basic(c)} leaves \texttt{s} at its default; \texttt{basic(c=64, s=2)}
+        names them.
+  \item Inside the function, \texttt{in} is the input of the call (here the line above the call); the last block is the call's output.
+  \item A function may call other functions (up to 16 deep: a function that calls itself is reported).
+  \item Functions may be defined anywhere in the text, also below their first use.
+\end{itemize}
+This network has six residual blocks (66 blocks on the canvas, 791\,338 parameters): about forty lines of text.
+
+\subsection{Several inputs, and reaching into a group}
+A call (or a \texttt{repeat} / \texttt{for}) can take several inputs: \texttt{<- 3, 2.3.e} gives the call two, called \texttt{in} and
+\texttt{in2} inside. A block made inside a group or a call is named by its path: \texttt{2.3.e} is line 2, pass 3, block \texttt{e} (for a
+call: line, then block, as in \texttt{7.u}). Together they make U-Net's skip connections:
+\VerbatimInput[fontsize=\small,frame=single,numbers=left,numbersep=6pt,label=\file{unet\_small.nnb}]{examples/unet_small.nnb}
+Line 2 builds the encoder as three passes whose width depends on the pass number ($16\cdot2^{i-1}$: 16, 32, 64); lines 4--6 each take
+the block above and the matching encoder output (25 blocks, 482\,050 parameters for $64\times64$ images and two classes).
+
+\subsection{Every block}
+\begin{longtable}{@{}p{3.6cm}p{5.6cm}p{5.8cm}@{}}
+\toprule
+\textbf{Block (other words)} & \textbf{Example} & \textbf{Settings (default)}\\
+\midrule\endhead
+\texttt{input} & \texttt{1 input} & none: the shape is the dataset's\\
+\texttt{conv} (\texttt{conv2d}) & \texttt{conv 64 3x3 stride 2 pad 1 gelu} & filters (32), kernel \texttt{KxK} or \texttt{K} (3), \texttt{stride} (1), \texttt{pad} n / \texttt{same} / \texttt{valid} (same), \texttt{dil} (1), activation (relu), \texttt{nobias}\\
+\texttt{dwconv} (\texttt{dwconv2d}) & \texttt{dwconv x2 3x3 stride 2} & multiplier \texttt{x}n (1), kernel, stride, padding, activation, \texttt{nobias}\\
+\texttt{convT} (\texttt{convtranspose}) & \texttt{convT 64 2x2 stride 2 none} & filters (32), kernel (2), stride (2), \texttt{pad} (0), \texttt{outpad} (0), activation (relu)\\
+\texttt{maxpool}, \texttt{avgpool} (\texttt{pool}) & \texttt{maxpool 3x3 stride 2 pad 1} & size (2), \texttt{stride} n or \texttt{size} (= size), \texttt{pad} (0)\\
+\texttt{global\_pool} (\texttt{gap}) & \texttt{global\_pool max} & \texttt{avg} / \texttt{max} (avg)\\
+\texttt{upsample} & \texttt{upsample x2 bilinear} & scale \texttt{x}n (2), \texttt{nearest} / \texttt{bilinear}\\
+\texttt{bn}, \texttt{ln}, \texttt{gn} & \texttt{gn 8} & GroupNorm: groups (8; must divide the channels)\\
+\texttt{dropout} & \texttt{dropout 0.3} & rate (0.25)\\
+\texttt{flatten} & \texttt{flatten} & none\\
+\texttt{dense} (\texttt{linear}) & \texttt{dense 128 gelu} & units (128), activation (relu)\\
+\texttt{relu}, \texttt{gelu}, \texttt{silu}, \texttt{tanh}, \texttt{sigmoid}, \texttt{leaky\_relu} & \texttt{gelu} & an activation block\\
+\texttt{add}, \texttt{concat} (\texttt{cat}), \texttt{mul} (\texttt{multiply}) & \texttt{add <- 2, 5} & two or more inputs; Concat joins channels in the order given\\
+\texttt{to\_tokens} & \texttt{to\_tokens patches} & \texttt{patches} (every pixel a token) / \texttt{rows}\\
+\texttt{cls\_pos} & \texttt{cls\_pos} & class token + position embedding; \texttt{nocls}: positions only\\
+\texttt{attention} (\texttt{attn}) & \texttt{attention heads 8 drop 0.1} & \texttt{heads} (4; must divide the token width), \texttt{drop} (0)\\
+\texttt{token\_pool} & \texttt{token\_pool mean} & \texttt{cls} / \texttt{mean} (cls)\\
+\texttt{output}, \texttt{seg\_output} & \texttt{output} & none: classes from the dataset\\
+\bottomrule
+\end{longtable}
+The activation words after a \texttt{conv}, \texttt{dwconv}, \texttt{convT} or \texttt{dense} set its activation (\texttt{none}: without);
+on their own line they are an Activation block. Block words may be written in capitals (\texttt{Conv}); the text the application prints
+uses the short lower-case words.
+
+\subsection{The rules in brief}
+\begin{verbatim}
+net "name"                                   name of the design (optional)
+let NAME = EXPR                              a named value
+def NAME(P, Q = EXPR) { LINES }              a function (P, Q: parameters; Q has a default)
+LABEL BLOCK SETTINGS [<- REF, REF]           one block; without <- it takes the line above
+LABEL NAME(EXPR, Q=EXPR) [<- REF, REF]       a function call (inside: in, in2, ...)
+LABEL repeat EXPR [as NAME] [<- REF] { LINES }       passes chained; i = pass number
+LABEL for A, B in (EXPR, EXPR), ... [<- REF] { LINES }
+REF:  a label | in | in2 | a path like 5.2.b    EXPR: numbers, names, + - * / // % ^ ( )
+\end{verbatim}
+
+\subsection{Mistakes and what the application says}
+A text with a problem is not applied: the canvas keeps the last valid design, the status says ``not applied'', the line number in the
+gutter turns red and the message below the text names the line (click it to jump there). Typical messages:
+\begin{longtable}{@{}p{4.6cm}p{10.4cm}@{}}
+\toprule
+\textbf{Written} & \textbf{Message}\\
+\midrule\endhead
+\texttt{conv 64 3x3 stide 2} & 'stide' means nothing for conv (did you mean 'stride'?)\\
+\texttt{convv 64 3x3} & unknown block 'convv' (did you mean 'conv'?)\\
+\texttt{add <- 2, 7} (no line 7 above) & '7': there is no block '7' above this line (a block may only use blocks above it)\\
+two lines labelled \texttt{2} & the label '2' is used twice\\
+\texttt{dense 10 pad 1} & 'pad' means nothing for dense\\
+\texttt{conv 8 3x3 filtrs=4} & conv has no setting 'filtrs' (its settings: activation, bias, dilation, filters, kernel, padding, stride)\\
+\texttt{conv 8 3x3 99} & what is the number 99? write it as name=value (e.g.\ filters=99)\\
+a \texttt{\{} without \texttt{\}} & a '\{' is not closed with '\}'\\
+\texttt{f(1, 2)} for \texttt{def f(c)} & 'f' takes 1 value(s), more were given\\
+\texttt{repeat k} without \texttt{let k} & repeat: 'k' is not a number\\
+\texttt{repeat 5000 \{ \dots\ \}} too large & 5000 passes × 7 blocks = 35000 blocks, more than the 13000 a design may have (Settings → Design size \dots). At most 1856 passes fit here.\\
+\bottomrule
+\end{longtable}
+Shape problems (an Add of different shapes, a kernel larger than the image) are found by the same checks as on the canvas and listed under
+the text with the line of their block; click \emph{block 5.2.a} to see it selected on the canvas. \kbd{Cmd}-click on any label in the text
+also selects its block.
+
+\subsection{How the text and the canvas stay in step}
+\begin{itemize}[nosep]
+  \item \textbf{Typing:} a quarter of a second after the last key, a valid text replaces the design (one undo step). Blocks keep their
+        place on the canvas when their label and kind stay the same; new blocks are placed next to their input.
+  \item \textbf{Moving blocks} on the canvas keeps the text exactly as written.
+  \item \textbf{Changing a setting} of a block that has its own line rewrites only that line (its label, inputs and comment stay).
+  \item \textbf{Adding, removing or connecting} blocks of plain lines changes only those lines: a new block gets the next free number and
+        goes after its input; a line that took ``the line above'' gets an explicit \texttt{<-} when that changed; a block inserted in front
+        of a function call or loop becomes its input. Names, functions, loops and comments stay.
+  \item \textbf{Changing a block that a function or loop made} would change every call, so the text is printed again from the blocks:
+        identical consecutive groups become \texttt{repeat}, the rest plain lines. \kbd{Cmd+Z} brings the hand-written text back.
+  \item \ui{Format} prints the text again from the blocks on purpose; \ui{Copy} copies it.
+\end{itemize}
+In the layer table, the blocks of one \texttt{repeat}, \texttt{for} or call line form one group named after the line.
+
+\subsection{A design that uses everything}
+\file{doc/examples/everything.nnb} in the repository is a hybrid CNN and Transformer written only as text: functions calling functions
+with defaults and named values, a function with two inputs, \texttt{for} with tuples, \texttt{repeat} with \texttt{i}, \texttt{let} and
+every operator, paths into loop passes, a left-out label, comments, and every block kind except the segmentation output (89 blocks,
+186\,086 parameters, no warning at $3\times32\times32$). The test suite builds it and every example of this chapter, and GitHub Actions
+compares its layers with real PyTorch.

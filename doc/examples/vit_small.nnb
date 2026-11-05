@@ -1,0 +1,21 @@
+net "Small ViT"
+# CIFAR-10, 3×32×32: 4×4 patches give 64 tokens of d values; depth encoder blocks.
+let d = 192
+let depth = 6
+
+1 input
+2 conv d 4x4 stride 4 valid none     # patch embedding: (192, 8, 8)
+3 to_tokens patches                  # (64, 192)
+4 cls_pos                            # class token + positions: (65, 192)
+5 repeat depth {                     # one pre-norm Transformer encoder block per pass
+    a ln
+    b attention heads 3 drop 0.1
+    c add <- in, b                   # residual: the pass's input + attention
+    d ln
+    e dense d * 2 gelu               # MLP ratio 2
+    f dense d none
+    g add <- c, f
+  }
+6 ln
+7 token_pool cls
+8 output

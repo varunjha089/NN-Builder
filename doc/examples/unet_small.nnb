@@ -1,0 +1,22 @@
+net "Small U-Net"
+# Segmentation, 3×64×64 with masks. Functions with two inputs (in, in2) and skips into a repeat by path.
+def double(c) {
+  a conv c 3x3
+  b conv c 3x3
+}
+def up(c) {
+  u convT c 2x2 stride 2 none    # doubles the size
+  j concat <- u, in2             # in2: the skip from the encoder
+  k double(c)
+}
+
+1 input
+2 repeat 3 {                     # encoder: 16, 32, 64 filters, each halving the size after
+    e double(16 * 2 ^ (i - 1))
+    p maxpool 2x2
+  }
+3 double(128)                    # bottleneck at 8×8
+4 up(64) <- 3, 2.3.e             # 2.3.e = line 2, pass 3, block e (its output: 64 filters at 16×16)
+5 up(32) <- 4, 2.2.e
+6 up(16) <- 5, 2.1.e
+7 seg_output

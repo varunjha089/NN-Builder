@@ -1,0 +1,29 @@
+net "Small ResNet"
+# CIFAR-10, 3×32×32. A function for the residual block, a loop over the stages.
+let w = 32
+
+# two convolutions and a shortcut. With s = 2 the first convolution is 4×4 / stride 2 / padding 1, which halves the size exactly
+# (kernel = s + 2), and the shortcut averages 2×2 patches before its 1×1 convolution (ResNet-D); with s = 1 both keep the size.
+def basic(c, s = 1) {
+  a conv c kernel=s+2 stride s pad 1 none nobias
+  b bn
+  r relu
+  d conv c 3x3 none nobias
+  e bn
+  p avgpool s <- in                  # the shortcut starts from the block's input
+  q conv c 1x1 none nobias
+  n bn
+  j add <- e, n
+  o relu
+}
+
+1 input
+2 conv w 3x3 none nobias
+3 bn
+4 relu
+5 for c, s in (w, 1), (w * 2, 2), (w * 4, 2) {   # three stages: 32×32, 16×16, 8×8
+    x basic(c, s)
+    y basic(c)                                    # s takes its default, 1
+  }
+6 global_pool
+7 output

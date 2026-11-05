@@ -78,7 +78,9 @@ crates/core/src/
                            removed or rewired on plain lines (a group's outside input may change); TextTab colours words (highlight())
                            and ⌘-click selects a block; the text applies 0.25 s after typing; canvas and text stay separate tabs; Design.tsx groupByText groups the layer table by text line;
                            wrap_rows lays long text designs out in rows of 24; File → Import/Export Design… reads/writes .nnb too;
-                           doc/examples/everything.nnb = every language feature and block kind, checked in tests/text.rs
+                           doc/language.tex = the manual's language chapter (\input by the manual;
+                           its examples are doc/examples/*.nnb via \VerbatimInput; tests/text.rs builds every example and every
+                           verbatim snippet, so update both together); doc/examples/everything.nnb = every language feature and block kind, checked in tests/text.rs
                            and run in PyTorch by CI via dump_cases) is described in PROGRAMMING_LANGUAGE.md (section 9: as built, what is left) (FUTURE_PLAN.md: Sentinel-1/2).
                            Large designs (measured 2026-11-05, examples/big_designs.rs builds 1B-100B ViTs from text and times them):
                            cost follows blocks, not parameters; the window needs ~0.3 MB per block drawn (3,507 blocks ≈ 1 GB),

@@ -821,7 +821,29 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
                             let v = next_val(&mut i, "drop")?;
                             p.insert("dropout".into(), to_json("dropout", &v));
                         }
-                        _ => return Err(format!("'{w}' means nothing for {} (see the list of words in the help)", kind_word(kind))),
+                        _ => {
+                            // the nearest word this block knows, for a typo ("stide" -> "stride")
+                            let mut known: Vec<&str> = vec!["stride", "pad"];
+                            if conv_like {
+                                known.extend(["same", "valid", "dil", "nobias", "bias", "outpad"]);
+                                known.extend(ACTS);
+                            }
+                            known.extend(match kind {
+                                "dense" => &ACTS[..],
+                                "pool2d" | "global_pool" => &["max", "avg"][..],
+                                "upsample" => &["nearest", "bilinear"][..],
+                                "to_tokens" => &["patches", "rows"][..],
+                                "token_pool" => &["cls", "mean"][..],
+                                "cls_pos" => &["cls", "nocls"][..],
+                                "attention" => &["heads", "drop"][..],
+                                _ => &[][..],
+                            });
+                            let near = known.iter().min_by_key(|k| edit_distance(k, &lw)).filter(|k| edit_distance(k, &lw) <= 2);
+                            return Err(match near {
+                                Some(k) => format!("'{w}' means nothing for {} (did you mean '{k}'?)", kind_word(kind)),
+                                None => format!("'{w}' means nothing for {} (see the list of words in the help)", kind_word(kind)),
+                            });
+                        }
                     }
                 }
             }

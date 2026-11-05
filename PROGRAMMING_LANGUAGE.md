@@ -1,5 +1,7 @@
 # NNB text: a language for NN Builder designs (plan)
 
+How to write the language (for users): the manual's chapter "Writing designs as text: the NNB language" (doc/language.tex).
+
 Status: built on 2026-11-05 (crates/core/src/dsl.rs, tests/text.rs, the Text tab in web/src/TextTab.tsx); section 9 says what differs
 from this plan and what is left. FUTURE_PLAN.md points here.
 

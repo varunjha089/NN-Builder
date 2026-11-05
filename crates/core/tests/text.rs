@@ -215,6 +215,7 @@ fn errors_name_the_line() {
     let e = err("1 input\n2 conv 64 3x3 stide 2\n");
     assert_eq!(e.line, 2);
     assert!(e.message.contains("stide"), "{}", e.message);
+    assert!(e.message.contains("did you mean 'stride'"), "{}", e.message);
     let e = err("1 input\n2 conv 64 3x3\n3 add <- 2, 7\n");
     assert_eq!((e.line, e.col), (3, 13));
     assert!(e.message.contains("'7'"), "{}", e.message);
@@ -505,4 +506,52 @@ fn recommended_design_size_follows_memory() {
     assert_eq!(recommended_max_blocks(gb(16)), 13_000);
     assert_eq!(recommended_max_blocks(gb(124)), 105_000);
     assert_eq!(recommended_max_blocks(gb(1)), 5_000); // never below 5,000
+}
+
+/// the manual's examples (doc/examples/*.nnb): each builds, has no error or warning at its input, compiles, and keeps its text
+#[test]
+fn manual_examples_build() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../doc/examples");
+    let ds = |c: usize, s: usize, task: &str| Dataset { source: "huggingface".into(), task: task.into(), hf_repo: "x/y".into(), image_size: [s, s],
+        channels: c, classes: if task == "segment" { vec!["a".into(), "b".into()] } else { (0..10).map(|i| i.to_string()).collect() }, ..Default::default() };
+    let cases = [("lenet5", ds(1, 28, "classify"), 61_706u64), ("resnet_small", ds(3, 32, "classify"), 0), ("vit_small", ds(3, 32, "classify"), 0),
+        ("unet_small", ds(3, 64, "segment"), 0), ("everything", ds(3, 32, "classify"), 0)];
+    for (name, d, params) in cases {
+        let text = std::fs::read_to_string(format!("{dir}/{name}.nnb")).unwrap();
+        let g = build(&text);
+        let a = analyze(&g, &d);
+        let bad: Vec<_> = a.nodes.iter().filter(|n| n.status != "ok").map(|n| (g.node(&n.id).unwrap().label.clone(), n.messages.clone())).collect();
+        assert!(a.ok && bad.is_empty(), "{name}: {:?} {bad:?}", a.problems);
+        if params > 0 {
+            assert_eq!(a.total_params, params, "{name}");
+        }
+        println!("{name}: {} blocks, {} parameters", g.nodes.len(), a.total_params);
+        assert_eq!(sync(&g).text, text, "{name}");
+        let code = nnb_core::codegen::train_script(&g, &d, &a, &Default::default(), name).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("t.py"), &code).unwrap();
+        if let Some(out) = ["python3", "python"].iter().find_map(|py| std::process::Command::new(py).args(["-m", "py_compile"]).arg(tmp.path().join("t.py")).output().ok()) {
+            assert!(out.status.success(), "{name}: {}", String::from_utf8_lossy(&out.stderr));
+        }
+    }
+}
+
+/// the short examples written into the manual's language chapter (doc/language.tex, verbatim blocks) all build
+#[test]
+fn manual_snippets_build() {
+    let tex = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../doc/language.tex")).unwrap();
+    let mut n = 0;
+    for part in tex.split("\\begin{verbatim}\n").skip(1) {
+        let snip = part.split("\\end{verbatim}").next().unwrap();
+        if snip.contains("LABEL") {
+            continue; // the grammar summary
+        }
+        let text = if snip.contains(" input") { snip.to_string() } else { format!("1 input\n{snip}") };
+        build(&text);
+        n += 1;
+    }
+    assert!(n >= 4, "{n} snippets");
+    // claims in the text: named values in a call; repeat … as NAME
+    build("def basic(c, s = 1) {\n  a conv c 3x3 stride s\n}\n1 input\n2 basic(c=64, s=2)\n3 basic(32)\n");
+    build("1 input\n2 repeat 12 as enc {\n  a conv 8 3x3\n}\n");
 }

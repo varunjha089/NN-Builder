@@ -32,7 +32,9 @@ training code is Python (PyTorch). Planned work: [FUTURE_PLAN.md](FUTURE_PLAN.md
   change on the canvas edits only the lines it concerns). One block per line, inputs with `<-`, and repeated parts written once:
   `repeat 12 { … }`, `for c, s in (64, 1), (128, 2) { … }`, functions `def block(c, s = 1) { … }`, names and arithmetic (`let w = 64`,
   `conv w * 2 3x3`). Coloured text, errors on their line, ⌘-click a number to select its block; File → Import / Export Design reads and
-  writes `.nnb` text. A design using every feature: [doc/examples/everything.nnb](doc/examples/everything.nnb).
+  writes `.nnb` text. **How to write it:** the manual's chapter "Writing designs as text: the NNB language" (a tutorial from the first line
+  to functions and loops, every block, the rules, the error messages; source [doc/language.tex](doc/language.tex), examples in
+  [doc/examples/](doc/examples/)). A design using every feature: [doc/examples/everything.nnb](doc/examples/everything.nnb).
   ```
   1 input
   2 conv 64 3x3
