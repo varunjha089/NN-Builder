@@ -36,7 +36,30 @@ def main(run):
     # six classes: top-5 accuracy per epoch and at the end, never below top-1
     assert all("val_top5" in e for e in ev if e["event"] == "epoch"), "val_top5 missing"
     assert ev[-1]["test_top5"] >= ev[-1]["test_acc"], ev[-1]
-    print(f"recipe ran: learning rate per epoch {lrs}; test accuracy {ev[-1]['test_acc']}, top-5 {ev[-1]['test_top5']}")
+    # results pictures: Grad-CAM maps for the samples, misclassified images
+    import json
+    import torch
+    res = json.load(open(os.path.join(run, "results.json")))
+    cams = [s for s in res["samples"] if "cam" in s]
+    assert res.get("cam_layer") and len(cams) == len(res["samples"]) and len(cams[0]["cam"]) > 0, res.get("cam_layer")
+    assert all(0 <= v <= 1 for row in cams[0]["cam"] for v in row), "Grad-CAM values in 0..1"
+    assert "mistakes" in res and all(m["pred"] != m["label"] for m in res["mistakes"]), "mistakes are misclassified"
+    # exports: TorchScript gives the same outputs as the saved weights; the ONNX file exists
+    assert any(e["event"] == "exported" and "model.ts" in e["files"] for e in ev), "no exported event"
+    ts = torch.jit.load(os.path.join(run, "model.ts")).eval()
+    sys.path.insert(0, run)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("trained", os.path.join(run, "train.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    net = mod.Net().eval()
+    net.load_state_dict(torch.load(os.path.join(run, "model.pt"), map_location="cpu"))
+    x = torch.randn(3, 3, 32, 32)
+    with torch.no_grad():
+        assert float((ts(x) - net(x)).abs().max()) < 1e-4, "TorchScript differs from model.pt"
+    assert os.path.getsize(os.path.join(run, "model.onnx")) > 1000, "ONNX file"
+    print(f"recipe ran: learning rate per epoch {lrs}; test accuracy {ev[-1]['test_acc']}, top-5 {ev[-1]['test_top5']}; "
+          f"Grad-CAM on {res['cam_layer']}, {len(res['mistakes'])} mistakes shown; TorchScript = model.pt, ONNX written")
 
 
 if __name__ == "__main__":

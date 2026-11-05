@@ -11,7 +11,7 @@ import { neon, useTheme } from "./theme";
 
 export const COLORS: Record<string, string> = {
   input: "#3b6fd8", conv2d: "#d9822b", dwconv2d: "#c96d1a", convtranspose2d: "#b5651d", pool2d: "#2a9d8f", global_pool: "#21867a", upsample: "#3c8d7f",
-  batchnorm: "#8e5bb5", layernorm: "#7d4fa3", dropout: "#9c6ac6", flatten: "#9a8c1c", dense: "#4b5bb5", activation: "#6c7a89", add: "#c0392b",
+  batchnorm: "#8e5bb5", layernorm: "#7d4fa3", groupnorm: "#a066c9", repeat: "#0e7490", dropout: "#9c6ac6", flatten: "#9a8c1c", dense: "#4b5bb5", activation: "#6c7a89", add: "#c0392b",
   concat: "#a93226", multiply: "#b03a5b", output: "#2e8b57", seg_output: "#1f7a4d",
   to_tokens: "#0f766e", cls_pos: "#0e7490", attention: "#7c3aed", token_pool: "#0369a1",
 };
@@ -19,7 +19,7 @@ const GROUPS: [string, string[]][] = [
   ["Image", ["conv2d", "dwconv2d", "pool2d", "global_pool", "flatten"]],
   ["Up-sampling", ["convtranspose2d", "upsample"]],
   ["Dense and outputs", ["dense", "output", "seg_output"]],
-  ["Normalise / regularise", ["batchnorm", "layernorm", "dropout", "activation"]],
+  ["Normalise / regularise", ["batchnorm", "layernorm", "groupnorm", "dropout", "activation"]],
   ["Transformer", ["to_tokens", "cls_pos", "attention", "token_pool"]],
   ["Branches", ["add", "concat", "multiply"]],
 ];
@@ -38,6 +38,8 @@ function summary(kind: string, p: Params): string {
     case "global_pool": return `${p.mode}`;
     case "upsample": return `×${p.scale} ${p.mode}`;
     case "dropout": return `rate ${p.rate}`;
+    case "groupnorm": return `${p.groups} groups`;
+    case "repeat": return `${p.count} identical blocks · double-click to expand`;
     case "dense": return `${p.units} units · ${p.activation}`;
     case "activation": return `${p.fn}`;
     case "to_tokens": return p.mode === "rows" ? "rows as tokens" : "pixels/patches as tokens";
@@ -137,7 +139,23 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, relo
   const results = useMemo(() => Object.fromEntries((analysis?.nodes ?? []).map((r) => [r.id, r])), [analysis]);
   // React Flow keeps its own node state (it needs each node's measured size); the design (graph) is synced into it
   const [rfNodes, setRfNodes] = useState<Node<LayerData>[]>([]);
+  // "×N" view: identical consecutive groups (e.g. 40 encoder blocks) drawn as one node; a read-only view, laid out compactly
+  const [collapsed, setCollapsed] = useState(false);
+  const folded = useMemo(() => (collapsed ? collapseRepeats(graph, analysis) : null), [collapsed, graph, analysis]);
+  const canFold = useMemo(() => !!collapseRepeats(graph, analysis), [graph, analysis]);
+  // another design without repeats (or an edit that removed them) ends the ×N view, so the canvas is editable again
+  useEffect(() => { if (!canFold) setCollapsed(false); }, [canFold]);
   useEffect(() => {
+    if (folded) {
+      setRfNodes(folded.nodes.map((n) => ({
+        id: n.id, type: "layer", position: { x: n.x, y: n.y }, draggable: false, deletable: false, selectable: n.kind !== "repeat",
+        data: n.kind === "repeat"
+          ? { kind: "repeat", title: `${n.params.name} ×${n.params.count}`, params: n.params, summary: summary("repeat", n.params),
+              result: { status: "ok", out: n.params.out, params: n.params.total, messages: [] } as unknown as NodeResult }
+          : { kind: n.kind, title: titles[n.kind] ?? n.kind, params: n.params, result: results[n.id], summary: summary(n.kind, n.params) },
+      })));
+      return;
+    }
     setRfNodes((prev) => graph.nodes.map((n) => {
       const old = prev.find((o) => o.id === n.id);
       return {
@@ -146,8 +164,8 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, relo
         data: { kind: n.kind, title: titles[n.kind] ?? n.kind, params: n.params, result: results[n.id], summary: summary(n.kind, n.params) },
       };
     }));
-  }, [graph, results, selected, titles]);
-  const edges: Edge[] = graph.edges.map((e) => ({
+  }, [graph, results, selected, titles, folded]);
+  const edges: Edge[] = (folded ?? graph).edges.map((e) => ({
     id: e.id, source: e.source, target: e.target, label: analysis?.edges[e.id] ? fmt(analysis.edges[e.id]) : undefined,
     labelStyle: { fontSize: 10, fill: "var(--edge-label)" }, labelBgStyle: { fill: "var(--bg)" },
     markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: night ? "#00e5ff" : undefined },
@@ -155,6 +173,7 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, relo
 
   const onNodesChange = useCallback((changes: NodeChange<Node<LayerData>>[]) => {
     setRfNodes((nds) => applyNodeChanges(changes, nds));
+    if (collapsed) return; // the "×N" view is read-only
     const sel = changes.find((c) => c.type === "select" && c.selected);
     if (sel && "id" in sel) setSelected(sel.id);
     const removed = changes.filter((c) => c.type === "remove").map((c) => (c as { id: string }).id);
@@ -167,7 +186,38 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, relo
       }),
       edges: graph.edges.filter((e) => !removed.includes(e.source) && !removed.includes(e.target)),
     });
-  }, [graph, save]);
+  }, [graph, save, collapsed]);
+
+  // copy / paste of blocks (Edit menu or ⌘C ⌘V, outside text fields): the selected blocks and the arrows between them
+  useEffect(() => {
+    const typing = () => { const a = document.activeElement; return !!a && ["INPUT", "TEXTAREA", "SELECT"].includes(a.tagName); };
+    const onCopy = (e: ClipboardEvent) => {
+      if (typing() || collapsed) return;
+      const ids = new Set(rfNodes.filter((n) => n.selected).map((n) => n.id).concat(selected ? [selected] : []));
+      const nodes = graph.nodes.filter((n) => ids.has(n.id) && n.kind !== "input");
+      if (!nodes.length) return;
+      const keep = new Set(nodes.map((n) => n.id));
+      e.clipboardData?.setData("text/plain", JSON.stringify({ nnb_blocks: 1, nodes, edges: graph.edges.filter((x) => keep.has(x.source) && keep.has(x.target)) }));
+      e.preventDefault();
+      toast(`Copied ${nodes.length} block${nodes.length > 1 ? "s" : ""}.`);
+    };
+    const onPaste = (e: ClipboardEvent) => {
+      if (typing() || collapsed) return;
+      let data: { nnb_blocks?: number; nodes: Graph["nodes"]; edges: Graph["edges"] };
+      try { data = JSON.parse(e.clipboardData?.getData("text/plain") ?? ""); } catch { return; }
+      if (!data?.nnb_blocks || !Array.isArray(data.nodes)) return;
+      e.preventDefault();
+      const tag = Date.now().toString(36), id = (old: string) => `${old}c${tag}`;
+      const nodes = data.nodes.map((n) => ({ ...n, id: id(n.id), x: n.x + 60, y: n.y + 160 }));
+      const edges = data.edges.map((x) => ({ id: id(x.id), source: id(x.source), target: id(x.target) }));
+      save({ nodes: [...graph.nodes, ...nodes], edges: [...graph.edges, ...edges] });
+      setSelected(nodes[0]?.id ?? null);
+      toast(`Pasted ${nodes.length} block${nodes.length > 1 ? "s" : ""} below the originals: connect them with arrows.`);
+    };
+    document.addEventListener("copy", onCopy);
+    document.addEventListener("paste", onPaste);
+    return () => { document.removeEventListener("copy", onCopy); document.removeEventListener("paste", onPaste); };
+  }, [rfNodes, selected, graph, save, toast, collapsed]);
 
   const onEdgesChange = useCallback((changes: EdgeChange[]) => {
     const kept = applyEdgeChanges(changes, edges);
@@ -246,6 +296,26 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, relo
     toast(extra.length ? `Skip connection added, with a ${extra[0].kind === "conv2d" ? "1×1 convolution" : extra[0].kind === "pool2d" ? "pooling" : "Dense"} to match the shapes.`
       : "Skip connection added.");
   };
+  /** a residual block after the selected block, keeping its size and channels */
+  const addResidual = () => {
+    if (!sel || !analysis) return;
+    const out = analysis.nodes.find((r) => r.id === sel.id)?.out;
+    if (!out || out.length !== 3) return toast("A residual block goes after a block whose output is an image (channels, height, width).");
+    const c = out[0], tag = Date.now().toString(36);
+    const conv = { filters: c, kernel: [3, 3], stride: [1, 1], padding: "same", dilation: 1, activation: "none", bias: false };
+    const chain: [string, string, Params][] = [["c1", "conv2d", conv], ["b1", "batchnorm", {}], ["r1", "activation", { fn: "relu" }],
+      ["c2", "conv2d", conv], ["b2", "batchnorm", {}], ["add", "add", {}], ["r2", "activation", { fn: "relu" }]];
+    const nodes = graph.nodes.map((n) => (n.x > sel.x ? { ...n, x: n.x + STEP_X * chain.length } : n));
+    const made = chain.map(([k, kind, params], i) => ({ id: `${k}${tag}`, kind, params: { ...(defaults[kind] ?? {}), ...params } as Params,
+      x: sel.x + STEP_X * (i + 1), y: sel.y + (k === "add" || k === "r2" ? 0 : 0) }));
+    // what followed the selected block now follows the block's last ReLU
+    let edges = graph.edges.map((e) => (e.source === sel.id ? { ...e, source: made[made.length - 1].id } : e));
+    for (let i = 0; i < made.length - 1; i++) edges.push({ id: `e${tag}${i}`, source: made[i].id, target: made[i + 1].id });
+    edges = [...edges, { id: `e${tag}in`, source: sel.id, target: made[0].id }, { id: `e${tag}skip`, source: sel.id, target: made[5].id }];
+    save({ nodes: [...nodes, ...made], edges });
+    setSelected(made[made.length - 1].id);
+    toast(`Residual block added (${c} channels; 2 × ${(9 * c * c).toLocaleString()} convolution weights).`);
+  };
   // earlier blocks (in computation order) that can feed a skip connection into the selected one
   const order = analysis?.nodes.filter((r) => r.out).map((r) => r.id) ?? [];
   const candidates = sel && order.includes(sel.id) ? order.slice(0, order.indexOf(sel.id)).filter((id) => !graph.edges.some((e) => e.source === id && e.target === sel.id))
@@ -260,7 +330,12 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, relo
     <div className="design">
       <div className="palette">
         <TemplatePicker toast={toast} onLoaded={reloadProject} />
-        <button className="arrange" onClick={() => save(arrange(graph))}>Arrange left to right</button>
+        <button className="arrange" onClick={() => save(arrange(graph))} disabled={collapsed}>Arrange left to right</button>
+        {(canFold || collapsed) && <button className="arrange" onClick={() => setCollapsed(!collapsed)}
+          title="Draw identical repeated blocks (e.g. Transformer encoder blocks) as one ×N node; a read-only view">
+          {collapsed ? "Show every block" : "Collapse repeated blocks (×N)"}</button>}
+        <button className="arrange" onClick={() => addResidual()} disabled={collapsed || !sel}
+          title="After the selected block: Conv 3×3 → BN → ReLU → Conv 3×3 → BN → Add (skip from the selected block) → ReLU">Residual block after selected</button>
         <p className="muted small">Click a block to add it after the selected one. Drag from a block's right dot to another block's left dot to connect (several arrows into Add / Concat / Multiply). Select + Backspace deletes.</p>
         {GROUPS.map(([g, kinds]) => (
           <div key={g}><h4>{g}</h4>{kinds.map((k) => (
@@ -270,7 +345,9 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, relo
       </div>
       <div className="canvas">
         {rfNodes.length > 0 && <ReactFlow nodes={rfNodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect}
-          onPaneClick={() => setSelected(null)} fitView fitViewOptions={{ padding: 0.2, maxZoom: 1 }} minZoom={0.2} deleteKeyCode={["Backspace", "Delete"]}>
+          onPaneClick={() => setSelected(null)} fitView fitViewOptions={{ padding: 0.2, maxZoom: 1 }} minZoom={0.05}
+          deleteKeyCode={collapsed ? null : ["Backspace", "Delete"]} nodesConnectable={!collapsed}
+          onNodeDoubleClick={(_, n) => { if (n.id.startsWith("repeat")) setCollapsed(false); }} key={collapsed ? "folded" : "all"}>
           <Background gap={24} />
           <Controls />
           <MiniMap pannable zoomable nodeColor={(n) => color((n.data as LayerData).kind)}
@@ -411,6 +488,33 @@ function contents(rows: NodeResult[]): { title: string; kind: string; n: number 
 }
 const contentsText = (rows: NodeResult[]) => contents(rows).map((p) => (p.n > 1 ? `${p.title} ×${p.n}` : p.title)).join(", ");
 
+/** the design with each run of identical consecutive groups (same blocks, parameters and output) replaced by one "repeat" node, laid out
+ *  left to right; null when nothing repeats */
+export function collapseRepeats(g: Graph, a: Analysis | null): Graph | null {
+  if (!a) return null;
+  const groups = groupLayers(a.nodes);
+  const sig = (gr: Group) => `${contentsText(gr.rows)}|${gr.rows.reduce((t, r) => t + r.params, 0)}|${JSON.stringify(gr.rows[gr.rows.length - 1].out)}`;
+  const owner = new Map<string, string>();
+  const synth: Graph["nodes"] = [];
+  for (let i = 0; i < groups.length;) {
+    let j = i;
+    while (j + 1 < groups.length && sig(groups[j + 1]) === sig(groups[i])) j++;
+    if (j > i) {
+      const id = `repeat${synth.length}`;
+      const members = groups.slice(i, j + 1);
+      members.forEach((gr) => gr.rows.forEach((r) => owner.set(r.id, id)));
+      synth.push({ id, kind: "repeat", x: 0, y: 0, params: { count: j - i + 1, name: groups[i].name.replace(/\s*\d+$/, ""),
+        total: members.reduce((t, gr) => t + gr.rows.reduce((u, r) => u + r.params, 0), 0), out: groups[j].rows[groups[j].rows.length - 1].out } as Params });
+    }
+    i = j + 1;
+  }
+  if (!synth.length) return null;
+  const seen = new Set<string>();
+  const edges = g.edges.map((e) => ({ ...e, source: owner.get(e.source) ?? e.source, target: owner.get(e.target) ?? e.target }))
+    .filter((e) => e.source !== e.target && !seen.has(`${e.source}>${e.target}`) && (seen.add(`${e.source}>${e.target}`), true));
+  return arrange({ nodes: [...g.nodes.filter((n) => !owner.has(n.id)), ...synth], edges });
+}
+
 function LayerTable({ nodes }: { nodes: NodeResult[] }) {
   const groups = useMemo(() => groupLayers(nodes), [nodes]);
   const color = useKindColor();
@@ -514,6 +618,9 @@ function Inspector({ node, result, analysis, st, setParam, setParams, candidates
           <Sel label="Mode" value={p.mode} options={[["nearest", "nearest"], ["bilinear", "bilinear"]]} onChange={(v) => setParam("mode", v)} />
         </>}
         {node.kind === "dropout" && <Num label="Rate" value={p.rate} min={0} max={0.95} step={0.05} onChange={(v) => setParam("rate", v)} />}
+        {node.kind === "groupnorm" && <><Num label="Groups" value={p.groups} min={1} max={1024} onChange={(v) => setParam("groups", v)} />
+          <p className="muted">Normalises each image over groups of channels (Wu &amp; He 2018): unlike BatchNorm it does not depend on the batch,
+            so it works with small batches. The channels must divide evenly by the number of groups (32 is common; 1 group = LayerNorm over the image).</p></>}
         {node.kind === "dense" && <>
           <Num label="Units" value={p.units} max={1 << 20} onChange={(v) => setParam("units", v)} />
           <Sel label="Activation" value={p.activation} options={acts} onChange={(v) => setParam("activation", v)} />

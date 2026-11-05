@@ -37,3 +37,7 @@ jobs:
         run: |
           cargo run -q -p nnb-core --example resume_case -- ci_recipe recipe
           python python/ci_recipe_check.py ci_recipe
+      - name: ImageNet weights in the demos (real PyTorch, downloads torchvision weights)
+        run: |
+          cargo run -q -p nnb-core --example pretrained_case -- ci_pretrained
+          python python/ci_pretrained_check.py ci_pretrained

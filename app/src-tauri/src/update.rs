@@ -266,6 +266,11 @@ mod tests {
         assert_eq!(pick("windows", "x86_64", false), Some("NN.Builder_0.2.0_x64-setup.exe"));
         assert_eq!(pick("linux", "x86_64", false), Some("nn-builder_0.2.0_amd64.deb"));
         assert_eq!(pick("linux", "x86_64", true), Some("nn-builder_0.2.0_amd64.AppImage"));
+        // with the Intel Mac build (0.4.0 on): each Mac gets its own file
+        let both: Vec<Asset> = ["NN-Builder_0.4.0_aarch64.app.zip", "NN-Builder_0.4.0_x64.app.zip", "NN-Builder_0.4.0_x64-setup.exe"].into_iter().map(asset).collect();
+        assert_eq!(pick_asset(&both, "macos", "aarch64", false).map(|a| a.name.as_str()), Some("NN-Builder_0.4.0_aarch64.app.zip"));
+        assert_eq!(pick_asset(&both, "macos", "x86_64", false).map(|a| a.name.as_str()), Some("NN-Builder_0.4.0_x64.app.zip"));
+        assert_eq!(pick_asset(&both, "windows", "x86_64", false).map(|a| a.name.as_str()), Some("NN-Builder_0.4.0_x64-setup.exe"));
     }
 
     #[test]

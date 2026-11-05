@@ -37,6 +37,10 @@ Version 0.3.0 · MIT licence · Rust (Tauri 2) + React; the generated training c
   image and its mask are flipped and rotated together.
 - **Code tab:** the standalone `train.py` the GPU machine runs: the model, the data loading, a training loop with mixed precision, a
   checkpoint every epoch and automatic resume, a one-batch shape check before training, and the results. Export it to run it anywhere.
+- **Better models and insight:** start from torchvision's ImageNet weights (ResNet-18, VGG-16, ViT-B/16) and fine-tune or train only the
+  head; Grad-CAM heat maps and a gallery of misclassified images; save the trained model as TorchScript and ONNX.
+- **Designing:** copy and paste blocks, a residual-block shortcut, GroupNorm, and a ×N view that draws repeated blocks once (ViT-g/14's
+  40 encoder blocks as one node); the Dataset tab warns about datasets without images and shows the class balance and example images.
 - **Compare and report:** run the same training with 3 or 5 seeds in one go, compare runs (overlaid curves, a table with mean ± s.d.),
   export the table as CSV and as a LaTeX table; top-5 accuracy and per-class precision / recall / F1; the design's MACs per image.
 - **Train tab:** one button. On **Kaggle** the script is pushed as a private GPU notebook (with the dataset attached); the curves follow
@@ -68,7 +72,8 @@ small (5 MB on macOS); it needs no PyTorch and no GPU on your computer, because 
 
 | System | File | Requirements |
 |---|---|---|
-| macOS (Apple silicon: M1 or newer) | `NN-Builder_X_aarch64.app.zip` | macOS 11 or newer. Intel Macs: build from source (below) |
+| macOS (Apple silicon: M1 or newer) | `NN-Builder_X_aarch64.app.zip` | macOS 11 or newer |
+| macOS (Intel) | `NN-Builder_X_x64.app.zip` | macOS 10.13 or newer (from version 0.4.0) |
 | Windows 10 / 11 (64-bit) | `NN-Builder_X_x64-setup.exe` | Microsoft Edge WebView2 (built into Windows 11; the installer adds it on Windows 10 if missing) |
 | Linux (64-bit), Debian / Ubuntu | `nn-builder_X_amd64.deb` | Ubuntu 22.04 or newer, Debian 12 or newer |
 | Linux (64-bit), any distribution | `nn-builder_X_amd64.AppImage` | FUSE 2 (`libfuse2`; on Ubuntu 24.04 `libfuse2t64`) |
@@ -77,7 +82,7 @@ The builds are not signed with a paid Apple or Microsoft certificate, so each sy
 
 ### macOS
 
-1. Unzip `NN-Builder_X_aarch64.app.zip` (double-click it) and drag **NN Builder.app** into **Applications**.
+1. Unzip the `.app.zip` for your Mac (`aarch64` = Apple silicon, `x64` = Intel; double-click it) and drag **NN Builder.app** into **Applications**.
 2. Open it. macOS says it cannot verify the developer: click **Done**, then open **System Settings → Privacy & Security**, scroll to
    *"NN Builder" was blocked…* and click **Open Anyway** (enter your password). This is needed once.
    (On macOS 14 and older, right-click the app → **Open** → **Open** does the same.)
@@ -92,8 +97,9 @@ Or in Terminal, after moving the app to Applications: `xattr -dr com.apple.quara
 2. Follow the installer; NN Builder is then in the Start menu.
 3. Keys are stored in the Windows Credential Manager.
 
-**Training on Windows:** Kaggle works. Training on a college server or AWS over SSH is **not supported on Windows yet** (it needs `rsync` and
-OpenSSH connection sharing, which Windows' built-in OpenSSH lacks); use Kaggle, or run NN Builder on macOS or Linux for SSH machines.
+**Training on Windows:** Kaggle works, and so do a college server or AWS over SSH **with a key** (files go up and down through `tar`
+and `ssh`, which Windows 10/11 include). Logging in once with a *password* is not possible on Windows (it needs SSH connection sharing,
+which Windows' OpenSSH lacks): set up a key for the machine.
 
 ### Linux
 

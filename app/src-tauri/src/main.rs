@@ -67,7 +67,39 @@ fn remember_secret(name: &str, value: Option<String>) {
 fn set_secret(name: &str, value: &str) -> R<()> {
     keyring::Entry::new(SERVICE, name).map_err(e)?.set_password(value).map_err(e)?;
     remember_secret(name, Some(value.to_string()));
+    save_secrets_meta(&creds());
     Ok(())
+}
+
+/// what the window shows about the keys (the Kaggle user name, whether a Hugging Face token exists, the first characters of the AWS key
+/// id): nothing secret. Kept in settings.json, so that starting the app never reads the Keychain (a Keychain prompt, as after every
+/// unsigned rebuild, would otherwise hold up the window); the secrets themselves are read only when a run or a test needs them.
+fn meta_of(c: &Creds) -> Value {
+    json!({"kaggle": c.kaggle.as_ref().map(|k| k.username.clone()), "huggingface": c.hf_token.is_some(),
+        "aws": c.aws.as_ref().map(|a| format!("{}…", a.access_key_id.chars().take(4).collect::<String>()))})
+}
+
+fn save_secrets_meta(c: &Creds) {
+    let _ = store::save_setting("secrets_meta", meta_of(c));
+}
+
+fn secrets_meta() -> Value {
+    let s = store::settings();
+    if s["secrets_meta"].is_object() {
+        return s["secrets_meta"].clone();
+    }
+    // first start with this version: read the Keychain once to learn what is there
+    let c = creds();
+    save_secrets_meta(&c);
+    meta_of(&c)
+}
+
+/// the Hugging Face token for the public dataset calls: without one stored (secrets_meta) the Keychain is not asked at all
+fn hf_token() -> Option<String> {
+    if secrets_meta()["huggingface"] == json!(false) {
+        return None;
+    }
+    secret("huggingface")
 }
 
 fn creds() -> Creds {
@@ -82,7 +114,6 @@ fn creds() -> Creds {
 #[tauri::command]
 async fn app_state(st: State<'_, App>) -> R<Value> {
     let pr = st.project.lock().unwrap().clone();
-    let c = creds();
     Ok(json!({
         "version": env!("CARGO_PKG_VERSION"),
         "home": store::home(),
@@ -90,7 +121,7 @@ async fn app_state(st: State<'_, App>) -> R<Value> {
         "projects_dir": store::default_projects_dir(),
         "project": pr.map(|p| json!({"name": p.name(), "path": p.dir, "draft": p.is_draft()})),
         "tools_ready": cloud::tools_ready(),
-        "secrets": {"kaggle": c.kaggle.as_ref().map(|k| k.username.clone()), "huggingface": c.hf_token.is_some(), "aws": c.aws.as_ref().map(|a| format!("{}…", a.access_key_id.chars().take(4).collect::<String>()))},
+        "secrets": secrets_meta(),
         "machines": remote::machines().into_iter().map(|m| json!({"machine": m, "prepared": remote::prepared(&m.name)})).collect::<Vec<_>>(),
         "builtins": BUILTINS.iter().map(|b| json!({"key": b.key, "label": b.label, "shape": b.shape, "classes": b.classes})).collect::<Vec<_>>(),
         "kinds": model::KINDS.iter().map(|(k, t)| json!({"kind": k, "title": t, "defaults": model::defaults(k)})).collect::<Vec<_>>(),
@@ -308,6 +339,7 @@ async fn clear_secret(name: String) -> R<()> {
         let _ = en.delete_credential();
     }
     remember_secret(&name, None);
+    save_secrets_meta(&creds());
     Ok(())
 }
 
@@ -378,6 +410,10 @@ async fn machine_test(name: String) -> R<String> {
 #[tauri::command]
 async fn machine_connect(name: String) -> R<String> {
     let m = remote::machine(&name).ok_or("Unknown machine.")?;
+    if cfg!(windows) {
+        return Err("Logging in once with a password needs SSH connection sharing, which Windows' OpenSSH does not have. Set up a key for \
+                    this machine instead (ssh-keygen, then copy the public key to the server) and choose Login: Key.".into());
+    }
     let cmd = m.connect_command().iter().map(|a| remote::sh_quote(a)).collect::<Vec<_>>().join(" ");
     let text = format!("echo 'NN Builder: log in to {} once. You can close this window afterwards.'; {cmd} && echo 'Connected. You can close this window.'", m.name);
     #[cfg(target_os = "macos")]
@@ -426,7 +462,7 @@ async fn hf_info(repo: String) -> R<Value> {
             return Err("Give the dataset id, like ylecun/mnist.".into());
         }
         let mut req = ureq::get(&format!("https://datasets-server.huggingface.co/info?dataset={repo}"));
-        if let Some(t) = creds().hf_token {
+        if let Some(t) = hf_token() {
             req = req.header("Authorization", &format!("Bearer {t}"));
         }
         let mut r = req.call().map_err(|x| format!("Hugging Face: {x} (a private or gated dataset needs your token, Connection tab)"))?;
@@ -444,6 +480,66 @@ async fn hf_info(repo: String) -> R<Value> {
         }
         Ok(json!({"configs": configs}))
     }).await
+}
+
+/// a dataset's class balance (label counts from the dataset viewer's statistics, computed on Hugging Face's side) and, when asked, 8
+/// example images (only those few images are fetched, as embedded data for the window; the dataset itself is never downloaded here)
+#[tauri::command]
+async fn hf_preview(repo: String, config: String, split: String, label_col: String, samples: bool) -> R<Value> {
+    blocking(move || {
+        let safe = |s: &str| s.chars().all(|c| c.is_ascii_alphanumeric() || "-_./".contains(c));
+        if !repo.contains('/') || !safe(&repo) || !safe(&config) || !safe(&split) || !safe(&label_col) {
+            return Err("Read the dataset's information first.".into());
+        }
+        let token = hf_token();
+        let get = |url: &str| {
+            let mut req = ureq::get(url);
+            if let Some(t) = &token {
+                req = req.header("Authorization", &format!("Bearer {t}"));
+            }
+            req.call()
+        };
+        let q = format!("dataset={repo}&config={config}&split={split}");
+        let mut freq: Vec<(String, u64)> = vec![];
+        if let Ok(mut r) = get(&format!("https://datasets-server.huggingface.co/statistics?{q}")) {
+            let v: Value = r.body_mut().read_json().unwrap_or(Value::Null);
+            if let Some(col) = v["statistics"].as_array().and_then(|a| a.iter().find(|c| c["column_name"] == label_col.as_str())) {
+                freq = col["column_statistics"]["frequencies"].as_object().map(|m| m.iter().map(|(k, n)| (k.clone(), n.as_u64().unwrap_or(0))).collect())
+                    .unwrap_or_default();
+            }
+        }
+        freq.sort_by_key(|f| std::cmp::Reverse(f.1));
+        let mut pictures = vec![];
+        if samples {
+            let mut r = get(&format!("https://datasets-server.huggingface.co/first-rows?{q}")).map_err(|x| format!("Hugging Face: {x}"))?;
+            let v: Value = r.body_mut().read_json().map_err(e)?;
+            for row in v["rows"].as_array().cloned().unwrap_or_default().into_iter().take(8) {
+                let row = &row["row"];
+                let Some(src) = row.as_object().and_then(|o| o.values().find_map(|x| x["src"].as_str().map(String::from))) else { continue };
+                if !src.starts_with("https://datasets-server.huggingface.co/") {
+                    continue;
+                }
+                let Ok(mut img) = ureq::get(&src).call() else { continue };
+                let mime = img.headers().get("content-type").and_then(|h| h.to_str().ok()).unwrap_or("image/jpeg").to_string();
+                let Ok(bytes) = img.body_mut().with_config().limit(512 * 1024).read_to_vec() else { continue };
+                pictures.push(json!({"src": format!("data:{mime};base64,{}", base64(&bytes)), "label": row[&label_col].clone()}));
+            }
+        }
+        Ok(json!({"frequencies": freq.into_iter().map(|(k, n)| json!([k, n])).collect::<Vec<_>>(), "samples": pictures}))
+    }).await
+}
+
+/// standard base64 (for embedding a few example images)
+fn base64(data: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for c in data.chunks(3) {
+        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
+        for i in 0..4 {
+            out.push(if i <= c.len() { T[(n >> (18 - 6 * i) & 63) as usize] as char } else { '=' });
+        }
+    }
+    out
 }
 
 #[tauri::command]
@@ -811,7 +907,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             app_state, templates_list, template_apply, project_from_template, project_save_as, project_new, project_open, set_projects_dir, project_load, save_graph, save_dataset, save_train, code, export_code,
             set_kaggle, set_hf, set_aws, clear_secret, test_kaggle, test_hf, test_aws, tools_install,
-            machine_save, machine_delete, machine_test, machine_connect, machine_prepare, hf_info, kaggle_files,
+            machine_save, machine_delete, machine_test, machine_connect, machine_prepare, hf_info, hf_preview, kaggle_files,
             update_settings, set_auto_update, update_check, update_install, update_restart, targets, run_start, run_start_seeds, runs_summary, runs_export, run_resume_on, runs_list, run_status, run_stop, run_fetch, run_results, run_reveal, job_status, open_url
         ])
         .build(tauri::generate_context!())
@@ -821,4 +917,16 @@ fn main() {
                 let _ = store::discard_draft();
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn base64_matches_the_standard() {
+        assert_eq!(super::base64(b""), "");
+        assert_eq!(super::base64(b"M"), "TQ==");
+        assert_eq!(super::base64(b"Ma"), "TWE=");
+        assert_eq!(super::base64(b"Man"), "TWFu");
+        assert_eq!(super::base64(&[0xff, 0xfe, 0x00, 0x10]), "//4AEA==");
+    }
 }

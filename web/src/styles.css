@@ -101,6 +101,9 @@ canvas.pix { image-rendering: pixelated; border: 1px solid var(--line); }
 .aug { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; background: var(--tint2); }
 .aug label { flex-direction: row; align-items: center; gap: 4px; }
 .aug input[type=number] { width: 60px; }
+.aug { min-width: 0; }
+.aug label { min-width: 0; max-width: 100%; }
+.aug select { min-width: 0; max-width: 100%; flex: 1 1 auto; text-overflow: ellipsis; }
 .thumb.seg .row { gap: 3px; margin: 0; }
 .arrange { width: 100%; margin-bottom: 8px; }
 .demos { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 12px; margin: 10px 0 20px; }

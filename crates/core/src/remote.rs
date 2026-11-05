@@ -173,10 +173,46 @@ impl Machine {
     }
 
     pub fn ssh_options(&self) -> Vec<String> {
-        let mut o: Vec<String> = ["-o", "ControlMaster=auto", "-o", &format!("ControlPath={}", control_path()), "-o", "ControlPersist=15m",
-            "-o", "ConnectTimeout=20", "-o", "ServerAliveInterval=30", "-o", "BatchMode=yes"].iter().map(|s| s.to_string()).collect();
+        // connection sharing (ControlMaster) is not available in Windows' OpenSSH: every command opens its own connection there
+        let shared: &[&str] = if cfg!(windows) { &[] } else { &["-o", "ControlMaster=auto", "-o", "ControlPersist=15m"] };
+        let mut o: Vec<String> = shared.iter().map(|s| s.to_string()).collect();
+        if !cfg!(windows) {
+            o.extend(["-o".into(), format!("ControlPath={}", control_path())]);
+        }
+        o.extend(["-o", "ConnectTimeout=20", "-o", "ServerAliveInterval=30", "-o", "BatchMode=yes"].iter().map(|s| s.to_string()));
         o.extend(self.base_options());
         o
+    }
+
+    /// copy the contents of a local folder into a folder on the machine (relative to its home unless absolute): rsync when this
+    /// computer has it, else a tar stream over ssh (Windows 10/11 have tar and OpenSSH but no rsync)
+    pub fn upload_dir(&self, local: &std::path::Path, remote: &str) -> (i32, String) {
+        if have_rsync() {
+            return capture(&mut self.rsync_command(&format!("{}/", local.display()), &format!("REMOTE:{remote}/")), None);
+        }
+        let tar = match Command::new("tar").arg("-cf").arg("-").arg("-C").arg(local).arg(".").output() {
+            Ok(o) if o.status.success() => o.stdout,
+            Ok(o) => return (1, format!("tar: {}", String::from_utf8_lossy(&o.stderr))),
+            Err(e) => return (1, format!("tar is not available: {e}")),
+        };
+        let rp = remote_path(remote);
+        pipe(Command::new("ssh").args(self.ssh_options()).arg(self.dest()).arg(format!("mkdir -p {rp} && tar -xf - -C {rp}")), &tar).0
+    }
+
+    /// copy one file from the machine to this computer (written to a temporary file first, so the local copy is always whole)
+    pub fn download_file(&self, remote: &str, local: &std::path::Path) -> (i32, String) {
+        if have_rsync() {
+            return capture(&mut self.rsync_command(&format!("REMOTE:{remote}"), &local.to_string_lossy()), None);
+        }
+        let ((code, err), bytes) = pipe(Command::new("ssh").args(self.ssh_options()).arg(self.dest()).arg(format!("cat {}", remote_path(remote))), &[]);
+        if code != 0 {
+            return (code, err);
+        }
+        let tmp = local.with_extension("part");
+        match std::fs::write(&tmp, bytes).and_then(|_| std::fs::rename(&tmp, local)) {
+            Ok(()) => (0, String::new()),
+            Err(e) => (1, e.to_string()),
+        }
     }
 
     /// `ssh ... bash -l -s`: runs the script given on stdin in a login shell (the user's PATH, conda, modules)
@@ -238,6 +274,33 @@ impl Machine {
 pub fn remote_path(p: &str) -> String {
     let rel = p.strip_prefix("~/").unwrap_or(p);
     if rel.starts_with('/') { sh_quote(rel) } else { format!("\"$HOME\"/{}", sh_quote(rel)) }
+}
+
+/// rsync on this computer (macOS and Linux have it; Windows does not). NNB_NO_RSYNC=1 forces the tar / cat way (tests).
+pub fn have_rsync() -> bool {
+    std::env::var_os("NNB_NO_RSYNC").is_none()
+        && Command::new("rsync").arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+}
+
+/// run a command with bytes on its stdin; ((exit code, stderr), stdout bytes)
+fn pipe(cmd: &mut Command, input: &[u8]) -> ((i32, String), Vec<u8>) {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = match cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
+        Ok(c) => c,
+        Err(e) => return ((1, e.to_string()), vec![]),
+    };
+    let mut stdin = child.stdin.take().unwrap();
+    let data = input.to_vec();
+    let writer = std::thread::spawn(move || {
+        let _ = stdin.write_all(&data);
+    });
+    let out = child.wait_with_output();
+    let _ = writer.join();
+    match out {
+        Ok(o) => ((o.status.code().unwrap_or(1), String::from_utf8_lossy(&o.stderr).into_owned()), o.stdout),
+        Err(e) => ((1, e.to_string()), vec![]),
+    }
 }
 
 pub fn sh_quote(s: &str) -> String {

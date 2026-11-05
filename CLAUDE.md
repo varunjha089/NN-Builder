@@ -45,6 +45,18 @@ crates/core/src/
                            per-class precision/recall/F1 (from the confusion matrix); shapes.rs macs per node + total_macs (tests: MSG
                            93,499,136 by hand, ResNet-18 1.80–1.83 G). Tests: summary.rs (incl. pdflatex of the table); CI recipe
                            check uses 6 classes and checks val_top5 / test_top5.
+                           Phase 3: TrainSettings.pretrained (resnet18 | vgg16 | vit_b_16; harness load_pretrained: each design tensor in
+                           order gets the next unused torchvision tensor of the same shape; stops when < 80 % of weight tensors match;
+                           ImageNet normalisation) + freeze ("backbone" = train only unloaded tensors); Grad-CAM (last 4-D layer) on the
+                           samples, "mistakes" (16 misclassified of up to 2000 test images); export (model.ts + model.onnx, fetched
+                           with the results). CI: ci_pretrained_check.py compares the loaded demos with torchvision's own models.
+                           Phase 4: GroupNorm block (groups must divide channels); Design: copy / paste (document copy/paste events,
+                           JSON {nnb_blocks}), Residual block after selected, collapseRepeats (×N read-only view of identical consecutive
+                           groups); remote: upload_dir / download_file use rsync or tar / cat over ssh (NNB_NO_RSYNC=1 in tests; flows
+                           test runs a whole job that way); Windows: no ControlMaster options, password login refused with advice;
+                           Build workflow: macOS-Intel (x86_64-apple-darwin cross-build, NN-Builder_X_x64.app.zip); Dataset: hf_preview
+                           (class balance from datasets-server /statistics, 8 example images from /first-rows as data URLs on request),
+                           no-image-column error.
                            Kaggle runs: data in /tmp/nnb_data (not /kaggle/working, the notebook output), checkpoint removed at the
                            end, kaggle_output deleted after metrics/results/model/log are copied; the run card shows the last check.
   dataset.rs               Dataset (builtin | huggingface | kaggle; task classify | segment; resize (built-in); hf_mask_col, kaggle_mask_dir;
@@ -131,6 +143,9 @@ doc/nn_builder_manual.tex  the user manual (LaTeX, plain thebibliography, no bib
   (starting the binary directly may give a process without a window).
 - The keychain items belong to the app; an unsigned rebuild may make macOS ask once to allow access to them again ("Always Allow").
   main.rs caches each item in memory after the first read (SECRETS), so a running app asks the Keychain at most once per item.
+  Starting the app reads no Keychain item: settings.json "secrets_meta" (Kaggle user name, whether a Hugging Face token exists, the
+  first characters of the AWS key id; nothing secret) is shown instead, updated by set/clear; the Hugging Face dataset calls read the
+  token only when secrets_meta says one is stored (hf_token()).
 
 ## Automatic updates
 

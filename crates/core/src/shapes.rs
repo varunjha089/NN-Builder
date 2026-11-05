@@ -455,6 +455,20 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
             let s = int(p, "scale", 2, 2, 8);
             vec![x[0], x[1] * s, x[2] * s]
         }
+        "groupnorm" => {
+            if !is3 {
+                need3(r);
+                return None;
+            }
+            let g = int(p, "groups", 8, 1, 1024);
+            if !x[0].is_multiple_of(g) {
+                let fits: Vec<String> = [32, 16, 8, 4, 2, 1].iter().filter(|d| x[0].is_multiple_of(**d)).map(|d| d.to_string()).collect();
+                err(r, &format!("GroupNorm splits the {} channels into {g} groups, but {} does not divide by {g}; for example {} groups.", x[0], x[0], fits.join(", ")));
+                return None;
+            }
+            r.params = 2 * x[0] as u64;
+            x.clone()
+        }
         "batchnorm" | "layernorm" => {
             if k == "batchnorm" && is2 {
                 err(r, "BatchNorm is for images and vectors; use LayerNorm on a sequence of tokens.");

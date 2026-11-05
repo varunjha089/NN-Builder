@@ -98,7 +98,12 @@ def resized():
     return DATASET["source"] != "builtin" or DATASET.get("resize")
 
 
+IMAGENET = ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+
+
 def stats():
+    if TRAIN.get("pretrained"):
+        return IMAGENET  # pretrained weights expect the images normalised as in their own training
     if DATASET["source"] == "builtin" and not DATASET.get("resize"):
         return STATS[DATASET["builtin"]]
     c = DATASET["channels"]
@@ -106,6 +111,35 @@ def stats():
         m, s = STATS[DATASET["builtin"]]
         return (tuple(m) * 3)[:c] if len(m) < c else m[:c], (tuple(s) * 3)[:c] if len(s) < c else s[:c]
     return (0.5,) * c, (0.5,) * c
+
+
+# ---------------------------------------------------------------- pretrained weights
+def load_pretrained(model, name):
+    """copy torchvision's ImageNet weights `name` (resnet18 | vgg16 | vit_b_16) into the design: each tensor of the design, in order, gets
+    the next unused torchvision tensor of the same shape (the demos are built in torchvision's layer order). Tensors without a match (a new
+    output head for another number of classes) keep their random start. Returns the names of the loaded tensors."""
+    import torchvision
+    os.environ.setdefault("TORCH_HOME", os.path.join(DATA, "torch"))
+    src = list(getattr(torchvision.models, name)(weights="DEFAULT").state_dict().items())
+    used = [False] * len(src)
+    dst = model.state_dict()
+    loaded, missing = [], []
+    for key, t in dst.items():
+        j = next((j for j, (_, st) in enumerate(src) if not used[j] and st.shape == t.shape), None)
+        if j is None:
+            missing.append(key)
+            continue
+        used[j] = True
+        dst[key] = src[j][1].to(t.dtype)
+        loaded.append(key)
+    model.load_state_dict(dst)
+    weights = [k for k, v in model.state_dict().items() if v.dim() > 1]
+    loaded_weights = [k for k in loaded if k in weights]
+    if len(loaded_weights) < 0.8 * len(weights):
+        raise SystemExit(f"PRETRAINED: the design does not match {name}: only {len(loaded_weights)} of its {len(weights)} weight tensors have "
+                         f"a counterpart. Use ImageNet weights with the unchanged demo (its layers may be widened only at the output).")
+    emit("pretrained", weights=name, loaded=len(loaded), total=len(dst), new=[k for k in missing if not k.endswith("num_batches_tracked")][:20])
+    return loaded
 
 
 # ---------------------------------------------------------------- data
@@ -386,6 +420,36 @@ def small(t, limit=48):
     return [[[round(float(v), 3) for v in row] for row in ch] for ch in t]
 
 
+def grad_cam(model, xs):
+    """Grad-CAM (Selvaraju et al., arXiv:1610.02391) on the last layer whose output is an image: for each image, the feature maps of that
+    layer weighted by how strongly the predicted class depends on them; (layer label, heat maps of shape (B, H, W) in 0..1) or None"""
+    acts, grads = {}, {}
+    hooks = []
+    for name, label, _ in LAYERS:
+        mod = getattr(model, name)
+        hooks.append(mod.register_forward_hook(lambda m, i, o, name=name: acts.__setitem__(name, o) if torch.is_tensor(o) and o.dim() == 4 else None))
+    with torch.enable_grad():
+        xs = xs.clone().requires_grad_(True)
+        out = model(xs).float()
+        last = [n for n, _, _ in LAYERS if n in acts]
+        for h in hooks:
+            h.remove()
+        if not last:
+            return None
+        a = acts[last[-1]]
+        a.retain_grad()
+        out.gather(1, out.argmax(1, keepdim=True)).sum().backward()
+        if a.grad is None:
+            return None
+        cam = torch.relu((a.grad.mean((2, 3), keepdim=True) * a).sum(1)).detach()
+    cam = nn.functional.interpolate(cam.unsqueeze(1), size=xs.shape[2:], mode="bilinear", align_corners=False)[:, 0]
+    flat = cam.flatten(1)
+    cam = (cam - flat.min(1)[0].view(-1, 1, 1)) / (flat.max(1)[0] - flat.min(1)[0]).clamp_min(1e-8).view(-1, 1, 1)
+    label = next(lb for n, lb, _ in LAYERS if n == last[-1])
+    model.zero_grad(set_to_none=True)
+    return label, cam.cpu()
+
+
 def pictures(model, test, device):
     model.eval()
     res = {"filters": None, "feature_maps": [], "samples": []}
@@ -421,7 +485,51 @@ def pictures(model, test, device):
             prob = torch.softmax(out[j], 0).cpu()
             p = int(prob.argmax())
             res["samples"].append({"image": small(img), "label": int(test[i][1]), "pred": p, "prob": round(float(prob[p]), 3)})
+    if not SEG:
+        try:
+            cam = grad_cam(model, xs)
+            if cam:
+                res["cam_layer"] = cam[0]
+                for j, c in enumerate(cam[1]):
+                    res["samples"][j]["cam"] = small(c.unsqueeze(0), 32)[0]
+        except Exception as e:  # pictures are a bonus: never lose a run over them
+            emit("warning", message=f"no Grad-CAM pictures: {type(e).__name__}: {e}")
+        # misclassified test images (looking at up to 2000)
+        mistakes = []
+        with torch.no_grad():
+            for start in range(0, min(len(test), 2000), 128):
+                batch = [test[i] for i in range(start, min(start + 128, len(test), 2000))]
+                o = model(torch.stack([b[0] for b in batch]).to(device)).float()
+                pr = torch.softmax(o, 1).cpu()
+                for b, (x, y) in enumerate(batch):
+                    p = int(pr[b].argmax())
+                    if p != int(y):
+                        mistakes.append({"image": small((x * s_t + m_t).clamp(0, 1)), "label": int(y), "pred": p, "prob": round(float(pr[b][p]), 3),
+                                         "index": start + b})
+                if len(mistakes) >= 16:
+                    break
+        res["mistakes"] = mistakes[:16]
     return res
+
+
+def export_model(model, example):
+    """TorchScript (model.ts) and ONNX (model.onnx) copies of the trained network, for use without this code; a failure is a warning"""
+    import copy
+    m = copy.deepcopy(model).cpu().eval()
+    x = example[:1].cpu()
+    try:
+        torch.jit.trace(m, x).save(os.path.join(OUT, "model.ts"))
+    except Exception as e:
+        emit("warning", message=f"TorchScript export failed: {type(e).__name__}: {e}")
+    try:
+        args = dict(input_names=["image"], output_names=["logits"], dynamic_axes={"image": {0: "batch"}, "logits": {0: "batch"}}, opset_version=17)
+        try:
+            torch.onnx.export(m, (x,), os.path.join(OUT, "model.onnx"), dynamo=False, **args)
+        except TypeError:  # PyTorch without the dynamo option
+            torch.onnx.export(m, (x,), os.path.join(OUT, "model.onnx"), **args)
+    except Exception as e:
+        emit("warning", message=f"ONNX export failed: {type(e).__name__}: {e}")
+    emit("exported", files=[f for f in ("model.ts", "model.onnx") if os.path.exists(os.path.join(OUT, f))])
 
 
 # ---------------------------------------------------------------- training
@@ -444,6 +552,14 @@ def main():
     if device.type != "cuda":
         emit("info", message="no CUDA GPU found: training on the CPU (slow)")
     model = Net().to(device)
+    if cfg.get("pretrained"):
+        loaded = load_pretrained(model, cfg["pretrained"])
+        if cfg.get("freeze") == "backbone":
+            # train only what was not loaded (the new output head)
+            names = set(loaded)
+            for k, prm in model.named_parameters():
+                prm.requires_grad = k not in names
+            emit("info", message=f"training only {sum(p.numel() for p in model.parameters() if p.requires_grad):,} parameters (the backbone is frozen)")
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     train, val, test = load_data(cfg)
     workers = cfg.get("num_workers", 2) if device.type == "cuda" else 0
@@ -465,12 +581,13 @@ def main():
     # the training recipe: optimizer with weight decay, learning-rate schedule, label smoothing, gradient clipping
     wd = float(cfg.get("weight_decay") or 0)
     base_lr = cfg["lr"]
+    params = [p for p in model.parameters() if p.requires_grad]
     if cfg["optimizer"] == "sgd":
-        opt = torch.optim.SGD(model.parameters(), lr=base_lr, momentum=0.9, weight_decay=wd)
+        opt = torch.optim.SGD(params, lr=base_lr, momentum=0.9, weight_decay=wd)
     elif cfg["optimizer"] == "adamw":
-        opt = torch.optim.AdamW(model.parameters(), lr=base_lr, weight_decay=wd)
+        opt = torch.optim.AdamW(params, lr=base_lr, weight_decay=wd)
     else:
-        opt = torch.optim.Adam(model.parameters(), lr=base_lr, weight_decay=wd)
+        opt = torch.optim.Adam(params, lr=base_lr, weight_decay=wd)
     smoothing = float(cfg.get("label_smoothing") or 0)
     clip = float(cfg.get("grad_clip") or 0)
     schedule = cfg.get("schedule", "constant")
@@ -571,7 +688,7 @@ def main():
                 scaler.scale(loss).backward()
                 if clip:
                     scaler.unscale_(opt)
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
+                    torch.nn.utils.clip_grad_norm_(params, clip)
                 scaler.step(opt)
                 scaler.update()
                 sums["loss_sum"] += loss.item() * len(y)
@@ -643,6 +760,8 @@ def main():
     if SEG:
         res.update(miou=miou, iou=iou)
     res.update(pictures(model, test, device))
+    if cfg.get("export"):
+        export_model(model, torch.stack([test[0][0]]))
     with open(os.path.join(OUT, "results.json"), "w", encoding="utf-8") as f:
         json.dump(res, f)
     emit("stopped" if stopped else "done", test_acc=round(val_acc, 5), **({"miou": round(miou, 5)} if SEG else {}),

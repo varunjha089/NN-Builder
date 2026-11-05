@@ -395,7 +395,7 @@ fn start_remote(pr: &Project, d: &Path, info: &mut RunInfo, m: &mut Machine, t: 
     }
     log(format!("Copying the run to {}:{rdir} ...", m.dest()));
     let rel = rdir.strip_prefix("~/").unwrap_or(&rdir);
-    let (code, out) = crate::jobs::capture(&mut m.rsync_command(&format!("{}/", d.display()), &format!("REMOTE:{rel}/")), None);
+    let (code, out) = m.upload_dir(d, rel);
     if code != 0 {
         bail!("Copying failed: {}", out.trim().lines().last().unwrap_or(""));
     }
@@ -604,7 +604,7 @@ fn mirror_checkpoint(m: &Machine, d: &Path, info: &RunInfo, stamp: &str) {
     let (m, d, stamp) = (m.clone(), d.to_path_buf(), stamp.to_string());
     let rel = info.remote_dir.strip_prefix("~/").unwrap_or(&info.remote_dir).to_string();
     std::thread::spawn(move || {
-        let (code, out) = crate::jobs::capture(&mut m.rsync_command(&format!("REMOTE:{rel}/checkpoint.pt"), &d.join("checkpoint.pt").to_string_lossy()), None);
+        let (code, out) = m.download_file(&format!("{rel}/checkpoint.pt"), &d.join("checkpoint.pt"));
         let last = read_events(&d, 0).into_iter().rev().find(|e| e["event"] == "checkpoint");
         let rec = if code == 0 {
             serde_json::json!({"stamp": stamp, "copied": chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
@@ -694,8 +694,8 @@ pub fn fetch(pr: &Project, id: &str, creds: &Creds, log: &Log) -> Result<()> {
         }
     }
     let rel = info.remote_dir.strip_prefix("~/").unwrap_or(&info.remote_dir).to_string();
-    for name in ["metrics.jsonl", "log.txt", "results.json", "model.pt", "train.py"] {
-        let (code, out) = crate::jobs::capture(&mut m.rsync_command(&format!("REMOTE:{rel}/{name}"), &d.join(name).to_string_lossy()), None);
+    for name in ["metrics.jsonl", "log.txt", "results.json", "model.pt", "train.py", "model.ts", "model.onnx"] {
+        let (code, out) = m.download_file(&format!("{rel}/{name}"), &d.join(name));
         if code != 0 && (name == "metrics.jsonl" || name == "results.json") && end_event(&d).as_deref() != Some("error") {
             log(format!("{name}: {}", out.trim().lines().last().unwrap_or("")));
         }
@@ -733,7 +733,7 @@ fn kaggle_live(c: &KaggleCreds, d: &Path, info: &mut RunInfo) {
 fn kaggle_fetch(c: &KaggleCreds, d: &Path, info: &mut RunInfo) -> Result<()> {
     let out = d.join("kaggle_output");
     cloud::kaggle_output(c, &info.kernel, &out)?;
-    for name in ["metrics.jsonl", "results.json", "model.pt"] {
+    for name in ["metrics.jsonl", "results.json", "model.pt", "model.ts", "model.onnx"] {
         if out.join(name).exists() {
             std::fs::copy(out.join(name), d.join(name))?;
         }

@@ -28,6 +28,7 @@ export interface TrainSettings {
   checkpoint_minutes: number; max_resumes: number;
   val_fraction: number; early_stop: boolean; patience: number; monitor: "val_loss" | "val_acc" | "val_miou";
   weight_decay: number; schedule: "constant" | "cosine" | "plateau"; warmup_epochs: number; label_smoothing: number; grad_clip: number;
+  pretrained: "" | "resnet18" | "vgg16" | "vit_b_16"; freeze: "none" | "backbone"; export: boolean;
 }
 
 export interface Machine {
@@ -94,6 +95,8 @@ export const api = {
   machineTest: (name: string) => invoke<string>("machine_test", { name }),
   machineConnect: (name: string) => invoke<string>("machine_connect", { name }),
   machinePrepare: (name: string) => invoke<void>("machine_prepare", { name }),
+  hfPreview: (repo: string, config: string, split: string, labelCol: string, samples: boolean) =>
+    invoke<{ frequencies: [string, number][]; samples: { src: string; label: unknown }[] }>("hf_preview", { repo, config, split, labelCol, samples }),
   hfInfo: (repo: string) => invoke<{ configs: { name: string; columns: { name: string; type: string; names: string[] | null }[]; splits: { name: string; n: number }[] }[] }>("hf_info", { repo }),
   kaggleFiles: (slug: string) => invoke<{ files: number; sample: string[]; folders: { folder: string; classes: string[] }[] }>("kaggle_files", { slug }),
   targets: () => invoke<{ name: string; kind: string; prepared?: boolean }[]>("targets"),

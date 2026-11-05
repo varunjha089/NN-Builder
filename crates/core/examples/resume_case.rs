@@ -28,7 +28,7 @@ fn main() {
     let t = if mode == "recipe" {
         // python/ci_recipe_check.py: AdamW + weight decay, 1 warm-up epoch then cosine, label smoothing, gradient clipping
         TrainSettings { epochs: 4, batch_size: 32, amp: false, optimizer: "adamw".into(), weight_decay: 0.05, schedule: "cosine".into(),
-            warmup_epochs: 1.0, label_smoothing: 0.1, grad_clip: 1.0, ..Default::default() }
+            warmup_epochs: 1.0, label_smoothing: 0.1, grad_clip: 1.0, export: true, ..Default::default() }
     } else if early {
         TrainSettings { epochs: 25, batch_size: 16, amp: false, early_stop: true, patience: 2, monitor: "val_acc".into(), val_fraction: 0.2, ..Default::default() }
     } else {

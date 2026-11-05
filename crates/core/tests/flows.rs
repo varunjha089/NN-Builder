@@ -26,6 +26,8 @@ done
 echo "$1" >> "$NNB_FAKE_LOG"; shift
 # no login shell: on macOS it would put /usr/bin before the stand-ins (and a real crontab would be changed)
 if [ "$1" = bash ] && [ "$2" = -l ]; then set -- bash "${@:3}"; fi
+# a single argument is a command line for the remote shell (as real ssh runs it)
+if [ $# -eq 1 ]; then cd "$NNB_FAKE_REMOTE" && HOME="$NNB_FAKE_REMOTE" exec bash -c "$1"; fi
 cd "$NNB_FAKE_REMOTE" && HOME="$NNB_FAKE_REMOTE" exec "$@"
 "#;
 
@@ -206,6 +208,27 @@ fn remote_and_kaggle_runs() {
         assert_eq!(state, "done", "tmux run");
         assert!(pr.runs_dir().join(&id).join("results.json").exists());
     }
+
+    // ---- the same machine without rsync on this computer (as on Windows): the run folder goes up as a tar stream, files come back with cat
+    std::env::set_var("NNB_NO_RSYNC", "1");
+    let mut m3 = m.clone();
+    m3.launch = "nohup".into();
+    remote::save_machine(m3).unwrap();
+    std::thread::sleep(Duration::from_millis(1100));
+    let id = runs::start(&pr, "college", "", &Creds::default(), false, &log).unwrap_or_else(|e| panic!("{e}\n{:?}", lines.lock().unwrap()));
+    assert!(remote_home.join(format!(".nn_builder/runs/{id}/train.py")).exists(), "uploaded without rsync");
+    let mut state = String::new();
+    for _ in 0..40 {
+        std::thread::sleep(Duration::from_millis(1100));
+        state = runs::status(&pr, &id, 0, &Creds::default()).unwrap().state;
+        if !["starting", "running"].contains(&state.as_str()) {
+            break;
+        }
+    }
+    assert_eq!(state, "done", "run without rsync");
+    let local = pr.runs_dir().join(&id);
+    assert!(local.join("results.json").exists() && local.join("model.pt").exists() && !local.join("model.part").exists(), "fetched with cat");
+    std::env::remove_var("NNB_NO_RSYNC");
 
     // ---- Kaggle with a stand-in kaggle CLI in the tools folder
     let tools_bin = settings.join("tools/bin");

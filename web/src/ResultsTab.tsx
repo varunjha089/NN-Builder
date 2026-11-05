@@ -1,10 +1,11 @@
 // The results of a finished run: accuracy, confusion matrix, sample predictions, first-layer filters, feature maps.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, errText } from "./api";
 import { Img } from "./Preview";
 
 export function ResultsTab({ runId }: { runId: string | null }) {
   const [r, setR] = useState<any>(null);
+  const [cam, setCam] = useState(false);
   const [err, setErr] = useState("");
   useEffect(() => {
     setR(null); setErr("");
@@ -46,10 +47,19 @@ export function ResultsTab({ runId }: { runId: string | null }) {
           <Img img={s.image} scale={Math.max(1, Math.round(96 / s.image[0].length))} /><Img img={s.truth} scale={Math.max(1, Math.round(96 / s.truth[0].length))} />
           <Img img={s.pred} scale={Math.max(1, Math.round(96 / s.pred[0].length))} /></div><div>{(s.pixel_acc * 100).toFixed(1)}% of pixels right</div></div>)}
       </div></>}
-      {r.task !== "segment" && r.samples?.length > 0 && <><h3>Sample predictions</h3><div className="thumbs">
+      {r.task !== "segment" && r.samples?.length > 0 && <><div className="row"><h3 style={{ margin: 0 }}>Sample predictions</h3>
+        {r.cam_layer && <label className="chk small"><input type="checkbox" checked={cam} onChange={(e) => setCam(e.target.checked)} />
+          show Grad-CAM (where the network looked, from layer “{r.cam_layer}”)</label>}</div><div className="thumbs">
         {r.samples.map((s: any, i: number) => <div key={i} className={`thumb ${s.pred !== s.label ? "wrong" : ""}`} title={`true: ${classes[s.label]}`}>
-          <Img img={s.image} scale={Math.max(1, Math.round(64 / s.image[0].length))} /><div>{String(classes[s.pred] ?? s.pred).slice(0, 12)} {(s.prob * 100).toFixed(0)}%</div></div>)}
-      </div></>}
+          {cam && s.cam ? <CamImg img={s.image} cam={s.cam} size={64} /> : <Img img={s.image} scale={Math.max(1, Math.round(64 / s.image[0].length))} />}
+          <div>{String(classes[s.pred] ?? s.pred).slice(0, 12)} {(s.prob * 100).toFixed(0)}%</div></div>)}
+      </div>
+      {cam && <p className="muted small">Red = the regions that raised the predicted class most (Grad-CAM, Selvaraju et al. 2017), blue = none.</p>}</>}
+      {r.mistakes?.length > 0 && <><h3>Mistakes ({r.mistakes.length} misclassified test images)</h3><div className="thumbs">
+        {r.mistakes.map((s: any, i: number) => <div key={i} className="thumb wrong" title={`test image ${s.index}`}>
+          <Img img={s.image} scale={Math.max(1, Math.round(64 / s.image[0].length))} />
+          <div>true: {String(classes[s.label] ?? s.label).slice(0, 10)}</div><div>said: {String(classes[s.pred] ?? s.pred).slice(0, 10)} {(s.prob * 100).toFixed(0)}%</div></div>)}
+      </div><p className="muted small">The first misclassified images of the test set: they show what the network confuses (and sometimes a wrong label).</p></>}
       {r.filters && <><h3>Learned filters of the first convolution ({r.filters.kernel.join("×")})</h3><div className="thumbs">
         {r.filters.images.map((f: number[][][], i: number) => <Img key={i} img={f} scale={Math.max(3, Math.round(28 / f[0].length))} />)}
       </div></>}
@@ -81,4 +91,30 @@ function PerClass({ classes, conf }: { classes: string[]; conf: number[][] }) {
         {rows.map((x, i) => <tr key={i}><td>{x.name}</td><td className="num">{x.n}</td><td className="num">{(x.p * 100).toFixed(1)}%</td>
           <td className="num">{(x.r * 100).toFixed(1)}%</td><td className="num">{(x.f1 * 100).toFixed(1)}%</td></tr>)}</tbody></table></details>
   </>;
+}
+
+/** an image with its Grad-CAM heat map on top (blue → red, half transparent) */
+function CamImg({ img, cam, size }: { img: number[][][]; cam: number[][]; size: number }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const c = ref.current;
+    if (!c || !img.length || !cam.length) return;
+    const C = img.length, H = img[0].length, W = img[0][0].length;
+    c.width = W;
+    c.height = H;
+    const g = c.getContext("2d")!;
+    const d = g.createImageData(W, H);
+    const ch = cam.length, cw = cam[0].length;
+    for (let i = 0; i < H; i++) for (let j = 0; j < W; j++) {
+      const o = (i * W + j) * 4;
+      const v = (k: number) => 255 * img[Math.min(k, C - 1)][i][j];
+      const t = cam[Math.min(ch - 1, Math.floor((i * ch) / H))][Math.min(cw - 1, Math.floor((j * cw) / W))];
+      // a simple blue-cyan-yellow-red ramp
+      const hr = Math.min(1, Math.max(0, 1.5 * t - 0.25)) * 255, hg = Math.max(0, 1 - Math.abs(2 * t - 1) * 1.2) * 255, hb = Math.min(1, Math.max(0, 1.25 - 1.5 * t)) * 255;
+      d.data[o] = 0.5 * v(0) + 0.5 * hr; d.data[o + 1] = 0.5 * v(1) + 0.5 * hg; d.data[o + 2] = 0.5 * v(2) + 0.5 * hb; d.data[o + 3] = 255;
+    }
+    g.putImageData(d, 0, 0);
+  }, [img, cam]);
+  const H = img[0]?.length ?? 1;
+  return <canvas ref={ref} className="pix" style={{ width: size, height: size * (H / (img[0]?.[0]?.length ?? 1)) }} />;
 }

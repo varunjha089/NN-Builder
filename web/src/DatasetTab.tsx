@@ -79,6 +79,13 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
           {ds.task !== "segment" && <label>Label column<select value={ds.hf_label_col} onChange={(e) => { const c = conf?.columns.find((x) => x.name === e.target.value); up({ hf_label_col: e.target.value, ...(c?.names ? { classes: c.names } : {}) }); }}>
             {conf?.columns.map((c) => <option key={c.name} value={c.name}>{c.name} ({c.type})</option>)}</select></label>}
         </div>}
+        {hf && conf && !conf.columns.some((c) => c.type === "Image") && <div className="msg error">This dataset has no image column
+          ({conf.columns.slice(0, 6).map((c) => `${c.name}: ${c.type}`).join(", ")}{conf.columns.length > 6 ? ", …" : ""}). NN Builder trains networks on
+          images: choose an image dataset, for example uoft-cs/cifar10, ylecun/mnist or food101.</div>}
+        {hf && conf && ds.task !== "segment" && conf.columns.some((c) => c.type === "Image") && !conf.columns.some((c) => c.type === "ClassLabel") &&
+          <div className="msg warn">No class column (ClassLabel) was found: type the class names below, in label order.</div>}
+        {hf && conf?.columns.some((c) => c.type === "Image") && <HfPreview repo={ds.hf_repo} config={ds.hf_config || conf.name} split={ds.hf_train_split}
+          labelCol={ds.task === "segment" ? "" : ds.hf_label_col} names={ds.classes} />}
         {!st.secrets.huggingface && <p className="muted small">Gated or private datasets need your Hugging Face token (Connection tab).</p>}
       </>}
 
@@ -121,4 +128,35 @@ function ClassBox({ classes, onChange }: { classes: string[]; onChange: (c: stri
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [classes]);
   return <textarea rows={6} value={text} onChange={(e) => { setText(e.target.value); onChange(e.target.value.split("\n").map((s) => s.trim()).filter(Boolean)); }} />;
+}
+
+/** the class balance of the chosen split (counted by Hugging Face's dataset viewer) and, on request, 8 example images */
+function HfPreview({ repo, config, split, labelCol, names }: { repo: string; config: string; split: string; labelCol: string; names: string[] }) {
+  const [freq, setFreq] = useState<[string, number][] | null>(null);
+  const [pics, setPics] = useState<{ src: string; label: unknown }[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    setFreq(null); setPics(null);
+    if (labelCol) api.hfPreview(repo, config, split, labelCol, false).then((r) => setFreq(r.frequencies)).catch(() => setFreq([]));
+  }, [repo, config, split, labelCol]);
+  const counts = freq?.map((f) => f[1]) ?? [];
+  const most = Math.max(1, ...counts), least = counts.length ? Math.min(...counts) : 0;
+  const label = (v: unknown) => (typeof v === "number" && names[v] ? names[v] : String(v ?? ""));
+  return <div className="aug" style={{ margin: "8px 0" }}>
+    {freq && freq.length > 0 && <>
+      <strong>Class balance</strong> <span className="muted small">({split}, {counts.reduce((a, b) => a + b, 0).toLocaleString()} images, {freq.length} classes:
+        {" "}{least === most ? "perfectly balanced" : `the largest class has ${(most / Math.max(1, least)).toFixed(1)}× the images of the smallest`})</span>
+      {most / Math.max(1, least) > 3 && <p className="st-warn small">Strongly unbalanced: accuracy can look good while small classes are ignored; check the per-class
+        F1 in Results.</p>}
+      <details><summary className="small">Images per class</summary><div className="small" style={{ columns: 3 }}>
+        {freq.map(([k, n]) => <div key={k}>{k}: {n.toLocaleString()} <span style={{ display: "inline-block", height: 6, width: `${(60 * n) / most}px`, background: "var(--accent)" }} /></div>)}
+      </div></details>
+    </>}
+    {freq && freq.length === 0 && labelCol && <span className="muted small">No class statistics from Hugging Face for this split. </span>}
+    <p className="row small"><button className="small" disabled={busy} onClick={() => { setBusy(true); api.hfPreview(repo, config, split, labelCol, true)
+      .then((r) => setPics(r.samples)).catch(() => setPics([])).finally(() => setBusy(false)); }}>{busy ? "Loading…" : "Show 8 example images"}</button>
+      <span className="muted">only these few images are fetched; the dataset itself is downloaded on the GPU machine</span></p>
+    {pics && <div className="thumbs">{pics.map((p, i) => <div key={i} className="thumb"><img src={p.src} style={{ width: 64, height: 64, objectFit: "cover", imageRendering: "pixelated" }} />
+      <div>{label(p.label).slice(0, 12)}</div></div>)}{pics.length === 0 && <span className="muted small">No example images available.</span>}</div>}
+  </div>;
 }

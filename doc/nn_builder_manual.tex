@@ -237,6 +237,13 @@ tensor shape, every block with its output and parameters), and on the right the 
   \item \textbf{Move:} drag blocks; \ui{Arrange left to right} (\kbd{Cmd+L}) places them in columns by depth (the longest path from the
         Input), stacking parallel branches in their column.
   \item \textbf{Undo / Redo:} \kbd{Cmd+Z} / \kbd{Shift+Cmd+Z}; changes made within 0.6 seconds of each other count as one step.
+  \item \textbf{Copy / paste:} select blocks (Shift-click or drag a box with Shift) and use \kbd{Cmd+C} / \kbd{Cmd+V}: the copies, with the
+        arrows between them, appear below the originals, ready to be connected.
+  \item \textbf{Residual block after selected:} inserts Conv 3$\times$3 $\rightarrow$ BatchNorm $\rightarrow$ ReLU $\rightarrow$ Conv
+        3$\times$3 $\rightarrow$ BatchNorm $\rightarrow$ Add (with a skip from the selected block) $\rightarrow$ ReLU, keeping its size and channels.
+  \item \textbf{Collapse repeated blocks ($\times N$):} draws identical consecutive groups as one node, for example the 40 encoder blocks
+        of ViT-g/14 as ``Encoder block $\times$40'' (287 blocks become 8). It is a read-only view; double-click the node or press
+        \ui{Show every block} to edit again.
 \end{itemize}
 
 \subsection{The layer table}
@@ -424,6 +431,7 @@ Global pool & $(C,H,W)\rightarrow(C)$ & average or max over the whole image\\
 Upsample & $(C,H,W)\rightarrow(C,sH,sW)$ & scale, nearest or bilinear; no parameters\\
 BatchNorm & same shape & normalises each channel over the batch~\cite{ioffe2015batchnorm}; images and vectors only\\
 LayerNorm & same shape & normalises each sample~\cite{ba2016layernorm}; on tokens, over the dimension; on an image, over (channels, height, width)\\
+GroupNorm & same shape & normalises each image over groups of channels; independent of the batch, so good for small batches; the channels must divide by the number of groups (often 32)\\
 Dropout & same shape & rate: the fraction of values set to zero during training~\cite{srivastava2014dropout}\\
 Flatten & $(C,H,W)\rightarrow(CHW)$ & \\
 Dense & $(n)\rightarrow(u)$; tokens $(N,D)\rightarrow(N,u)$ & units, activation; on tokens it acts on each token (the transformer MLP)\\
@@ -504,7 +512,12 @@ Gated or private datasets need a Hugging Face token (Connection tab), which the 
 
 \note{\textbf{Only image datasets work.} A text corpus such as \texttt{HuggingFaceFW/fineweb-edu} (web pages and their metadata) has no
 image column and no class column: the image and label columns then point at unrelated text, the class list stays empty, and the design
-is marked as having problems. Use datasets such as \texttt{uoft-cs/cifar10}, \texttt{ylecun/mnist} or \texttt{food101}.}
+is marked as having problems. Use datasets such as \texttt{uoft-cs/cifar10}, \texttt{ylecun/mnist} or \texttt{food101}. The Dataset tab
+now says so at once when a dataset has no image column.}
+
+After \ui{Read info}, the tab also shows the \textbf{class balance} of the training split (counted by Hugging Face's dataset viewer) with a
+warning when the largest class has more than three times the images of the smallest, and \ui{Show 8 example images} fetches just eight
+pictures to check that the right columns are chosen (the dataset itself is still downloaded only on the GPU machine).
 
 \subsection{Kaggle}
 Type the dataset slug (\texttt{owner/name}); with the Kaggle token stored, the application lists its files and recognises the common
@@ -621,6 +634,7 @@ Mixed precision & faster on T4/A100-class GPUs, half the activation memory~\cite
 Stop the EC2 instance & stop the instance when the run ends (saves money)\\
 Data augmentation & horizontal / vertical flip, random crop after padding, rotation, brightness/contrast; training images only~\cite{cubuk2018autoaugment}. Flips change the meaning of digits; vertical flips suit aerial images\\
 Copy my token to the machine & needed for Kaggle data on a server/EC2 and for gated Hugging Face data\\
+Start from ImageNet weights & transfer learning: torchvision's pretrained ResNet-18, VGG-16 or ViT-B/16 loaded into the matching demo, tensor by tensor (a new output head for your classes starts at random); optionally train only the new head. Images are then normalised with ImageNet's statistics. Usually far better than training from scratch on small datasets; use a smaller learning rate (e.g.\ 0.0001) when fine-tuning everything\\
 \bottomrule
 \end{longtable}
 
@@ -690,7 +704,11 @@ For a finished run (open it in the Train tab): the test accuracy (and top-5 accu
 recall and F1 of every class with their macro averages and the hardest classes, the confusion matrix (rows: true class, columns: predicted;
 the diagonal is correct), sample predictions with their confidence (wrong ones marked), the feature maps of the first test image (first
 eight channels of early layers), the first layer's filters as small pictures, and for segmentation the true and predicted masks and the IoU
-of every class. \ui{Show files} reveals \file{model.pt}, \file{train.py} and \file{results.json}. The weights load in PyTorch with
+of every class; \textbf{Grad-CAM} heat maps on the sample images (where the network looked: the last image-shaped layer's feature maps
+weighted by how strongly the predicted class depends on them~\cite{selvaraju2016gradcam}); and a gallery of up to 16
+\textbf{misclassified} test images with their true and predicted class. \ui{Show files} reveals \file{model.pt}, \file{train.py} and
+\file{results.json}, and with \ui{Also save the trained model as TorchScript and ONNX} also \file{model.ts} (load with
+\texttt{torch.jit.load}, no NN Builder code needed) and \file{model.onnx} (for ONNX Runtime and other frameworks). The weights load in PyTorch with
 \texttt{Net().load\_state\_dict(torch.load("model.pt"))} using the \texttt{Net} class from the same \file{train.py}.
 
 %=====================================================================================================================================
@@ -1362,6 +1380,8 @@ not: no training results exist yet. Treat it as a starting point for experiments
   2015. \href{https://arxiv.org/abs/1505.04597}{arXiv:1505.04597}.
 \bibitem{russakovsky2014imagenet} O.~Russakovsky et al. ImageNet large scale visual recognition challenge. 2014.
   \href{https://arxiv.org/abs/1409.0575}{arXiv:1409.0575}.
+\bibitem{selvaraju2016gradcam} R.~R. Selvaraju et al. Grad-CAM: visual explanations from deep networks via gradient-based localization.
+  2016. \href{https://arxiv.org/abs/1610.02391}{arXiv:1610.02391}.
 \bibitem{simonyan2014vgg} K.~Simonyan and A.~Zisserman. Very deep convolutional networks for large-scale image recognition. 2014.
   \href{https://arxiv.org/abs/1409.1556}{arXiv:1409.1556}.
 \bibitem{srivastava2014dropout} N.~Srivastava, G.~Hinton, A.~Krizhevsky, I.~Sutskever and R.~Salakhutdinov. Dropout: a simple way to

@@ -308,3 +308,17 @@ fn transformer_blocks() {
     let g4 = chain(vec![("input", json!({})), ("to_tokens", json!({"mode": "rows"})), ("output", json!({}))]);
     assert!(analyze(&g4, &Dataset::default()).nodes[2].messages[0].contains("Token pool"));
 }
+
+#[test]
+fn groupnorm_block() {
+    let g = chain(vec![("input", json!({})), ("conv2d", json!({"filters": 32})), ("groupnorm", json!({"groups": 8})), ("global_pool", json!({})), ("output", json!({}))]);
+    let a = analyze(&g, &mnist());
+    assert!(a.ok, "{:?}", a.problems);
+    let gn = a.nodes.iter().find(|n| n.kind == "groupnorm").unwrap();
+    assert_eq!((gn.params, gn.out.clone()), (64, Some(vec![32, 28, 28])));
+    assert!(model_code(&g, &a).unwrap().contains("nn.GroupNorm(8, 32)"));
+    let bad = chain(vec![("input", json!({})), ("conv2d", json!({"filters": 32})), ("groupnorm", json!({"groups": 5})), ("global_pool", json!({})), ("output", json!({}))]);
+    let a = analyze(&bad, &mnist());
+    let gn = a.nodes.iter().find(|n| n.kind == "groupnorm").unwrap();
+    assert!(!a.ok && gn.status == "error" && gn.messages[0].contains("32 channels into 5 groups"), "{:?}", gn.messages);
+}

@@ -113,6 +113,18 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
           </div>
           {datasetSource === "builtin" && train.aug_hflip && datasetTask !== "segment" && <p className="muted small">Note: flipping digits (MNIST) changes their meaning; use flips for objects and photos.</p>}
         </div>
+        <div className="wide aug"><strong>Start from ImageNet weights</strong>
+          <span className="muted small"> (transfer learning: much better results on small datasets; the images become 3-channel and are normalised as for ImageNet)</span>
+          <div className="row">
+            <label>Weights<select value={train.pretrained} onChange={(e) => set({ pretrained: e.target.value as TrainSettings["pretrained"], ...(e.target.value ? {} : { freeze: "none" }) })}>
+              <option value="">none (random start)</option><option value="resnet18">torchvision ResNet-18 (for the ResNet-18 demo)</option>
+              <option value="vgg16">torchvision VGG-16 (for the VGG-16 demo)</option><option value="vit_b_16">torchvision ViT-B/16 (for the ViT-Base/16 demo)</option></select></label>
+            {train.pretrained && <label className="chk"><input type="checkbox" checked={train.freeze === "backbone"}
+              onChange={(e) => set({ freeze: e.target.checked ? "backbone" : "none" })} />train only the new output layer (freeze the rest)</label>}
+          </div>
+          {train.pretrained && <p className="muted small">The weights are loaded layer by layer into your design (on the GPU machine); a design that
+            no longer matches the network stops with a clear message. Use a small learning rate for fine-tuning (e.g. 0.0001), or freeze and use 0.001.</p>}
+        </div>
         <div className="wide aug"><strong>Training recipe</strong>
           <span className="muted small"> (the defaults are plain training at a constant learning rate)</span>
           <button className="small" style={{ marginLeft: 8 }} onClick={() => set(RECOMMENDED)}
@@ -148,6 +160,8 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
           {!train.early_stop && train.val_fraction === 0 && <p className="muted small">0% = the curves' "validation" is the test data (fine for
             a quick look; for a paper, hold out a validation part instead).</p>}
         </div>
+        <label className="chk wide"><input type="checkbox" checked={train.export} onChange={(e) => set({ export: e.target.checked })} />
+          Also save the trained model as TorchScript (model.ts) and ONNX (model.onnx), to use it without this code</label>
         <label className="chk wide"><input type="checkbox" checked={train.amp} onChange={(e) => set({ amp: e.target.checked })} />Mixed precision on the GPU (faster on a T4)</label>
         {kind === "aws" && <label className="chk wide"><input type="checkbox" checked={train.stop_instance} onChange={(e) => set({ stop_instance: e.target.checked })} />Stop the EC2 instance when the run ends (saves money)</label>}
         {kind !== "kaggle" && needsToken && <label className="chk wide"><input type="checkbox" checked={copyTokens} onChange={(e) => setCopyTokens(e.target.checked)} />

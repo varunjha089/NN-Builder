@@ -47,7 +47,7 @@ fn main() {
                 4 => add(&mut g, "convtranspose2d", json!({"filters": 1 + r.next(8), "kernel": [2 + r.next(2), 2 + r.next(2)], "stride": [2, 2], "padding": r.next(2), "output_padding": r.next(2)}), &[last]),
                 5 => { let a = add(&mut g, "conv2d", json!({"filters": 6}), &[last.clone()]); let b = add(&mut g, "conv2d", json!({"filters": 6, "kernel": [1, 1]}), &[last]);
                        if r.next(2) == 0 { add(&mut g, "add", json!({}), &[a, b]) } else { add(&mut g, "concat", json!({}), &[a, b]) } }
-                6 => add(&mut g, ["batchnorm", "layernorm", "dropout", "activation"][r.next(4) as usize], json!({"fn": "gelu"}), &[last]),
+                6 => add(&mut g, ["batchnorm", "layernorm", "dropout", "activation", "groupnorm"][r.next(5) as usize], json!({"fn": "gelu", "groups": 2}), &[last]),
                 7 => add(&mut g, "upsample", json!({"scale": 2, "mode": (["nearest", "bilinear"][r.next(2) as usize])}), &[last]),
                 _ => add(&mut g, "conv2d", json!({"filters": 4}), &[last]),
             };
