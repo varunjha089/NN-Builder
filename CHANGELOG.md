@@ -3,6 +3,18 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 05_11_26_17_49_50
+
+**Manual: a full chapter on writing designs in the NNB language** (`2dd973d`)
+
+doc/language.tex (included by the manual) teaches the language from the first line to functions and
+loops: settings, connections, labels, let and arithmetic, repeat, for, def, several inputs and paths
+into groups, a table of every block, the rules in brief, the error messages, and how text and canvas
+stay in step. Its examples are files in doc/examples/ (LeNet-5, a small ResNet with a function and a
+loop, a small ViT, a small U-Net) shown with \VerbatimInput; tests/text.rs builds every example (no
+error or warning, text kept, code compiles) and every snippet in the chapter. A misspelled setting now
+suggests the nearest word ('stide' -> 'stride').
+
 ## 05_11_26_17_44_03
 
 **Docs: README, manual and CLAUDE.md for the changes since 0.3.0; scripts/make_changelog.py** (`3469f15`)
