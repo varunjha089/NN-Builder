@@ -8,6 +8,7 @@
 # Tasks: "classify" (one label per image) and "segment" (a class for every pixel; images + masks).
 import glob
 import json
+import math
 import os
 import random
 import signal
@@ -456,12 +457,35 @@ def main():
     early, patience = bool(cfg.get("early_stop")), max(1, int(cfg.get("patience", 5)))
     es = {"best": None, "best_epoch": 0, "bad": 0}
     best_path = os.path.join(OUT, "best_model.pt")
-    opt = (torch.optim.SGD(model.parameters(), lr=cfg["lr"], momentum=0.9) if cfg["optimizer"] == "sgd"
-           else torch.optim.Adam(model.parameters(), lr=cfg["lr"]))
+    # the training recipe: optimizer with weight decay, learning-rate schedule, label smoothing, gradient clipping
+    wd = float(cfg.get("weight_decay") or 0)
+    base_lr = cfg["lr"]
+    if cfg["optimizer"] == "sgd":
+        opt = torch.optim.SGD(model.parameters(), lr=base_lr, momentum=0.9, weight_decay=wd)
+    elif cfg["optimizer"] == "adamw":
+        opt = torch.optim.AdamW(model.parameters(), lr=base_lr, weight_decay=wd)
+    else:
+        opt = torch.optim.Adam(model.parameters(), lr=base_lr, weight_decay=wd)
+    smoothing = float(cfg.get("label_smoothing") or 0)
+    clip = float(cfg.get("grad_clip") or 0)
+    schedule = cfg.get("schedule", "constant")
     amp = bool(cfg.get("amp", True)) and device.type == "cuda"
     scaler = torch.amp.GradScaler("cuda", enabled=amp)
     ck_path = os.path.join(OUT, "checkpoint.pt")
     steps = (len(train) + bs - 1) // bs
+    total_steps, warm_steps = cfg["epochs"] * steps, int(float(cfg.get("warmup_epochs") or 0) * steps)
+    # reduce-on-plateau state (halve the learning rate after `plateau_patience` epochs without a lower validation loss)
+    plat = {"mult": 1.0, "best": None, "bad": 0}
+    plateau_patience = max(2, int(cfg.get("plateau_patience", 3)))
+
+    def lr_at(i):
+        """the learning rate for optimizer step i (counted from 0 over the whole run): linear warm-up, then the schedule"""
+        if warm_steps and i < warm_steps:
+            return base_lr * (i + 1) / warm_steps
+        if schedule == "cosine":
+            prog = min(1.0, (i - warm_steps) / max(1, total_steps - warm_steps))
+            return base_lr * 0.5 * (1 + math.cos(math.pi * prog))
+        return base_lr * plat["mult"]
     zero = {"loss_sum": 0.0, "n": 0, "correct": 0, "units": 0, "seconds": 0.0}
     # where training stands: `epoch` = last finished epoch, `step` = batches already done of the next one (with their running sums)
     pos = {"epoch": 0, "step": 0, "sums": dict(zero)}
@@ -478,6 +502,7 @@ def main():
             scaler.load_state_dict(ck["scaler"])
         pos = {"epoch": ck["epoch"], "step": ck.get("step", 0), "sums": ck.get("sums") or dict(zero)}
         es = ck.get("es") or es
+        plat = ck.get("plat") or plat
         if ck.get("steps") not in (None, steps):
             pos["step"], pos["sums"] = 0, dict(zero)  # a different batch size or dataset size: restart the epoch
         rng = ck.get("rng") or {}
@@ -498,7 +523,7 @@ def main():
         if device.type == "cuda":
             rng["cuda"] = torch.cuda.get_rng_state_all()
         return {"model": model.state_dict(), "opt": opt.state_dict(), "scaler": scaler.state_dict(), "epoch": pos["epoch"], "step": pos["step"],
-                "steps": steps, "sums": pos["sums"], "rng": rng, "resumes": resumes, "es": es, "version": 3}
+                "steps": steps, "sums": pos["sums"], "rng": rng, "resumes": resumes, "es": es, "plat": plat, "version": 4}
 
     def checkpoint(reason):
         if save_checkpoint(ck_path, state()):
@@ -514,7 +539,9 @@ def main():
     gpu = torch.cuda.get_device_name(0) if device.type == "cuda" else "cpu"
     emit("start", device=str(device), gpu=gpu, torch=torch.__version__, python=sys.version.split()[0], params=n_params, task=TASK,
          train_size=len(train), val_size=len(val) if val is not None else 0, test_size=len(test), epochs=cfg["epochs"],
-         early_stop=early, patience=patience if early else None, monitor=monitor if early else None, amp=amp, augmentation={k: v for k, v in AUG.items() if v})
+         early_stop=early, patience=patience if early else None, monitor=monitor if early else None,
+         recipe={"optimizer": cfg["optimizer"], "lr": base_lr, "weight_decay": wd, "schedule": schedule, "warmup_epochs": cfg.get("warmup_epochs", 0),
+                 "label_smoothing": smoothing, "grad_clip": clip}, amp=amp, augmentation={k: v for k, v in AUG.items() if v})
     if pos["epoch"] == 0 and pos["step"] == 0:
         one_batch_check(model, loader(1), device)
     every = max(1, steps // 20)
@@ -529,11 +556,17 @@ def main():
             sums = pos["sums"] if pos["step"] else dict(zero)
             for step, (x, y) in enumerate(loader(epoch, pos["step"]), pos["step"] + 1):
                 x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
+                lr_now = lr_at((epoch - 1) * steps + step - 1)
+                for g in opt.param_groups:
+                    g["lr"] = lr_now
                 opt.zero_grad(set_to_none=True)
                 with torch.autocast(device_type="cuda", enabled=amp):
                     out = model(x)
-                    loss = nn.functional.cross_entropy(out, y)
+                    loss = nn.functional.cross_entropy(out, y, label_smoothing=smoothing)
                 scaler.scale(loss).backward()
+                if clip:
+                    scaler.unscale_(opt)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
                 scaler.step(opt)
                 scaler.update()
                 sums["loss_sum"] += loss.item() * len(y)
@@ -557,7 +590,8 @@ def main():
                     break
             val_loss, val_acc, _, miou, _ = evaluate(model, vl, device)
             ev = dict(epoch=epoch, train_loss=round(sums["loss_sum"] / max(sums["n"], 1), 5), train_acc=round(sums["correct"] / max(sums["units"], 1), 5),
-                      val_loss=round(val_loss, 5), val_acc=round(val_acc, 5), seconds=round(sums["seconds"] + time.time() - t0, 2), partial=stopped)
+                      val_loss=round(val_loss, 5), val_acc=round(val_acc, 5), seconds=round(sums["seconds"] + time.time() - t0, 2), partial=stopped,
+                      lr=float(f"{opt.param_groups[0]['lr']:.3g}"))
             if SEG:
                 ev["val_miou"] = round(miou, 5)
             emit("epoch", **ev)
@@ -571,6 +605,14 @@ def main():
                     emit("best", epoch=epoch, monitor=monitor, value=round(value, 5))
             elif not stopped:
                 es["bad"] += 1
+            if schedule == "plateau" and not stopped:
+                if plat["best"] is None or val_loss < plat["best"] - 1e-4:
+                    plat.update(best=val_loss, bad=0)
+                else:
+                    plat["bad"] += 1
+                    if plat["bad"] >= plateau_patience and plat["mult"] > 1e-3:
+                        plat.update(mult=plat["mult"] * 0.5, bad=0)
+                        emit("lr_drop", epoch=epoch, lr=float(f"{base_lr * plat['mult']:.3g}"))
             pos.update(epoch=epoch, step=0, sums=dict(zero))
             checkpoint("epoch")
             last_ck = time.time()

@@ -1,10 +1,33 @@
 // Train on Kaggle, a college GPU or AWS: settings, start, follow (curves, log), stop, fetch; the list of runs.
 import { useEffect, useRef, useState } from "react";
-import { api, errText, type AppState, type RunStatus, type TrainSettings } from "./api";
+import { api, errText, type Analysis, type AppState, type RunStatus, type TrainSettings } from "./api";
+
+/** the recipe that suits most networks here (and is the usual one for transformers): AdamW with weight decay, warm-up then cosine decay,
+ *  label smoothing, gradient clipping */
+const RECOMMENDED: Partial<TrainSettings> = { optimizer: "adamw", weight_decay: 0.05, schedule: "cosine", warmup_epochs: 5, label_smoothing: 0.1, grad_clip: 1 };
+
+/** rough GPU memory for training, in GB: weights + gradients + Adam's two moments (16 bytes per parameter), the layer outputs kept for the
+ *  backward pass (about twice each output, 2 bytes with mixed precision, 4 without), and about 0.6 GB for CUDA itself */
+function memoryGB(a: Analysis | null, batch: number, amp: boolean): { total: number; state: number; act: number } | null {
+  if (!a) return null;
+  const state = (a.total_params * 16) / 1e9;
+  const outs = a.nodes.reduce((t, n) => t + (n.out ? n.out.reduce((p, x) => p * x, 1) : 0), 0);
+  const act = (outs * batch * (amp ? 2 : 4) * 2) / 1e9;
+  return { total: state + act + 0.6, state, act };
+}
+
+/** GPU memory of a target in GB: Kaggle and EC2 g4dn have a 16 GB GPU; an SSH machine as Prepare found it (nvidia-smi) */
+function gpuGB(st: AppState, target: string, kind: string): number | null {
+  if (kind === "kaggle") return 16;
+  const m = st.machines.find((x) => x.machine.name === target);
+  const mib = m?.prepared?.gpus.map((g) => Number(/(\d+)\s*MiB/.exec(g)?.[1] ?? 0)).filter((x) => x > 0);
+  if (mib && mib.length) return Math.max(...mib) / 1024;
+  return kind === "aws" ? 16 : null;
+}
 import { Chart } from "./Preview";
 
-export function TrainTab({ st, ok, train, setTrain, runId, openRun, toast, startJob, datasetSource, datasetTask }: {
-  st: AppState; ok: boolean; train: TrainSettings; setTrain: (t: TrainSettings) => void; runId: string | null; openRun: (id: string | null) => void;
+export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, toast, startJob, datasetSource, datasetTask }: {
+  st: AppState; ok: boolean; analysis: Analysis | null; train: TrainSettings; setTrain: (t: TrainSettings) => void; runId: string | null; openRun: (id: string | null) => void;
   toast: (m: string) => void; startJob: () => void; datasetSource: string; datasetTask: string;
 }) {
   const [targets, setTargets] = useState<{ name: string; kind: string; prepared?: boolean }[]>([]);
@@ -65,7 +88,7 @@ export function TrainTab({ st, ok, train, setTrain, runId, openRun, toast, start
         <label>Epochs<input type="number" min={1} max={1000} value={train.epochs} onChange={(e) => set({ epochs: Number(e.target.value) })} /></label>
         <label>Batch size<input type="number" min={1} max={8192} value={train.batch_size} onChange={(e) => set({ batch_size: Number(e.target.value) })} /></label>
         <label>Learning rate<input type="number" step={0.0001} min={0.0000001} max={1} value={train.lr} onChange={(e) => set({ lr: Number(e.target.value) })} /></label>
-        <label>Optimizer<select value={train.optimizer} onChange={(e) => set({ optimizer: e.target.value })}><option value="adam">Adam</option><option value="sgd">SGD (momentum 0.9)</option></select></label>
+        <label>Optimizer<select value={train.optimizer} onChange={(e) => set({ optimizer: e.target.value })}><option value="adam">Adam</option><option value="adamw">AdamW (decoupled weight decay)</option><option value="sgd">SGD (momentum 0.9)</option></select></label>
         <label>Random seed<input type="number" min={0} value={train.seed} onChange={(e) => set({ seed: Math.max(0, Math.floor(Number(e.target.value))) })}
           title="Fixes the initial weights, the test split taken from the training data, and the batch order; run several seeds to report a mean" /></label>
         <label>Training images (0 = all)<input type="number" min={0} value={train.limit_train} onChange={(e) => set({ limit_train: Number(e.target.value) })} /></label>
@@ -83,6 +106,22 @@ export function TrainTab({ st, ok, train, setTrain, runId, openRun, toast, start
             {datasetTask !== "segment" && <label>random crop, padding<input type="number" min={0} max={16} value={train.aug_crop} onChange={(e) => set({ aug_crop: Number(e.target.value) })} />px</label>}
           </div>
           {datasetSource === "builtin" && train.aug_hflip && datasetTask !== "segment" && <p className="muted small">Note: flipping digits (MNIST) changes their meaning; use flips for objects and photos.</p>}
+        </div>
+        <div className="wide aug"><strong>Training recipe</strong>
+          <span className="muted small"> (the defaults are plain training at a constant learning rate)</span>
+          <button className="small" style={{ marginLeft: 8 }} onClick={() => set(RECOMMENDED)}
+            title="AdamW, weight decay 0.05, 5 warm-up epochs then cosine decay, label smoothing 0.1, gradient clipping 1.0">Use recommended</button>
+          <div className="row">
+            <label>Learning-rate schedule<select value={train.schedule} onChange={(e) => set({ schedule: e.target.value as TrainSettings["schedule"] })}>
+              <option value="constant">constant</option><option value="cosine">cosine decay to 0</option>
+              <option value="plateau">halve when validation loss stalls (3 epochs)</option></select></label>
+            <label>warm-up<input type="number" min={0} max={50} step={1} value={train.warmup_epochs} onChange={(e) => set({ warmup_epochs: Number(e.target.value) })} />epochs</label>
+            <label>weight decay<input type="number" min={0} max={1} step={0.01} value={train.weight_decay} onChange={(e) => set({ weight_decay: Number(e.target.value) })} /></label>
+            <label>label smoothing<input type="number" min={0} max={0.5} step={0.05} value={train.label_smoothing} onChange={(e) => set({ label_smoothing: Number(e.target.value) })} /></label>
+            <label>clip gradients at<input type="number" min={0} max={100} step={0.5} value={train.grad_clip} onChange={(e) => set({ grad_clip: Number(e.target.value) })} />(0 = off)</label>
+          </div>
+          {train.weight_decay > 0 && train.optimizer === "adam" && <p className="muted small">With Adam, weight decay is mixed into the adaptive
+            step; AdamW applies it separately, which usually works better.</p>}
         </div>
         <div className="wide aug"><strong>Validation and early stopping</strong>
           <span className="muted small"> (validation data is taken from the training data; the test data is then used only once, at the end)</span>
@@ -108,6 +147,24 @@ export function TrainTab({ st, ok, train, setTrain, runId, openRun, toast, start
         {kind !== "kaggle" && needsToken && <label className="chk wide"><input type="checkbox" checked={copyTokens} onChange={(e) => setCopyTokens(e.target.checked)} />
           Copy my {datasetSource === "kaggle" ? "Kaggle" : "Hugging Face"} token to the machine (a file only you can read; needed for Kaggle data, and for gated Hugging Face data)</label>}
       </div>
+      {(() => {
+        // what is missing for this target, and whether the design fits its GPU
+        const need: string[] = [];
+        if ((kind === "kaggle" || kind === "aws") && !st.tools_ready) need.push("Install the tools (Connection → Install tools)");
+        if (kind === "kaggle" && !st.secrets.kaggle) need.push("add your Kaggle API token (Connection → Kaggle)");
+        if (kind === "aws" && !st.secrets.aws) need.push("add your AWS access key (Connection → AWS)");
+        const mem = memoryGB(analysis, train.batch_size, train.amp), gpu = gpuGB(st, target, kind);
+        return <>
+          {need.length > 0 && <div className="msg warn">Before training on {target}: {need.join("; ")}.</div>}
+          {mem && <p className={`small ${gpu && mem.total > gpu * 0.9 ? "st-warn" : "muted"}`}>Estimated GPU memory for training: about
+            {" "}{mem.total < 1 ? mem.total.toFixed(2) : mem.total.toFixed(1)} GB (weights and optimizer {mem.state.toFixed(2)} GB, layer outputs
+            {" "}{mem.act.toFixed(2)} GB at batch {train.batch_size})
+            {gpu ? ` · ${target === "Kaggle" ? "Kaggle's GPU" : target} has ${gpu.toFixed(0)} GB` : ""}
+            {gpu && mem.state + 0.6 > gpu ? ": the model alone does not fit; use a larger GPU." :
+              gpu && mem.total > gpu * 0.9 ? ": likely out of memory, lower the batch size." : "."}
+            {" "}A rough estimate: the first epoch shows the real use.</p>}
+        </>;
+      })()}
       <p className="row"><button className="primary" onClick={start} disabled={!ok}>Train on {target} ▶</button>
         {!ok && <span className="st-error">Fix the design and the dataset first.</span>}</p>
 

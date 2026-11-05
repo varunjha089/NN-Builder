@@ -165,6 +165,7 @@ pub fn start(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_tokens: 
     if !gpu.is_empty() && !gpu.chars().all(|c| c.is_ascii_digit() || c == ',') {
         bail!("GPU: a number like 0, or 0,1 (empty = any).");
     }
+    preflight(target, creds)?;
     let id = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
     let d = pr.runs_dir().join(&id);
     if d.exists() {
@@ -195,7 +196,7 @@ pub fn start(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_tokens: 
                 info.url = format!("https://www.kaggle.com/code/{r}");
                 info.kernel = r;
                 info.status = "running".into();
-                info.note = "Running on Kaggle's servers. Kaggle shows progress only when the notebook ends; the results are then downloaded here.".into();
+                info.note = "Running on Kaggle's servers. The curves come from the notebook's log, read every 30 s; the results are downloaded when it ends.".into();
                 save(&d, &info)?;
                 log(format!("Pushed: {}", info.url));
                 return Ok(id);
@@ -218,6 +219,24 @@ pub fn start(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_tokens: 
         save(&d, &info)?;
     }
     res.map(|_| id)
+}
+
+/// what a target needs before a run is created at all (so that a missing tool or key does not leave a failed run behind)
+pub fn preflight(target: &str, creds: &Creds) -> Result<()> {
+    let aws = target != KAGGLE && remote::machine(target).map(|m| m.kind == "aws").unwrap_or(false);
+    if (target == KAGGLE || aws) && !cloud::tools_ready() {
+        bail!("Install the tools first: Connection → Install tools (once; the kaggle and boto3 helpers, about 60 MB).");
+    }
+    if target == KAGGLE && creds.kaggle.is_none() {
+        bail!("Add your Kaggle API token first (Connection → Kaggle).");
+    }
+    if aws && creds.aws.is_none() {
+        bail!("Add your AWS access key first (Connection → AWS).");
+    }
+    if target != KAGGLE && remote::machine(target).is_none() {
+        bail!("Unknown machine {target:?} (Connection tab).");
+    }
+    Ok(())
 }
 
 /// AWS: start the instance and wait until ssh answers; sets m.host. Returns what AWS said about it (spot or not, the spot request).
@@ -663,6 +682,26 @@ pub fn fetch(pr: &Project, id: &str, creds: &Creds, log: &Log) -> Result<()> {
     Ok(())
 }
 
+/// the log text without the NNB_EVENT lines (those are the metrics)
+fn log_without_events(text: &str) -> String {
+    text.lines().map(|l| l.rsplit('\r').next().unwrap_or(l)).filter(|l| !l.starts_with("NNB_EVENT ")).collect::<Vec<_>>().join("\n")
+}
+
+/// live progress of a running Kaggle notebook: its log so far gives the metrics (NNB_EVENT lines) and the log tail. The files are
+/// rewritten whole each time (the log only grows); when the notebook ends, the downloaded outputs replace them.
+fn kaggle_live(c: &KaggleCreds, d: &Path, info: &mut RunInfo) {
+    let Ok(text) = cloud::kaggle_logs(c, &info.kernel) else { return };
+    let events: Vec<&str> = text.lines().filter_map(|l| l.rsplit('\r').next().and_then(|l| l.strip_prefix("NNB_EVENT ")))
+        .filter(|l| serde_json::from_str::<Value>(l).is_ok()).collect();
+    if !events.is_empty() {
+        let body = events.join("\n") + "\n";
+        if std::fs::write(d.join("metrics.jsonl"), &body).is_ok() {
+            info.offset = body.len() as u64;
+        }
+    }
+    let _ = std::fs::write(d.join("log.txt"), log_without_events(&text));
+}
+
 fn kaggle_fetch(c: &KaggleCreds, d: &Path, info: &mut RunInfo) -> Result<()> {
     let out = d.join("kaggle_output");
     cloud::kaggle_output(c, &info.kernel, &out)?;
@@ -673,11 +712,8 @@ fn kaggle_fetch(c: &KaggleCreds, d: &Path, info: &mut RunInfo) -> Result<()> {
     }
     // the notebook's own log (a JSON list of stream records) -> log.txt
     if let Some(logf) = std::fs::read_dir(&out)?.filter_map(|e| e.ok()).map(|e| e.path()).find(|p| p.extension().map(|x| x == "log").unwrap_or(false)) {
-        let raw = std::fs::read_to_string(&logf).unwrap_or_default();
-        let text = serde_json::from_str::<Vec<Value>>(&raw)
-            .map(|v| v.iter().filter_map(|r| r["data"].as_str()).collect::<String>())
-            .unwrap_or(raw);
-        std::fs::write(d.join("log.txt"), text)?;
+        let text = cloud::stream_text(&std::fs::read_to_string(&logf).unwrap_or_default());
+        std::fs::write(d.join("log.txt"), log_without_events(&text))?;
     }
     // the files that matter are copied into the run folder; the download itself is not kept
     let _ = std::fs::remove_dir_all(&out);
@@ -708,6 +744,7 @@ pub fn status(pr: &Project, id: &str, since: usize, creds: &Creds) -> Result<Sta
                                 state = end_event(&d).unwrap_or(s);
                             } else {
                                 state = "running".into();
+                                kaggle_live(c, &d, &mut info);
                             }
                         }
                         Err(e) => {

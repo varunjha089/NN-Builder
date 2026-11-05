@@ -177,6 +177,26 @@ pub fn kaggle_status(c: &KaggleCreds, reference: &str) -> Result<(String, String
     Ok((s.into(), out.trim().to_string()))
 }
 
+/// the notebook's log so far: Kaggle also gives it while the notebook is still running (the text of its stream records)
+pub fn kaggle_logs(c: &KaggleCreds, reference: &str) -> Result<String> {
+    let (code, out) = capture(kaggle(c)?.args(["kernels", "logs", reference]), None);
+    if code != 0 {
+        bail!("Kaggle: {}", last_line(&out));
+    }
+    Ok(stream_text(&out))
+}
+
+/// a Kaggle log (a JSON list of {"stream_name", "time", "data"} records, possibly after other output) as plain text
+pub fn stream_text(raw: &str) -> String {
+    let json = match (raw.find('['), raw.rfind(']')) {
+        (Some(a), Some(b)) if b > a => &raw[a..=b],
+        _ => return raw.to_string(),
+    };
+    serde_json::from_str::<Vec<serde_json::Value>>(json)
+        .map(|v| v.iter().filter_map(|r| r["data"].as_str()).collect::<String>())
+        .unwrap_or_else(|_| raw.to_string())
+}
+
 pub fn kaggle_output(c: &KaggleCreds, reference: &str, into: &Path) -> Result<()> {
     std::fs::create_dir_all(into)?;
     let (code, out) = capture(kaggle(c)?.args(["kernels", "output", reference, "-p"]).arg(into).arg("-o"), None);

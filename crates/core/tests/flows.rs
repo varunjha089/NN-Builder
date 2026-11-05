@@ -67,6 +67,8 @@ S="$NNB_FAKE_REMOTE/kaggle_state"
 case "$1 $2" in
   "kernels push") cp "$4/kernel-metadata.json" "$NNB_FAKE_REMOTE/pushed.json"; grep -q "class Net" "$4/train.py" || exit 3; echo 0 > "$S"; echo "Kernel version 1 successfully pushed." ;;
   "kernels status") n=$(cat "$S"); echo $((n+1)) > "$S"; if [ "$n" -ge 1 ]; then echo "$3 has status \"KernelWorkerStatus.COMPLETE\""; else echo "$3 has status \"KernelWorkerStatus.RUNNING\""; fi ;;
+  "kernels logs") echo 'Warning: a newer version of the client exists'
+     echo '[{"stream_name":"stderr","time":1,"data":"downloading\r 50%\r100%\n"},{"stream_name":"stdout","time":2,"data":"NNB_EVENT {\"event\": \"start\", \"epochs\": 2}\nNNB_EVENT {\"event\": \"epoch\", \"epoch\": 1, \"val_acc\": 0.7}\n"}]' ;;
   "kernels output") mkdir -p "$5"; echo '{"event": "done", "test_acc": 0.8}' > "$5/metrics.jsonl"; echo '{"test_acc": 0.8, "classes": []}' > "$5/results.json"
      echo '[{"stream_name":"stdout","time":1,"data":"training...\n"}]' > "$5/nnb-x.log" ;;
   *) echo "unexpected $*"; exit 2 ;;
@@ -222,7 +224,13 @@ fn remote_and_kaggle_runs() {
     for _ in 0..3 {
         info.last_poll = 0.0; // skip the 30 s wait between Kaggle polls
         store::write_json(&pr.runs_dir().join(&id).join("run.json"), &info).unwrap();
-        state = runs::status(&pr, &id, 0, &creds).unwrap().state;
+        let st = runs::status(&pr, &id, 0, &creds).unwrap();
+        state = st.state.clone();
+        if state == "running" {
+            // live progress from the notebook's log while it runs
+            assert!(st.events.iter().any(|e| e["event"] == "epoch" && e["epoch"] == 1), "live events: {:?}", st.events);
+            assert!(st.log.iter().any(|l| l.contains("100%")) && !st.log.iter().any(|l| l.contains("NNB_EVENT")), "{:?}", st.log);
+        }
         info = runs::info(&pr.runs_dir().join(&id));
         if state == "done" {
             break;

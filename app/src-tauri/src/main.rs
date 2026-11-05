@@ -473,6 +473,7 @@ async fn run_start(st: State<'_, App>, target: String, gpu: String, copy_tokens:
     if p.is_draft() {
         return Err("Save the demo first (File → Save Project… ⌘S): runs are kept with a saved project.".into());
     }
+    runs::preflight(&target, &creds()).map_err(e)?;
     let ok = st.jobs.start(&format!("Train on {target}"), move |log: Log| {
         let id = runs::start(&p, &target, gpu.trim(), &creds(), copy_tokens, &log).map_err(e)?;
         Ok(format!("RUN {id}"))

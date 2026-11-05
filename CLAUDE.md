@@ -31,6 +31,14 @@ crates/core/src/
                            validate on test as before), early_stop + patience + monitor (val_loss | val_acc | val_miou); clean() forces
                            val_fraction 0.1 when early stopping is on. harness: best_model.pt (atomic), "best" / "early_stop" events,
                            es state in the checkpoint (survives spot resume), final test on the best weights; CI: ci_early_stop_check.py.
+                           Training recipe: optimizer adam | adamw | sgd, weight_decay, schedule constant | cosine | plateau (halve after 3
+                           epochs without lower val loss; state "plat" in the checkpoint), warmup_epochs (linear), label_smoothing,
+                           grad_clip; the learning rate is a function of the global step (lr_at), so it resumes exactly; "lr" in each epoch
+                           event, "lr_drop" events. Train tab "Use recommended" (AdamW 0.05, cosine, 5 warm-up, smoothing 0.1, clip 1).
+                           CI: ci_recipe_check.py. Train tab also: what is missing for the target, and a GPU memory estimate (16 B/param
+                           + 2× layer outputs × batch, vs Kaggle/g4dn 16 GB or the SSH machine's nvidia-smi memory).
+                           Kaggle live progress: while running, `kaggle kernels logs` (cloud::kaggle_logs) gives metrics.jsonl and log.txt
+                           every 30 s (kaggle_live). runs::preflight refuses a run (before creating it) without tools / token / key.
                            Kaggle runs: data in /tmp/nnb_data (not /kaggle/working, the notebook output), checkpoint removed at the
                            end, kaggle_output deleted after metrics/results/model/log are copied; the run card shows the last check.
   dataset.rs               Dataset (builtin | huggingface | kaggle; task classify | segment; resize (built-in); hf_mask_col, kaggle_mask_dir;

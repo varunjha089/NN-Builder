@@ -525,7 +525,8 @@ The \ui{Code} tab shows the complete \file{train.py}; \ui{Copy} and \ui{Export t
   \item loads the data with the chosen transforms and augmentation (training images only), normalised with the dataset's statistics;
   \item runs a \textbf{one-batch check} on the GPU machine: one batch forward and backward, comparing every layer's real shape with the
         application's, and stopping at once with a clear message on a difference;
-  \item trains with Adam~\cite{kingma2014adam} or SGD with momentum 0.9, with automatic mixed precision on CUDA~\cite{micikevicius2017mixed};
+  \item trains with Adam~\cite{kingma2014adam}, AdamW or SGD with momentum 0.9 and the chosen recipe (learning-rate schedule with warm-up,
+        weight decay, label smoothing, gradient clipping), with automatic mixed precision on CUDA~\cite{micikevicius2017mixed};
   \item after each epoch evaluates on the test data and writes a \textbf{checkpoint} (\file{checkpoint.pt}; optionally also every few
         minutes inside an epoch); a restarted run \textbf{resumes} from it, in the middle of an epoch with the same batch order;
   \item writes one JSON line per event to \file{metrics.jsonl} (start, batch, epoch, checkpoint, resume, interrupted, done, stopped,
@@ -586,7 +587,7 @@ so a run can continue on another machine if its own machine is lost (essential f
 GPU & T4 or P100 (Kaggle's choice) & whatever the server has (e.g. RTX A6000 48 GB) & NVIDIA T4 16 GB, 4 vCPU\\
 Cost & free (about 30 GPU hours a week) & free & per hour; spot is cheaper but may be interrupted\\
 Limits & about 12 h per run; runs may queue & the server's rules (SLURM time limits) & your quota for G instances\\
-Progress & shown when the notebook ends & live (every few seconds) & live\\
+Progress & from the notebook's log, every 30 s & live (every few seconds) & live\\
 Needs & Kaggle token & SSH access & AWS key, key file, quota\\
 \bottomrule
 \end{tabularx}
@@ -602,7 +603,8 @@ GPU on the machine & which GPU(s) to use on a shared server (empty = any free on
 Epochs & passes over the training data\\
 Batch size & images per step; larger is faster but needs more memory (halve it on ``out of memory'')\\
 Learning rate & 0.001 suits Adam on small networks; very large networks (ViT-Base and bigger) need 0.0001 or less~\cite{steiner2021howtotrain}\\
-Optimizer & Adam~\cite{kingma2014adam} or SGD with momentum 0.9 (often better for ResNet-style networks with a good schedule~\cite{goyal2017accurate})\\
+Optimizer & Adam~\cite{kingma2014adam}, AdamW (weight decay applied separately~\cite{loshchilov2017adamw}) or SGD with momentum 0.9 (often better for ResNet-style networks with a good schedule~\cite{goyal2017accurate})\\
+Training recipe & learning-rate schedule (constant; cosine decay to 0; or halve when the validation loss stalls for 3 epochs), linear warm-up over the first epochs, weight decay, label smoothing, gradient clipping. \ui{Use recommended} sets AdamW, weight decay 0.05, 5 warm-up epochs then cosine, label smoothing 0.1 and clipping at 1.0, the usual recipe for transformers and a good one for CNNs~\cite{steiner2021howtotrain,goyal2017accurate}. The defaults are plain constant-rate training, as in earlier versions\\
 Training images (0 = all) & a quick trial on a subset\\
 End the run after (hours of running) & a time limit, summed over resumes (protects the budget)\\
 Checkpoint every (minutes) & also checkpoint inside an epoch; 0 = only at the end of each epoch (spot instances then use 10 minutes)\\
@@ -619,6 +621,10 @@ Copy my token to the machine & needed for Kaggle data on a server/EC2 and for ga
 
 \screenshot{07_train}{The Train tab: where to train, the main settings, augmentation, and the list of runs. Settings for SSH and EC2
 machines (time limit, checkpoint interval, automatic resumes, stopping the instance) appear when such a machine is chosen.}{fig:train}
+
+Above the Train button the tab says what is still missing for the chosen target (tools, token, key) and gives a rough estimate of the
+GPU memory the training needs (16 bytes per parameter plus the layer outputs at the chosen batch size), compared with the target's GPU
+(Kaggle and EC2 g4dn: 16 GB; an SSH machine: as \ui{Prepare} found it). It warns when the design is likely not to fit.
 
 \subsection{Following a run}
 \ui{Train on \ldots} starts a background task whose log appears at the bottom right. The run card then shows the state (starting,

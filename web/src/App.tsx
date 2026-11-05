@@ -174,7 +174,7 @@ export default function App() {
           reloadProject={() => { reload(); loadProject(true); }} remember={remember} />}
         {tab === "dataset" && ds && <DatasetTab st={st} ds={ds} setDs={setDs} problems={dsProblems} toast={toast} />}
         {tab === "code" && <CodeTab toast={toast} />}
-        {tab === "train" && train && <TrainTab st={st} ok={ok} train={train} setTrain={setTrain} runId={runId} openRun={setRunId} toast={toast} startJob={startJob} datasetSource={ds?.source ?? "builtin"} datasetTask={ds?.task ?? "classify"} />}
+        {tab === "train" && train && <TrainTab st={st} ok={ok} analysis={analysis} train={train} setTrain={setTrain} runId={runId} openRun={setRunId} toast={toast} startJob={startJob} datasetSource={ds?.source ?? "builtin"} datasetTask={ds?.task ?? "classify"} />}
         {tab === "results" && <ResultsTab runId={runId} />}
         {tab === "settings" && <SettingsTab />}
         {tab === "connection" && <ConnectionTab st={st} reload={reload} toast={toast} startJob={startJob} />}

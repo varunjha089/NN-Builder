@@ -33,3 +33,7 @@ jobs:
         run: |
           cargo run -q -p nnb-core --example resume_case -- ci_early early
           python python/ci_early_stop_check.py ci_early
+      - name: Training recipe (real training on CPU)
+        run: |
+          cargo run -q -p nnb-core --example resume_case -- ci_recipe recipe
+          python python/ci_recipe_check.py ci_recipe

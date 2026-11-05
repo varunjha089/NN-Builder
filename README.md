@@ -37,8 +37,8 @@ Version 0.2.0 · MIT licence · Rust (Tauri 2) + React; the generated training c
   image and its mask are flipped and rotated together.
 - **Code tab:** the standalone `train.py` the GPU machine runs: the model, the data loading, a training loop with mixed precision, a
   checkpoint every epoch and automatic resume, a one-batch shape check before training, and the results. Export it to run it anywhere.
-- **Train tab:** one button. On **Kaggle** the script is pushed as a private GPU notebook (with the dataset attached) and the results are
-  downloaded when it ends. On an **SSH machine** or **AWS** it is copied there and started detached (SLURM, systemd-run, tmux or
+- **Train tab:** one button. On **Kaggle** the script is pushed as a private GPU notebook (with the dataset attached); the curves follow
+  the notebook's log every 30 s and the results are downloaded when it ends. On an **SSH machine** or **AWS** it is copied there and started detached (SLURM, systemd-run, tmux or
   nohup+setsid, whichever the machine allows), so it keeps going when your Mac sleeps or the network drops; the curves update while the app is
   open, and the results come back when the run ends. AWS: the app starts the instance, and the run stops it at the end.
 - **EC2 spot instances**: when AWS gives its 2-minute interruption notice, the run saves a checkpoint in the middle of the epoch and stops;

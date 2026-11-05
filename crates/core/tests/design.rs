@@ -164,6 +164,15 @@ fn early_stopping_settings() {
     // old train.json files without the new fields still load
     let old: TrainSettings = serde_json::from_str(r#"{"epochs":3,"batch_size":64,"lr":0.001,"optimizer":"adam","seed":1,"amp":true,"limit_train":0,"max_hours":6.0,"stop_instance":true}"#).unwrap();
     assert!(!old.early_stop && old.patience == 5 && old.monitor == "val_loss");
+    assert!(old.schedule == "constant" && old.weight_decay == 0.0 && old.label_smoothing == 0.0 && old.grad_clip == 0.0 && old.warmup_epochs == 0.0,
+        "old projects keep plain constant-rate training");
+    let r = TrainSettings { epochs: 10, optimizer: "adamw".into(), schedule: "warp".into(), warmup_epochs: 50.0, weight_decay: -1.0,
+        label_smoothing: 0.9, grad_clip: f64::NAN, ..Default::default() }.clean();
+    assert_eq!((r.optimizer.as_str(), r.schedule.as_str(), r.warmup_epochs, r.weight_decay, r.label_smoothing, r.grad_clip),
+        ("adamw", "constant", 5.0, 0.0, 0.5, 0.0));
+    let code = train_script(&model::starter(), &mnist(), &analyze(&model::starter(), &mnist()),
+        &TrainSettings { optimizer: "adamw".into(), schedule: "cosine".into(), warmup_epochs: 2.0, ..Default::default() }.clean(), "r").unwrap();
+    assert!(code.contains("\"schedule\": \"cosine\"") && code.contains("\"optimizer\": \"adamw\""));
     let g = model::starter();
     let ds = mnist();
     let code = train_script(&g, &ds, &analyze(&g, &ds), &t, "es").unwrap();
