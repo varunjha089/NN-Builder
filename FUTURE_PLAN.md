@@ -1,5 +1,10 @@
 # Future plan
 
+## A text language for designs
+
+Numbered blocks with their connections written as text, editable next to the canvas: the detailed plan is in
+[PROGRAMMING_LANGUAGE.md](PROGRAMMING_LANGUAGE.md).
+
 ## Sentinel-1 and Sentinel-2 datasets
 
 ### Why the current data path is not enough
