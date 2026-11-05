@@ -108,7 +108,6 @@ fn every_kind_can_be_written_and_read() {
         ("cls_pos", json!({"cls": false})),
         ("attention", json!({"heads": 6, "dropout": 0.1})),
         ("token_pool", json!({"mode": "mean"})),
-        ("dense", json!({"units": 3, "activation": "relu", "unknown_setting": 7})),
     ];
     for (kind, p) in cases {
         let mut g = Graph::default();
@@ -234,6 +233,18 @@ fn errors_name_the_line() {
     assert!(e.message.contains("deep"), "{}", e.message);
     let e = err("1 input\n2 conv 8 3x3 99\n");
     assert!(e.message.contains("number 99"), "{}", e.message);
+    // settings a block does not have are refused, not kept silently
+    let e = err("1 input stride 2\n2 relu\n");
+    assert_eq!(e.line, 1);
+    assert!(e.message.contains("'stride' means nothing for input"), "{}", e.message);
+    let e = err("1 input\n2 dense 10 pad 1\n");
+    assert!(e.message.contains("'pad' means nothing for dense"), "{}", e.message);
+    let e = err("1 input\n2 conv 8 3x3 filtrs=4\n");
+    assert!(e.message.contains("no setting 'filtrs'") && e.message.contains("filters"), "{}", e.message);
+    let e = err("1 input\n2 relu foo=1\n");
+    assert!(e.message.contains("no setting 'foo'"), "{}", e.message);
+    let e = err("1 input\n2 flatten size=3\n");
+    assert!(e.message.contains("flatten has no settings"), "{}", e.message);
     let e = err("1 input\n2 repeat k {\n  a relu\n}\n");
     assert!(e.message.contains("'k' is not a number"), "{}", e.message);
 }
@@ -273,6 +284,17 @@ fn cycles_and_loose_blocks_still_print() {
     g.edges.push(model::Edge { id: "1".into(), source: "a".into(), target: "b".into() });
     let s = sync(&g);
     assert!(s.text.contains("<- none"), "{}", s.text);
+    // a loop on the canvas: the text names it and says what to do
+    let mut l = Graph::default();
+    for (id, kind) in [("a", "input"), ("b", "conv2d"), ("c", "batchnorm")] {
+        l.nodes.push(Node { id: id.into(), kind: kind.into(), ..Default::default() });
+    }
+    for (s, t) in [("a", "b"), ("b", "c"), ("c", "b")] {
+        l.edges.push(model::Edge { id: format!("{s}{t}"), source: s.into(), target: t.into() });
+    }
+    let ls = sync(&l);
+    let d = expand(&ls.text, &ls).err().expect("a loop cannot be built");
+    assert!(d[0].message.contains("go in a circle"), "{:?}", d);
     let e = expand(&s.text, &s).unwrap();
     assert!(same_structure(&e.graph, &s), "{}", s.text);
 }

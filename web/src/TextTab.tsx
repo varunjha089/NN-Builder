@@ -5,6 +5,9 @@ import { errText, type Analysis, type Graph } from "./api";
 
 type TextError = { line: number; col: number; message: string };
 
+/** a text not applied yet (it has problems) when the tab is left: shown again on return, as long as the design has not changed meanwhile */
+let draft: { base: string; text: string } | null = null;
+
 /** the line of every top-level label (a block inside a repeat or a function call belongs to the line of its call: "5.3.b" -> line of 5) */
 function labelLines(text: string): Map<string, number> {
   const out = new Map<string, number>();
@@ -43,7 +46,7 @@ export function TextTab({ graph, analysis, persist, applyText, format, showBlock
   format: () => Promise<void>;
   showBlock: (id: string) => void;
 }) {
-  const [text, setText] = useState(graph.text ?? "");
+  const [text, setText] = useState(draft && draft.base === (graph.text ?? "") ? draft.text : graph.text ?? "");
   const [errors, setErrors] = useState<TextError[]>([]);
   const [busy, setBusy] = useState(false);
   const [help, setHelp] = useState(false);
@@ -61,7 +64,18 @@ export function TextTab({ graph, analysis, persist, applyText, format, showBlock
     if (t !== seen.current && !typing.current) { setText(t); setErrors([]); }
     seen.current = t;
   }, [graph.text]);
-  useEffect(() => () => window.clearTimeout(timer.current), []);
+  // the latest text, for keeping a draft when the tab is left
+  const latest = useRef({ text, base: graph.text ?? "" });
+  latest.current = { text, base: graph.text ?? "" };
+  useEffect(() => {
+    // a draft brought back: show its problems again
+    if (draft && draft.text === latest.current.text && draft.text !== latest.current.base) apply(draft.text);
+    return () => {
+      window.clearTimeout(timer.current);
+      draft = latest.current.text !== latest.current.base ? { base: latest.current.base, text: latest.current.text } : null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const apply = useCallback((t: string) => {
     setBusy(true);

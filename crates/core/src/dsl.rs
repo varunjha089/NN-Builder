@@ -100,6 +100,11 @@ fn lex(text: &str) -> Result<Vec<T>, Diagnostic> {
                 out.push(T { tok: Tok::Word(cs[start..i].iter().collect()), line: ln, col: start + 1 });
                 continue;
             }
+            if c == '?' {
+                // the printer writes "?<id>" for an input that comes later: the arrows on the canvas go in a circle
+                return Err(diag(ln, i + 1, "this block takes an input from a block further down: the arrows on the canvas go in a circle. \
+                    Remove one arrow of the loop on the canvas (a network computes each block once, from the blocks before it)."));
+            }
             let rest: String = cs[i..].iter().take(2).collect();
             match SYMS.iter().find(|s| rest.starts_with(**s)) {
                 Some(s) => {
@@ -698,6 +703,15 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
                 ("attention", "drop") => "dropout",
                 (_, other) => other,
             };
+            // only the settings this block has (a stray name would be kept but do nothing)
+            let known: Vec<String> = model::defaults(kind).as_object().map(|d| d.keys().cloned().collect()).unwrap_or_default();
+            if !known.iter().any(|x| x == k) {
+                return Err(if known.is_empty() {
+                    format!("{} has no settings ('{k}=' means nothing for it)", kind_word(kind))
+                } else {
+                    format!("{} has no setting '{k}' (its settings: {})", kind_word(kind), known.join(", "))
+                });
+            }
             p.insert(k.to_string(), to_json(k, v));
             i += 1;
             continue;
@@ -741,12 +755,12 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
                         (_, "same" | "valid") if conv_like => {
                             p.insert("padding".into(), json!(lw));
                         }
-                        (_, "stride") => {
+                        (_, "stride") if conv_like || kind == "pool2d" => {
                             let v = next_val(&mut i, "stride")?;
                             let j = if matches!(&v, Val::Word(s) if s == "size") { json!("size") } else { to_json("stride", &v) };
                             p.insert("stride".into(), j);
                         }
-                        (_, "pad") => {
+                        (_, "pad") if conv_like || kind == "pool2d" => {
                             let v = next_val(&mut i, "pad")?;
                             p.insert("padding".into(), to_json("padding", &v));
                         }
