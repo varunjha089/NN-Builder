@@ -3,6 +3,25 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 05_11_26_19_54_07
+
+**Docs: satellite images (Sentinel-2 / Sentinel-1) in the manual, plan status, CLAUDE.md** (`8a35f16`)
+
+## 05_11_26_19_49_45
+
+**Sentinel-2 / Sentinel-1 images: any number of bands from GeoTIFF or .npy** (`943a078`)
+
+Dataset: bands (the bands the model receives, in order), band_order (the bands in the files), sensor
+(s2 / s1 / other) and s1_db; the input has as many channels as bands (up to 32); checks for unknown or
+repeated bands. train.py reads Kaggle class folders of .tif (tifffile, installed when missing) or .npy
+files (bands first or last), picks the bands by name, converts Sentinel-1 to dB if asked, resizes,
+normalises each band by its own mean and spread (measured on up to 256 training images, kept in
+band_stats.json so a resumed run matches), augments with flips and quarter turns, and shows results as
+true-colour (B04 B03 B02) or VV / VH / VV-VH composites. Dataset tab: Image bands (Sentinel-2 with
+presets and band descriptions, Sentinel-1 with dB, other). CI: ci_multiband_check.py trains on generated
+Sentinel-2 (mixed .tif / .npy) and Sentinel-1 folders and checks bands, statistics and accuracy.
+FUTURE_PLAN.md: the order for the remaining architecture support.
+
 ## 05_11_26_19_29_52
 
 **net "name": explained in the manual, kept on Format, written into train.py** (`a92a72c`)
