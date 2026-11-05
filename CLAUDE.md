@@ -46,7 +46,8 @@ crates/core/src/
                            93,499,136 by hand, ResNet-18 1.80–1.83 G). Tests: summary.rs (incl. pdflatex of the table); CI recipe
                            check uses 6 classes and checks val_top5 / test_top5.
                            Phase 3: TrainSettings.pretrained (resnet18 | vgg16 | vit_b_16; harness load_pretrained: each design tensor in
-                           order gets the next unused torchvision tensor of the same shape; stops when < 80 % of weight tensors match;
+                           order gets the next unused torchvision tensor of the same shape, a BatchNorm the one after the matching
+                           convolution (producers(): forward hooks); stops when < 80 % of weight tensors match;
                            ImageNet normalisation) + freeze ("backbone" = train only unloaded tensors); Grad-CAM (last 4-D layer) on the
                            samples, "mistakes" (16 misclassified of up to 2000 test images); export (model.ts + model.onnx, fetched
                            with the results). CI: ci_pretrained_check.py compares the loaded demos with torchvision's own models.

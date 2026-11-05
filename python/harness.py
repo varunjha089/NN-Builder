@@ -114,24 +114,74 @@ def stats():
 
 
 # ---------------------------------------------------------------- pretrained weights
+def producers(model, x):
+    """for every module: the module whose output it received (one forward pass with hooks; in eval mode, so no statistics change)"""
+    made, kept, seen = {}, [], {}
+    def hook(name):
+        def f(mod, inp, out):
+            if inp and torch.is_tensor(inp[0]) and id(inp[0]) in made:
+                seen.setdefault(name, made[id(inp[0])])
+            if torch.is_tensor(out):
+                kept.append(out)  # keeps the object alive, so its id is not reused
+                made[id(out)] = name
+        return f
+    hs = [m.register_forward_hook(hook(n)) for n, m in model.named_modules() if n]
+    was = model.training
+    model.eval()
+    try:
+        with torch.no_grad():
+            model(x)
+    finally:
+        for h in hs:
+            h.remove()
+        model.train(was)
+    return seen
+
+
 def load_pretrained(model, name):
     """copy torchvision's ImageNet weights `name` (resnet18 | vgg16 | vit_b_16) into the design: each tensor of the design, in order, gets
-    the next unused torchvision tensor of the same shape (the demos are built in torchvision's layer order). Tensors without a match (a new
-    output head for another number of classes) keep their random start. Returns the names of the loaded tensors."""
+    the next unused torchvision tensor of the same shape (the demos are built in torchvision's layer order). BatchNorm tensors all have the
+    same shape (C,), so a BatchNorm instead gets the torchvision BatchNorm fed by the convolution that feeds it (found by a forward pass;
+    a ResNet block with a shortcut projection is laid out in a different order). Tensors without a match (a new output head for another
+    number of classes) keep their random start. Returns the names of the loaded tensors."""
     import torchvision
     os.environ.setdefault("TORCH_HOME", os.path.join(DATA, "torch"))
-    src = list(getattr(torchvision.models, name)(weights="DEFAULT").state_dict().items())
+    ref = getattr(torchvision.models, name)(weights="DEFAULT")
+    norm = torch.nn.modules.batchnorm._BatchNorm
+    def bn_names(m):
+        return {n for n, mod in m.named_modules() if isinstance(mod, norm)}
+    owner = lambda key: key.rsplit(".", 1)[0] if "." in key else ""
+    dev = next(model.parameters()).device
+    mine_from = producers(model, torch.zeros(1, *EXPECTED["input"], device=dev)) if bn_names(model) else {}
+    ref_from = producers(ref, torch.zeros(1, 3, 224, 224)) if bn_names(ref) else {}
+    ref_bn, my_bn = bn_names(ref), bn_names(model)
+    src = list(ref.state_dict().items())
     used = [False] * len(src)
     dst = model.state_dict()
-    loaded, missing = [], []
-    for key, t in dst.items():
-        j = next((j for j, (_, st) in enumerate(src) if not used[j] and st.shape == t.shape), None)
+    loaded, missing, pairs = [], [], {}
+    for key, t in dst.items():  # everything except BatchNorm: by order and shape
+        if owner(key) in my_bn:
+            continue
+        j = next((j for j, (k, st) in enumerate(src) if not used[j] and owner(k) not in ref_bn and st.shape == t.shape), None)
         if j is None:
             missing.append(key)
             continue
         used[j] = True
+        pairs.setdefault(owner(key), owner(src[j][0]))
         dst[key] = src[j][1].to(t.dtype)
         loaded.append(key)
+    index = {k: j for j, (k, _) in enumerate(src)}
+    for bn in [n for n, _ in model.named_modules() if n in my_bn]:  # BatchNorm: the one after the matching convolution
+        r = pairs.get(mine_from.get(bn))
+        rbn = next((n for n in ref_bn if ref_from.get(n) == r), None) if r else None
+        for key in [k for k in dst if owner(k) == bn]:
+            j = index.get(f"{rbn}.{key.rsplit('.', 1)[1]}") if rbn else None
+            if j is None or used[j] or src[j][1].shape != dst[key].shape:
+                missing.append(key)
+                continue
+            used[j] = True
+            dst[key] = src[j][1].to(dst[key].dtype)
+            loaded.append(key)
     model.load_state_dict(dst)
     weights = [k for k, v in model.state_dict().items() if v.dim() > 1]
     loaded_weights = [k for k in loaded if k in weights]
