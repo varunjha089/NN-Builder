@@ -13,6 +13,21 @@ What is still open, in the suggested order. Done work is in git and CLAUDE.md; t
   gallery, TorchScript / ONNX export, bfloat16, channels-last, the automatic batch split on a real out-of-memory, save memory, the
   measured memory and data-wait figures. A short Kaggle run of the ResNet-18 demo with ImageNet weights and export would cover most.
 
+## 1b. Handling more kinds of architecture (asked 2026-11-05; in this order, each building on the one before)
+
+1. **Sentinel-1/2 data** (section 5): images with 2-32 bands from GeoTIFF / .npy, band choice, per-band normalisation, radar in dB,
+   composites for display; then multi-label (BigEarthNet). *In progress: N-band input first.*
+2. **Several inputs and outputs:** more than one Input block (each bound to a data source or a band group: S1 + S2 fusion, Siamese
+   pairs) and more than one Output (multi-task heads, each with its loss and weight); shapes, codegen, text language and harness.
+3. **Weight sharing:** a block that reuses another block's weights (Siamese / twin networks).
+4. **Losses and custom blocks:** BCE, focal, Dice, MSE / L1 (regression), contrastive / triplet per output; a "custom PyTorch" block
+   (code plus a declared output shape, checked on the GPU machine by the one-batch check).
+5. **Transformer additions:** cross-attention (two inputs), attention masks (causal / padding), sinusoidal and rotary positions, RMSNorm.
+6. **Other data:** Conv1d / Conv3d and their pools (signals, volumes, video), LSTM / GRU, token embeddings for text.
+7. **Object detection:** an anchor-free head (FCOS / CenterNet style) with box losses and mAP, and box datasets.
+8. **Dynamic structures:** mixture-of-experts layers (top-k routing), early-exit heads.
+9. **Multi-GPU training:** DistributedDataParallel / FSDP on machines with several GPUs (college server, multi-GPU EC2).
+
 ## 2. The text language (details in [PROGRAMMING_LANGUAGE.md](PROGRAMMING_LANGUAGE.md), section 9)
 
 - A changed block that a function or loop made (on the canvas) still prints the text again; settings changes, moves, and blocks added,

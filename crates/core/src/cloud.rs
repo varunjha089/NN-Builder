@@ -116,7 +116,7 @@ pub fn class_folders(files: &[(String, String)]) -> Vec<(String, Vec<String>)> {
     use std::collections::{BTreeMap, BTreeSet};
     let img = |f: &str| {
         let l = f.to_ascii_lowercase();
-        [".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff"].iter().any(|e| l.ends_with(e))
+        [".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff", ".npy"].iter().any(|e| l.ends_with(e))
     };
     let mut by_parent: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (f, _) in files.iter().filter(|(f, _)| img(f)) {

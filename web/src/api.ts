@@ -22,6 +22,8 @@ export interface Dataset {
   hf_repo: string; hf_config: string; hf_train_split: string; hf_test_split: string; hf_image_col: string; hf_label_col: string;
   kaggle_slug: string; kaggle_train_dir: string; kaggle_test_dir: string;
   image_size: [number, number]; channels: number; classes: string[];
+  /** multispectral / radar images: the bands the model uses (in order), the bands in the files, the sensor, Sentinel-1 in dB */
+  bands?: string[]; band_order?: string[]; sensor?: "" | "s2" | "s1" | "other"; s1_db?: boolean;
 }
 
 export interface TrainSettings {

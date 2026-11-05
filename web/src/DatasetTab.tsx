@@ -105,12 +105,14 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
               : <input value={ds.kaggle_train_dir} onChange={(e) => up({ kaggle_train_dir: e.target.value.trim() })} placeholder="e.g. data/train" />}</label>
           <label>Test folder (optional)<input value={ds.kaggle_test_dir} onChange={(e) => up({ kaggle_test_dir: e.target.value.trim() })} placeholder="empty = 10% of the training images" /></label>
         </div>}
+        {ds.task !== "segment" && <BandsBox ds={ds} up={up} />}
       </>}
 
       {(ds.source !== "builtin" || ds.resize) && <div className="form">
         <label>Image height<input type="number" min={8} max={1024} value={ds.image_size[0]} onChange={(e) => up({ image_size: [Number(e.target.value), ds.image_size[1]] })} /></label>
         <label>Image width<input type="number" min={8} max={1024} value={ds.image_size[1]} onChange={(e) => up({ image_size: [ds.image_size[0], Number(e.target.value)] })} /></label>
-        <label>Channels<select value={ds.channels} onChange={(e) => up({ channels: Number(e.target.value) })}><option value={1}>1 (grey)</option><option value={3}>3 (colour)</option></select></label>
+        {ds.bands?.length ? <span className="muted small">Channels: {ds.bands.length} (the bands chosen above)</span>
+          : <label>Channels<select value={ds.channels} onChange={(e) => up({ channels: Number(e.target.value) })}><option value={1}>1 (grey)</option><option value={3}>3 (colour)</option></select></label>}
         {ds.source !== "builtin" && <label className="wide">{ds.task === "segment" ? "Classes, one per line (mask pixel value 0 = first line; with two classes any non-zero pixel is the second)" : "Class names, one per line, in label order"} ({ds.classes.length})
           <ClassBox classes={ds.classes} onChange={(classes) => up({ classes })} /></label>}
       </div>}
@@ -158,5 +160,49 @@ function HfPreview({ repo, config, split, labelCol, names }: { repo: string; con
       <span className="muted">only these few images are fetched; the dataset itself is downloaded on the GPU machine</span></p>
     {pics && <div className="thumbs">{pics.map((p, i) => <div key={i} className="thumb"><img src={p.src} style={{ width: 64, height: 64, objectFit: "cover", imageRendering: "pixelated" }} />
       <div>{label(p.label).slice(0, 12)}</div></div>)}{pics.length === 0 && <span className="muted small">No example images available.</span>}</div>}
+  </div>;
+}
+
+// ---------------------------------------------------------------- multispectral / radar images (Sentinel-2, Sentinel-1)
+const S2 = ["B01", "B02", "B03", "B04", "B05", "B06", "B07", "B08", "B09", "B10", "B11", "B12", "B8A"];
+const S2_INFO: Record<string, string> = { B01: "aerosol 443 nm, 60 m", B02: "blue 490 nm, 10 m", B03: "green 560 nm, 10 m", B04: "red 665 nm, 10 m",
+  B05: "red edge 705 nm, 20 m", B06: "red edge 740 nm, 20 m", B07: "red edge 783 nm, 20 m", B08: "near infrared 842 nm, 10 m",
+  B8A: "narrow NIR 865 nm, 20 m", B09: "water vapour 945 nm, 60 m", B10: "cirrus 1375 nm, 60 m", B11: "SWIR 1610 nm, 20 m", B12: "SWIR 2190 nm, 20 m" };
+const S2_PRESETS: [string, string[]][] = [["all 13", S2], ["10 m + 20 m (10)", ["B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B11", "B12"]],
+  ["true colour (B04 B03 B02)", ["B04", "B03", "B02"]], ["colour + near infrared", ["B04", "B03", "B02", "B08"]]];
+
+/** the image bands: ordinary pictures, or GeoTIFF / .npy files with Sentinel-2, Sentinel-1 or other bands */
+function BandsBox({ ds, up }: { ds: Dataset; up: (p: Partial<Dataset>) => void }) {
+  const sensor = ds.bands?.length ? ds.sensor || "other" : "";
+  const order = ds.band_order ?? [], chosen = ds.bands ?? [];
+  const set = (s: string) => {
+    if (s === "") up({ bands: [], band_order: [], sensor: "", s1_db: false });
+    else if (s === "s2") up({ sensor: "s2", band_order: S2, bands: S2, s1_db: false });
+    else if (s === "s1") up({ sensor: "s1", band_order: ["VV", "VH"], bands: ["VV", "VH"], s1_db: true });
+    else up({ sensor: "other", band_order: ["b1", "b2", "b3", "b4"], bands: ["b1", "b2", "b3", "b4"], s1_db: false });
+  };
+  // keep the bands in the files' order
+  const toggle = (b: string) => up({ bands: chosen.includes(b) ? chosen.filter((x) => x !== b) : order.filter((x) => x === b || chosen.includes(x)) });
+  return <div className="wide aug">
+    <strong>Image bands</strong>
+    <span className="muted small"> (satellite images: GeoTIFF .tif or .npy files with any number of bands, one folder per class, as in EuroSAT-MS)</span>
+    <p className="row">
+      <label className="radio"><input type="radio" checked={sensor === ""} onChange={() => set("")} />ordinary pictures (grey / colour)</label>
+      <label className="radio"><input type="radio" checked={sensor === "s2"} onChange={() => set("s2")} />Sentinel-2 (13 bands)</label>
+      <label className="radio"><input type="radio" checked={sensor === "s1"} onChange={() => set("s1")} />Sentinel-1 radar (VV, VH)</label>
+      <label className="radio"><input type="radio" checked={sensor === "other"} onChange={() => set("other")} />other bands</label>
+    </p>
+    {sensor !== "" && <>
+      <label className="wide">Bands in the files, in their order (space-separated; check the dataset's description)
+        <input value={order.join(" ")} onChange={(e) => { const o = e.target.value.split(/\s+/).filter((x) => x); up({ band_order: o, bands: chosen.filter((b) => o.includes(b)) }); }} /></label>
+      {sensor === "s2" && <p className="row small">{S2_PRESETS.map(([name, bs]) => <button key={name} className="small" onClick={() => up({ bands: order.filter((b) => bs.includes(b)) })}>{name}</button>)}</p>}
+      <div className="bandgrid">{order.map((b) => <label key={b} className="chk" title={S2_INFO[b] ?? ""}>
+        <input type="checkbox" checked={chosen.includes(b)} onChange={() => toggle(b)} />{b}{sensor === "s2" && S2_INFO[b] ? <span className="muted small"> {S2_INFO[b]}</span> : null}</label>)}</div>
+      {sensor === "s1" && <label className="chk"><input type="checkbox" checked={!!ds.s1_db} onChange={(e) => up({ s1_db: e.target.checked })} />
+        the files hold linear backscatter: convert to decibels (10·log10) first</label>}
+      <p className="muted small">The network receives {chosen.length} channels ({chosen.join(" ") || "none"}). Every band is normalised by its own mean and
+        spread, measured on the training images on the GPU machine. Flips and quarter turns are used for augmentation; the result pictures
+        show {sensor === "s2" ? "true colour (B04 B03 B02)" : sensor === "s1" ? "VV / VH / VV−VH" : "the first three bands"}.</p>
+    </>}
   </div>;
 }

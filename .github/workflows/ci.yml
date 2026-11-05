@@ -43,6 +43,11 @@ jobs:
           cargo run -q -p nnb-core --example resume_case -- ci_split_a split
           cargo run -q -p nnb-core --example resume_case -- ci_split_b split
           python python/ci_memory_check.py ci_memory ci_split_a ci_split_b
+      - name: Multispectral and radar images (Sentinel-2 / Sentinel-1 folders; real PyTorch on CPU)
+        run: |
+          pip install tifffile
+          cargo run -q -p nnb-core --example multiband_case -- ci_multiband
+          python python/ci_multiband_check.py ci_multiband
       - name: ImageNet weights in the demos (real PyTorch, downloads torchvision weights)
         run: |
           cargo run -q -p nnb-core --example pretrained_case -- ci_pretrained

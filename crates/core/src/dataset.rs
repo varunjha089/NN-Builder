@@ -50,7 +50,27 @@ pub struct Dataset {
     /// class names in label order (Hugging Face: from the ClassLabel feature; Kaggle: the class folder names)
     #[serde(default)]
     pub classes: Vec<String>,
+    /// multispectral / radar images (Sentinel-2, Sentinel-1, …) read from GeoTIFF or .npy files: the bands the model receives, in this
+    /// order (the number of bands is the number of channels). Empty = ordinary images (grey or colour, read with PIL).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bands: Vec<String>,
+    /// the order of the bands in the files (each file has these channels; `bands` picks from them by name)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub band_order: Vec<String>,
+    /// "s2" (Sentinel-2 optical) | "s1" (Sentinel-1 radar) | "other"; empty for ordinary images
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub sensor: String,
+    /// Sentinel-1: the files hold linear backscatter, converted to decibels (10·log10) before normalising
+    #[serde(default)]
+    pub s1_db: bool,
 }
+
+/// Sentinel-2 L1C bands in the order EuroSAT-MS stores them (B8A last); `SENTINEL2_10_20` are the 10 m and 20 m bands
+pub const SENTINEL2_BANDS: &[&str] = &["B01", "B02", "B03", "B04", "B05", "B06", "B07", "B08", "B09", "B10", "B11", "B12", "B8A"];
+pub const SENTINEL2_10_20: &[&str] = &["B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B11", "B12"];
+pub const SENTINEL1_BANDS: &[&str] = &["VV", "VH"];
+/// the most bands an image may have
+pub const MAX_BANDS: usize = 32;
 
 fn train() -> String {
     "train".into()
@@ -118,6 +138,10 @@ impl Default for Dataset {
             image_size: size64(),
             channels: 3,
             classes: vec![],
+            bands: vec![],
+            band_order: vec![],
+            sensor: String::new(),
+            s1_db: false,
         }
     }
 }
@@ -131,8 +155,14 @@ impl Dataset {
     pub fn input_shape(&self) -> Vec<usize> {
         match (self.source.as_str(), self.builtin_info()) {
             ("builtin", Some(b)) if !self.resize => b.shape.to_vec(),
+            _ if !self.bands.is_empty() => vec![self.bands.len(), self.image_size[0], self.image_size[1]],
             _ => vec![self.channels, self.image_size[0], self.image_size[1]],
         }
+    }
+
+    /// multispectral / radar images (bands chosen), not ordinary pictures
+    pub fn multiband(&self) -> bool {
+        !self.bands.is_empty()
     }
 
     pub fn class_names(&self) -> Vec<String> {
@@ -183,7 +213,27 @@ impl Dataset {
             if self.class_names().len() < 2 {
                 p.push("Give the class names (at least two): read them from the dataset with 'Read info', or type them.".into())
             }
-            if !(1..=3).contains(&self.channels) || self.channels == 2 {
+            if self.multiband() {
+                if self.bands.len() > MAX_BANDS {
+                    p.push(format!("At most {MAX_BANDS} bands."))
+                }
+                let ok_name = |b: &String| !b.is_empty() && b.len() <= 16 && b.chars().all(|c| c.is_ascii_alphanumeric() || "_-".contains(c));
+                if !self.bands.iter().chain(&self.band_order).all(ok_name) {
+                    p.push("Band names may contain letters, digits, - and _ only.".into())
+                }
+                if let Some(b) = self.bands.iter().find(|b| !self.band_order.contains(b)) {
+                    p.push(format!("The band {b} is not in the bands of the files ({}).", self.band_order.join(" ")))
+                }
+                if self.bands.iter().enumerate().any(|(i, b)| self.bands[..i].contains(b)) {
+                    p.push("A band is chosen twice.".into())
+                }
+                if self.source != "kaggle" {
+                    p.push("Multispectral and radar images are read from a Kaggle dataset of GeoTIFF (.tif) or .npy files, one folder per class.".into())
+                }
+                if self.task == "segment" {
+                    p.push("Segmentation of multispectral images is not supported yet: use classification.".into())
+                }
+            } else if !(1..=3).contains(&self.channels) || self.channels == 2 {
                 p.push("Channels must be 1 (grey) or 3 (colour).".into())
             }
             if self.image_size.iter().any(|&s| !(8..=1024).contains(&s)) {

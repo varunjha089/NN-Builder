@@ -23,6 +23,10 @@ OUT = os.getcwd() if ON_KAGGLE else os.path.dirname(os.path.abspath(__file__))
 DATA = os.environ.get("NNB_DATA") or ("/tmp/nnb_data" if ON_KAGGLE else os.path.join(os.path.expanduser("~"), ".nn_builder", "data"))
 TASK = DATASET.get("task", "classify")
 SEG = TASK == "segment"
+# multispectral / radar images (Sentinel-2, Sentinel-1, …): arrays of any number of bands from GeoTIFF or .npy files, not PIL pictures
+BANDS = list(DATASET.get("bands") or [])
+MULTI = bool(BANDS)
+BAND_STATS = None  # per-band (mean, std), measured on the training images (multiband_stats)
 AUG = TRAIN.get("aug", {})
 STOP = False
 INTERRUPT = False
@@ -111,6 +115,8 @@ IMAGENET = ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
 
 
 def stats():
+    if MULTI:
+        return BAND_STATS
     if TRAIN.get("pretrained"):
         return IMAGENET  # pretrained weights expect the images normalised as in their own training
     if DATASET["source"] == "builtin" and not DATASET.get("resize"):
@@ -351,6 +357,123 @@ def kaggle_pairs(root):
     return pairs
 
 
+# ---------------------------------------------------------------- multispectral / radar images
+BAND_EXT = (".tif", ".tiff", ".npy")
+
+
+def read_bands(path):
+    """one image file as a float32 tensor (bands, H, W) with the chosen bands, in the chosen order (decibels for Sentinel-1 if asked)"""
+    import numpy as np
+    if path.lower().endswith(".npy"):
+        a = np.load(path)
+    else:
+        try:
+            import tifffile
+        except ImportError:
+            subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "tifffile", "imagecodecs"], check=False)
+            import tifffile
+        a = tifffile.imread(path)
+    a = np.asarray(a, dtype=np.float32)
+    if a.ndim == 2:
+        a = a[None]
+    order = DATASET.get("band_order") or BANDS
+    # (H, W, bands) -> (bands, H, W): the band axis is the one that matches the number of bands of the files
+    if a.ndim == 3 and a.shape[0] != len(order) and a.shape[-1] == len(order):
+        a = a.transpose(2, 0, 1)
+    if a.ndim != 3 or a.shape[0] != len(order):
+        raise SystemExit(f"DATA: {os.path.basename(path)} has shape {tuple(a.shape)}, but the files should have {len(order)} bands "
+                         f"({' '.join(order)}); check the band order in the Dataset tab.")
+    a = a[[order.index(b) for b in BANDS]]
+    if DATASET.get("sensor") == "s1" and DATASET.get("s1_db"):
+        a = 10.0 * np.log10(np.clip(a, 1e-6, None))
+    t = torch.from_numpy(np.ascontiguousarray(a))
+    h, w = DATASET["image_size"]
+    if tuple(t.shape[1:]) != (h, w):
+        t = nn.functional.interpolate(t[None], size=(h, w), mode="bilinear", align_corners=False, antialias=True)[0]
+    return t
+
+
+class BandFolder(torch.utils.data.Dataset):
+    """one subfolder per class, each with GeoTIFF / .npy files; normalised per band; flips and quarter turns on the training data"""
+    def __init__(self, files, train):
+        self.files, self.train = files, train
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, i):
+        path, label = self.files[i]
+        x = read_bands(path)
+        if BAND_STATS is not None:
+            m, s = BAND_STATS
+            x = (x - torch.tensor(m).view(-1, 1, 1)) / torch.tensor(s).view(-1, 1, 1)
+        if self.train and not SEG:
+            if AUG.get("hflip") and random.random() < 0.5:
+                x = x.flip(-1)
+            if AUG.get("vflip") and random.random() < 0.5:
+                x = x.flip(-2)
+            if AUG.get("rotate") and x.shape[-1] == x.shape[-2]:
+                x = torch.rot90(x, random.randint(0, 3), (-2, -1))  # satellite images have no "up": quarter turns
+        return x, label
+
+
+def band_files(folder):
+    classes = sorted(d for d in os.listdir(folder) if os.path.isdir(os.path.join(folder, d)))
+    files = [(os.path.join(folder, c, f), k) for k, c in enumerate(classes) for f in sorted(os.listdir(os.path.join(folder, c)))
+             if f.lower().endswith(BAND_EXT)]
+    if classes != list(CLASSES):
+        raise SystemExit(f"DATA: the class folders are {classes}, but the design expects {CLASSES}.")
+    if not files:
+        raise SystemExit(f"DATA: no .tif / .tiff / .npy files in the class folders of {folder}.")
+    return files
+
+
+def multiband_stats(files, seed):
+    """mean and standard deviation of every band over up to 256 training images; kept in band_stats.json next to train.py, so a resumed
+    run normalises exactly as before"""
+    global BAND_STATS
+    path = os.path.join(OUT, "band_stats.json")
+    if os.path.exists(path):
+        with open(path) as f:
+            d = json.load(f)
+        if d.get("bands") == BANDS:
+            BAND_STATS = (tuple(d["mean"]), tuple(d["std"]))
+            return
+    pick = random.Random(seed).sample(files, min(256, len(files)))
+    total, sq, n = None, None, 0
+    for p, _ in pick:
+        x = read_bands(p).double().flatten(1)
+        total = x.sum(1) if total is None else total + x.sum(1)
+        sq = (x * x).sum(1) if sq is None else sq + (x * x).sum(1)
+        n += x.shape[1]
+    mean = total / n
+    std = (sq / n - mean * mean).clamp_min(1e-12).sqrt()
+    BAND_STATS = (tuple(round(float(v), 6) for v in mean), tuple(round(max(float(v), 1e-6), 6) for v in std))
+    with open(path, "w") as f:
+        json.dump({"bands": BANDS, "mean": BAND_STATS[0], "std": BAND_STATS[1]}, f)
+    emit("band_stats", bands=BANDS, mean=list(BAND_STATS[0]), std=list(BAND_STATS[1]))
+
+
+def composite(x):
+    """a picture (3 or 1 channels, 0..1) of a normalised multiband image: true colour B04 B03 B02 for Sentinel-2, VV / VH / VV-VH for
+    Sentinel-1, else the first three bands; each channel stretched between its 2nd and 98th percentile"""
+    m, s = BAND_STATS
+    x = x * torch.tensor(s).view(-1, 1, 1) + torch.tensor(m).view(-1, 1, 1)
+    pick = None
+    if DATASET.get("sensor") == "s2" and all(b in BANDS for b in ("B04", "B03", "B02")):
+        pick = [x[BANDS.index(b)] for b in ("B04", "B03", "B02")]
+    elif DATASET.get("sensor") == "s1" and all(b in BANDS for b in ("VV", "VH")):
+        vv, vh = x[BANDS.index("VV")], x[BANDS.index("VH")]
+        pick = [vv, vh, vv - vh]
+    if pick is None:
+        pick = [x[i] for i in range(min(3, x.shape[0]))]
+    out = []
+    for c in pick:
+        lo, hi = torch.quantile(c.flatten().float(), torch.tensor([0.02, 0.98]))
+        out.append(((c - lo) / (hi - lo if hi > lo else 1.0)).clamp(0, 1))
+    return torch.stack(out)
+
+
 def split(n, seed, part=0.1):
     idx = list(range(n))
     random.Random(seed).shuffle(idx)
@@ -361,7 +484,7 @@ def split(n, seed, part=0.1):
 def load_data(cfg):
     from torch.utils.data import Subset
     src = DATASET["source"]
-    train_t, test_t = image_transform(True), image_transform(False)
+    train_t, test_t = (None, None) if MULTI else (image_transform(True), image_transform(False))
     if src == "builtin":
         if SEG:
             raise SystemExit("DATA: the built-in datasets are for classification.")
@@ -384,6 +507,18 @@ def load_data(cfg):
             train, test, train_eval = SegPairs(HFPairs(tr), True), SegPairs(HFPairs(te), False), SegPairs(HFPairs(tr), False)
         else:
             train, test, train_eval = HFImages(tr, train_t), HFImages(te, test_t), HFImages(tr, test_t)
+    elif MULTI:
+        if TRAIN.get("pretrained"):
+            raise SystemExit("DATA: ImageNet weights expect 3-channel pictures; train multispectral images from scratch for now.")
+        root = kaggle_root()
+        files = band_files(kaggle_folder(root, DATASET["kaggle_train_dir"]))
+        if DATASET["kaggle_test_dir"]:
+            tr_files, te_files = files, band_files(kaggle_folder(root, DATASET["kaggle_test_dir"]))
+        else:
+            tr_i, te_i = split(len(files), cfg["seed"])
+            tr_files, te_files = [files[i] for i in tr_i], [files[i] for i in te_i]
+        multiband_stats(tr_files, cfg["seed"])
+        train, test, train_eval = BandFolder(tr_files, True), BandFolder(te_files, False), BandFolder(tr_files, False)
     else:
         root = kaggle_root()
         if SEG:
@@ -516,6 +651,8 @@ def pictures(model, test, device):
     if convs:
         w = convs[0].weight.detach().cpu()[:32]
         res["filters"] = {"kernel": list(w.shape[2:]), "images": [small(norm01(f[:3] if f.shape[0] == 3 else f[:1])) for f in w]}
+        if MULTI:
+            res["bands"] = BANDS
     maps = {}
     hooks = [getattr(model, name).register_forward_hook(lambda m, i, o, name=name: maps.__setitem__(name, o.detach().cpu()))
              for name, _, conv in LAYERS if conv]
@@ -531,9 +668,11 @@ def pictures(model, test, device):
             res["feature_maps"].append({"layer": label, "channels": int(maps[name].shape[1]),
                                         "maps": [small(norm01(c.unsqueeze(0)), 32)[0] for c in maps[name][0, :8]]})
     m_t, s_t = torch.tensor(mean).view(-1, 1, 1), torch.tensor(std).view(-1, 1, 1)
+    # what a sample looks like: the picture itself, or a colour composite of a multiband image
+    look = composite if MULTI else (lambda x: (x * s_t + m_t).clamp(0, 1))
     k = max(1, len(CLASSES) - 1)
     for j, i in enumerate(idx):
-        img = (test[i][0] * s_t + m_t).clamp(0, 1)
+        img = look(test[i][0])
         if SEG:
             pred = out[j].argmax(0).cpu()
             truth = test[i][1]
@@ -563,7 +702,7 @@ def pictures(model, test, device):
                 for b, (x, y) in enumerate(batch):
                     p = int(pr[b].argmax())
                     if p != int(y):
-                        mistakes.append({"image": small((x * s_t + m_t).clamp(0, 1)), "label": int(y), "pred": p, "prob": round(float(pr[b][p]), 3),
+                        mistakes.append({"image": small(look(x)), "label": int(y), "pred": p, "prob": round(float(pr[b][p]), 3),
                                          "index": start + b})
                 if len(mistakes) >= 16:
                     break

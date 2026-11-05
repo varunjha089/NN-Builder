@@ -375,3 +375,31 @@ fn large_widths_and_out_of_range_values() {
     let g = chain(vec![("input", json!({})), ("conv2d", json!({"kernel": [40, 40]})), ("global_pool", json!({})), ("output", json!({}))]);
     assert!(analyze(&g, &ds).nodes.iter().any(|n| n.messages.iter().any(|m| m.contains("kernel is 40"))));
 }
+
+#[test]
+fn multiband_datasets() {
+    use nnb_core::dataset::{SENTINEL1_BANDS, SENTINEL2_BANDS};
+    let s = |v: &[&str]| v.iter().map(|b| b.to_string()).collect::<Vec<_>>();
+    let ds = Dataset { source: "kaggle".into(), kaggle_slug: "owner/eurosat-ms".into(), image_size: [64, 64], sensor: "s2".into(),
+        band_order: s(SENTINEL2_BANDS), bands: s(SENTINEL2_BANDS), classes: s(&["a", "b"]), ..Default::default() };
+    assert!(ds.problems().is_empty(), "{:?}", ds.problems());
+    assert_eq!(ds.input_shape(), vec![13, 64, 64]);
+    // a conv on 13 bands: the shape engine and the code see 13 input channels
+    let g = chain(vec![("input", json!({})), ("conv2d", json!({"filters": 16})), ("global_pool", json!({})), ("output", json!({}))]);
+    let a = analyze(&g, &ds);
+    assert!(a.ok);
+    assert_eq!(a.nodes.iter().find(|n| n.kind == "conv2d").unwrap().params, 13 * 9 * 16 + 16);
+    assert!(model_code(&g, &a).unwrap().contains("nn.Conv2d(in_channels=13"));
+    // problems: a band not in the files, a band twice, not from Kaggle
+    let bad = |f: &dyn Fn(&mut Dataset)| { let mut d = ds.clone(); f(&mut d); d.problems().join(" ") };
+    assert!(bad(&|d| d.bands = s(&["B04", "B99"])).contains("B99 is not in the bands of the files"));
+    assert!(bad(&|d| d.bands = s(&["B04", "B04"])).contains("chosen twice"));
+    assert!(bad(&|d| d.source = "huggingface".into()).contains("Kaggle dataset of GeoTIFF"));
+    // Sentinel-1: two bands
+    let s1 = Dataset { sensor: "s1".into(), s1_db: true, band_order: s(SENTINEL1_BANDS), bands: s(SENTINEL1_BANDS), ..ds.clone() };
+    assert!(s1.problems().is_empty());
+    assert_eq!(s1.input_shape(), vec![2, 64, 64]);
+    // ordinary images are unchanged: 1 or 3 channels
+    let plain = Dataset { bands: vec![], channels: 2, ..ds };
+    assert!(plain.problems().join(" ").contains("Channels must be 1"));
+}
