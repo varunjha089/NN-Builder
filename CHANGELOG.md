@@ -3,6 +3,12 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 05_11_26_17_58_10
+
+**Test: read the manual chapter with Windows line endings too** (`5a2f05d`)
+
+The Windows build checks files out with CRLF, so manual_snippets_build found no snippets there.
+
 ## 05_11_26_17_50_07
 
 **dsl: clippy (redundant slice)** (`43fffbb`)
