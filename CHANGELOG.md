@@ -3,6 +3,10 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 06_11_26_05_22_17
+
+**FUTURE_PLAN: plan for multi-label and S1+S2 fusion** (`32bbaba`)
+
 ## 05_11_26_22_02_01
 
 **Own dataset files (e.g. Sentinel-1/2 exported from Google Earth Engine)** (`82f35aa`)
