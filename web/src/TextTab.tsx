@@ -24,6 +24,7 @@ function labelLines(text: string): Map<string, number> {
 }
 
 const HELP: [string, string][] = [
+  ["net \"My network\"", "the design's name (optional, usually the first line): kept in the text and written into train.py; not a block"],
   ["1 input", "one block per line: a label (a number), the block and its settings"],
   ["2 conv 64 3x3 stride 2 relu", "filters, kernel, stride; also pad 1 / same / valid, dil 2, nobias, an activation (none = no activation)"],
   ["3 maxpool 2x2  ·  avgpool 3x3 stride 1 pad 1", "pools; global_pool (avg / max), upsample x2 bilinear, convT 64 2x2 stride 2"],

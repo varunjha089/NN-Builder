@@ -1629,11 +1629,45 @@ pub fn sync(g: &Graph) -> Graph {
     }
     let (text, labels) = print(g);
     let mut out = g.clone();
-    out.text = text;
+    // a printed text keeps the design's name (net "…") from the text it replaces
+    out.text = match design_name(&g.text) {
+        Some(name) => format!("net {}\n{text}", quote(&name)),
+        None => text,
+    };
     for n in &mut out.nodes {
         n.label = labels.get(&n.id).cloned().unwrap_or_default();
     }
     out
+}
+
+/// Format: the text printed again from the blocks (functions and loops written out), keeping the design's name
+pub fn reprint(g: &Graph) -> Graph {
+    let name = design_name(&g.text);
+    let mut cleared = g.clone();
+    cleared.text = name.map(|n| format!("net {}\n", quote(&n))).unwrap_or_default();
+    // the cleared text describes no blocks, so sync prints them (and puts the name back on top)
+    sync(&cleared)
+}
+
+/// the design's name from its text: the `net "…"` line, if there is one (the last one counts)
+pub fn design_name(text: &str) -> Option<String> {
+    let mut name = None;
+    for line in text.lines() {
+        let l = line.trim_start();
+        if let Some(rest) = l.strip_prefix("net") {
+            let rest = rest.trim_start();
+            if let Some(q) = rest.strip_prefix('"') {
+                if let Some(end) = q.find('"') {
+                    name = Some(q[..end].to_string());
+                }
+            }
+        }
+    }
+    name
+}
+
+fn quote(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "'"))
 }
 
 /// the text with the lines of changed blocks rewritten, when the canvas changed nothing but the settings of blocks that each have their

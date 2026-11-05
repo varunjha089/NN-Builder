@@ -254,9 +254,7 @@ async fn design_from_text(st: State<'_, App>, text: String) -> R<Value> {
 #[tauri::command]
 async fn design_format(st: State<'_, App>) -> R<Value> {
     let p = project(&st)?;
-    let mut g = p.graph();
-    g.text.clear();
-    let g = nnb_core::dsl::sync(&g);
+    let g = nnb_core::dsl::reprint(&p.graph());
     p.save_graph(&g).map_err(e)?;
     let d = p.dataset();
     Ok(json!({"graph": g, "analysis": shapes::analyze(&g, &d)}))

@@ -626,3 +626,26 @@ fn block_reference_forms() {
     let g = build("1 input\n2 conv 8 3x3\n3 dropout 0.125\n4 global_pool\n5 output\n");
     assert!(nnb_core::codegen::model_code(&g, &analyze(&g, &ds)).unwrap().contains("nn.Dropout(p=0.125)"));
 }
+
+#[test]
+fn the_design_name_is_kept_and_used() {
+    let text = "net \"My CNN\"\ndef pair(c) {\n  a conv c 3x3\n  b conv c 3x3\n}\n1 input\n2 pair(16)\n3 global_pool\n4 output\n";
+    let g = build(text);
+    assert_eq!(dsl::design_name(&g.text).as_deref(), Some("My CNN"));
+    // Format prints the blocks again but keeps the name
+    let f = dsl::reprint(&g);
+    assert!(f.text.starts_with("net \"My CNN\"\n1 input\n"), "{}", f.text);
+    assert!(same_structure(&expand(&f.text, &f).unwrap().graph, &f));
+    // a canvas change that prints the text again keeps it too
+    let mut c = g.clone();
+    let i = c.nodes.iter().position(|n| n.label == "2.a").unwrap();
+    c.nodes[i].params.insert("filters".into(), json!(8));
+    let s = sync(&c);
+    assert!(s.text.starts_with("net \"My CNN\"\n") && !s.text.contains("def pair"), "{}", s.text);
+    // and it is in the generated script's first line
+    let ds = cifar();
+    let code = nnb_core::codegen::train_script(&g, &ds, &analyze(&g, &ds), &Default::default(), "Project X").unwrap();
+    assert!(code.lines().next().unwrap().contains("Project X (design My CNN)"), "{}", code.lines().next().unwrap());
+    // without a name, nothing changes
+    assert_eq!(dsl::design_name("1 input\n2 output\n"), None);
+}

@@ -487,6 +487,11 @@ pub fn train_script(g: &Graph, ds: &Dataset, a: &Analysis, t: &TrainSettings, ti
     }
     let model = model_code_opts(g, a, t.save_memory)?;
     let ds_json = serde_json::to_value(ds)?;
+    // the project's name, and the design's own name when its text has one (net "…")
+    let title = match crate::dsl::design_name(&g.text) {
+        Some(n) if n != title => format!("{title} (design {n})"),
+        _ => title.to_string(),
+    };
     let title: String = title.chars().filter(|c| !matches!(c, '"' | '\\' | '\n' | '\r')).collect();
     let t_json = json!({"epochs": t.epochs, "batch_size": t.batch_size, "lr": t.lr, "optimizer": t.optimizer, "seed": t.seed, "amp": t.amp,
         "limit_train": t.limit_train, "num_workers": "auto", "task": ds.task, "checkpoint_minutes": t.checkpoint_minutes,
