@@ -23,6 +23,19 @@ What is still open, in the suggested order. Done work is in git and CLAUDE.md; t
    labels ignored); a generated GEE export script (Code Editor for scene + WorldCover labels, Python for class patches; not run against a
    real GEE account). Next in this step: multi-label (BigEarthNet), Hugging Face band arrays, first-conv expansion for ImageNet weights,
    a spatially separate test region for scenes.*
+   **Plan for the next two parts (2026-11-06, being built):**
+   - *Multi-label* (several classes per image, BigEarthNet): task "multilabel". Labels from a CSV in the dataset folder (own files or
+     Kaggle): a file column plus either one column of class names separated by `;` `,` `|` or spaces, or one 0/1 column per class;
+     class names read from the CSV on the Mac. The Output block stays (one logit per class, no softmax); loss = BCE with logits
+     (label smoothing pulls targets towards 0.5), prediction = sigmoid ≥ 0.5. Scores: micro F1 (the run's main number, "val_f1"),
+     macro F1, mAP (average precision per class), exact match; per-class precision / recall / F1 / AP in Results; early stopping
+     monitors val_f1. Works with ordinary pictures and with bands.
+   - *S1 + S2 fusion*: a second band group (bands2, band_order2, sensor2, s1_db2) read from a second folder with the same relative file
+     names (any extension), e.g. `s2/forest/x.tif` + `s1/forest/x.npy`; scenes: a second image folder. Early fusion: one Input
+     receives both groups stacked (S2 bands, then S1 bands). Mid fusion: two Input blocks, `group` 1 and 2 (canvas: Input inspector;
+     text: `input 1`, `input 2`), each a branch, joined by Concat / Add; the generated forward slices the stacked tensor per group, so
+     the data path stays one tensor. Sentinel-1 dB per group; statistics per band; pictures from the first group.
+     Real multi-input (different sizes / sources per Input) stays step 2.
 2. **Several inputs and outputs:** more than one Input block (each bound to a data source or a band group: S1 + S2 fusion, Siamese
    pairs) and more than one Output (multi-task heads, each with its loss and weight); shapes, codegen, text language and harness.
 3. **Weight sharing:** a block that reuses another block's weights (Siamese / twin networks).
