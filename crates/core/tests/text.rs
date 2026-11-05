@@ -539,7 +539,8 @@ fn manual_examples_build() {
 /// the short examples written into the manual's language chapter (doc/language.tex, verbatim blocks) all build
 #[test]
 fn manual_snippets_build() {
-    let tex = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../doc/language.tex")).unwrap();
+    // CRLF on a Windows checkout
+    let tex = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../doc/language.tex")).unwrap().replace("\r\n", "\n");
     let mut n = 0;
     for part in tex.split("\\begin{verbatim}\n").skip(1) {
         let snip = part.split("\\end{verbatim}").next().unwrap();
