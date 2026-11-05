@@ -139,10 +139,13 @@ enum Item {
     For { vars: Vec<String>, values: Vec<Vec<Expr>>, body: Vec<Stmt> },
 }
 
+/// a reference after `<-`: the label, and its line and column
+type Ref = (String, usize, usize);
+
 #[derive(Debug, Clone)]
 enum Stmt {
     Let { name: String, value: Expr, line: usize, col: usize },
-    Node { label: Option<String>, item: Item, inputs: Option<Vec<(String, usize, usize)>>, line: usize, col: usize },
+    Node { label: Option<String>, item: Item, inputs: Option<Vec<Ref>>, line: usize, col: usize },
 }
 
 #[derive(Debug, Clone)]
@@ -284,7 +287,7 @@ impl Parser {
         Ok(out)
     }
 
-    fn inputs(&mut self) -> Result<Option<Vec<(String, usize, usize)>>, Diagnostic> {
+    fn inputs(&mut self) -> Result<Option<Vec<Ref>>, Diagnostic> {
         if !self.is_sym("<-") {
             return Ok(None);
         }

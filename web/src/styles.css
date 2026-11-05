@@ -201,3 +201,24 @@ table.layers td:nth-child(n+2), table.layers th:nth-child(n+2) { white-space: no
 .preview3 .chip { display: inline-block; margin: 3px 0; padding: 1px 6px; border: 1px solid; border-radius: 4px; text-shadow: 0 0 5px currentColor; box-shadow: 0 0 6px currentColor; }
 [data-theme="night"] .react-flow__background circle, [data-theme="night"] .react-flow__background path { fill: #26305e; stroke: #26305e; }
 [data-theme="night"] button.demo { color: var(--ink); border-color: rgba(0,229,255,.35); text-shadow: none; }
+
+/* the block's label from the Text tab, in the block's header */
+.layer .lnum { display: inline-block; min-width: 14px; margin-right: 6px; padding: 0 4px; border-radius: 3px; background: rgba(0, 0, 0, 0.25);
+  font: 600 10px ui-monospace, Menlo, monospace; text-align: center; }
+[data-theme="night"] .layer .lnum { background: transparent; border: 1px solid var(--c); text-shadow: none; }
+
+/* Text tab: line numbers beside the text, problems below */
+.text-tab { max-width: 1180px; }
+.text-tab .editor { display: flex; border: 1px solid var(--line); border-radius: 8px; background: var(--field); height: calc(100vh - 290px); min-height: 280px; overflow: hidden; }
+.text-tab .gutter { overflow: hidden; padding: 8px 0; min-width: 44px; text-align: right; color: var(--muted); background: var(--tint2); border-right: 1px solid var(--line);
+  font: 12px/19px ui-monospace, Menlo, monospace; user-select: none; }
+.text-tab .gutter div { padding: 0 8px; }
+.text-tab .gutter .err { color: var(--err); background: var(--errbg); font-weight: 700; }
+.text-tab .gutter .warn { color: var(--warn); background: var(--warnbg); }
+.text-tab textarea { flex: 1; border: 0; outline: none; resize: none; padding: 8px 10px; background: transparent; color: var(--ink);
+  font: 12px/19px ui-monospace, Menlo, monospace; white-space: pre; overflow: auto; tab-size: 2; }
+.text-tab .text-problems { max-height: 180px; overflow: auto; }
+.text-tab .text-help { width: 100%; border-collapse: collapse; margin: 4px 0 10px; }
+.text-tab .text-help td { padding: 3px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.text-tab .text-help td:first-child { white-space: nowrap; }
+button.link { background: none; border: 0; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; }

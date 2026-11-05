@@ -69,8 +69,9 @@ crates/core/src/
                            window is hidden. Mac side: memo'd blocks (not onlyRenderVisibleElements: it empties the minimap), undo history capped
                            by block count, charts thinned to ~1500 points. CI: ci_memory_check.py (parts = plain forward and gradients
                            on 7 demos; a run with NNB_TEST_OOM_ABOVE=8 ends with the same weights as without). The design text
-                           language (crates/core/src/dsl.rs, tests/text.rs; IN PROGRESS: engine + save_graph sync done, Text tab
-                           not yet) is planned in PROGRAMMING_LANGUAGE.md (FUTURE_PLAN.md: Sentinel-1/2).
+                           language (crates/core/src/dsl.rs, tests/text.rs, web/src/TextTab.tsx; Graph.text + Node.label; save_graph
+                           = dsl::sync, design_from_text = dsl::apply, design_format; Text tab after Design; block labels in the block
+                           headers; manual sec:text) is described in PROGRAMMING_LANGUAGE.md (section 9: as built, what is left) (FUTURE_PLAN.md: Sentinel-1/2).
                            Kaggle runs: data in /tmp/nnb_data (not /kaggle/working, the notebook output), checkpoint removed at the
                            end, kaggle_output deleted after metrics/results/model/log are copied; the run card shows the last check.
   dataset.rs               Dataset (builtin | huggingface | kaggle; task classify | segment; resize (built-in); hf_mask_col, kaggle_mask_dir;

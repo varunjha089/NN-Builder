@@ -1,6 +1,7 @@
 # NNB text: a language for NN Builder designs (plan)
 
-Status: planned, not started. This file is the detailed plan; FUTURE_PLAN.md points here.
+Status: built on 2026-11-05 (crates/core/src/dsl.rs, tests/text.rs, the Text tab in web/src/TextTab.tsx); section 9 says what differs
+from this plan and what is left. FUTURE_PLAN.md points here.
 
 ## 1. Goal
 
@@ -239,3 +240,26 @@ LABEL     = INT | WORD ;
 2. Should the text be stored in the project as well (`model.nnb` next to `model.json`), or only produced on demand? The plan assumes
    on demand, so there is one source of truth.
 3. Name and file extension: "NNB text" / `.nnb`?
+
+## 9. As built (2026-11-05)
+
+Beyond the plan, at the owner's request:
+
+- **Functions:** `def name(c, s = 1) { … }` with default values, called as a line `9 name(256, 2) <- 8, 3`; inside, `in`, `in2`, …
+  are the call's inputs; functions may call functions (at most 16 deep, so a function calling itself is reported).
+- **Loops with values:** `for c, s in (64, 1), (128, 2) { … }`, chained like `repeat`; `i` (the pass number) in both.
+- **Names and arithmetic:** `let w = 64`, `conv w * 2 3x3`, `+ - * / // % ^`.
+- Labels may be left out; `<- none` for a block without input.
+
+How the two views stay in step: the graph is the truth and carries the text (`Graph.text`) and each block's label (`Node.label`).
+`save_graph` calls `dsl::sync`: the text is kept when it still describes the blocks exactly (moves only), else printed again. The Text
+tab calls `design_from_text` (`dsl::apply`: blocks keep ids and positions by label; new blocks go next to their first input; a text into
+an empty design is arranged). `design_format` prints the text again. The window applies the text 0.5 s after typing stops.
+
+Left for later:
+
+1. **Keeping hand-written functions after a canvas change.** Today any change of blocks on the canvas prints the text again, so `def`
+   and `for` become plain lines and repeats. Next step: when the changed block came from a plain top-level line, change only that line.
+2. Editor comfort (step 4): CodeMirror with colours, completion and clickable numbers; ids are already kept on Apply.
+3. Files and clipboard (step 5): `.nnb` import/export, the text next to copied blocks.
+4. Section 7 step 6 (torchvision import, variables for sweeps, diff by block number).

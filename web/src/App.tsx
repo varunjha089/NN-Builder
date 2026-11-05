@@ -8,12 +8,15 @@ import { DatasetTab } from "./DatasetTab";
 import { TrainTab } from "./TrainTab";
 import { ResultsTab } from "./ResultsTab";
 import { ConnectionTab } from "./ConnectionTab";
+import { TextTab } from "./TextTab";
 
-type Tab = "project" | "design" | "dataset" | "code" | "train" | "results" | "connection" | "settings";
+type Tab = "project" | "design" | "text" | "dataset" | "code" | "train" | "results" | "connection" | "settings";
 
 export default function App() {
   const [st, setSt] = useState<AppState | null>(null);
   const [tab, setTab] = useState<Tab>("design");
+  // a block to select when the Design tab opens (from a number clicked in the Text tab)
+  const [selectId, setSelectId] = useState<string | null>(null);
   const theme = useTheme();
   const [saving, setSaving] = useState(false);
   const [graph, setGraph] = useState<Graph | null>(null);
@@ -42,10 +45,26 @@ export default function App() {
     lastPush.current = now;
     future.current = [];
   }, []);
+  // save the design; the Rust side keeps its text in step (dsl::sync) and labels the blocks. The synced design replaces the one sent
+  // only if nothing changed meanwhile, so a later edit is never overwritten.
+  const persist = useCallback((g: Graph) => api.saveGraph(g).then((r) => {
+    setAnalysis(r.analysis);
+    if (graphRef.current === g) setGraph(r.graph);
+  }), []);
   const applyGraph = useCallback((g: Graph) => {
     setGraph(g);
-    api.saveGraph(g).then((r) => setAnalysis(r.analysis)).catch(() => {});
-  }, []);
+    persist(g).catch(() => {});
+  }, [persist]);
+  // the Text tab: the design built from its text (one undo step), or the problems in the text
+  const applyText = useCallback(async (text: string) => {
+    const r = await api.designFromText(text);
+    if (r.ok && r.graph && r.analysis) {
+      if (graphRef.current) remember(graphRef.current);
+      setGraph(r.graph);
+      setAnalysis(r.analysis);
+    }
+    return r.errors ?? [];
+  }, [remember]);
 
   const toast = useCallback((m: string) => {
     setMsg(m);
@@ -145,7 +164,7 @@ export default function App() {
 
   if (!st) return <div className="page muted">Loading…</div>;
   const ok = !!analysis?.ok && dsProblems.length === 0;
-  const tabs: [Tab, string][] = [["design", "Design"], ["dataset", "Dataset"], ["code", "Code"], ["train", "Train"], ["results", "Results"]];
+  const tabs: [Tab, string][] = [["design", "Design"], ["text", "Text"], ["dataset", "Dataset"], ["code", "Code"], ["train", "Train"], ["results", "Results"]];
   const missing = (!st.tools_ready ? 1 : 0) + (!st.secrets.kaggle && !st.machines.length ? 1 : 0);
 
   return (
@@ -172,8 +191,11 @@ export default function App() {
       </div>}
       <main>
         {tab === "project" && <ProjectTab st={st} toast={toast} opened={async () => { await reload(); await loadProject(); setTab("design"); }} reload={reload} />}
-        {tab === "design" && graph && <Design st={st} graph={graph} setGraph={setGraph} analysis={analysis} setAnalysis={setAnalysis} toast={toast}
+        {tab === "design" && graph && <Design st={st} graph={graph} setGraph={setGraph} analysis={analysis} persist={persist} focus={selectId} toast={toast}
           reloadProject={() => { reload(); loadProject(true); }} remember={remember} />}
+        {tab === "text" && graph && <TextTab graph={graph} analysis={analysis} persist={persist} applyText={applyText} toast={toast}
+          format={() => api.designFormat().then((r) => { if (graphRef.current) remember(graphRef.current); setGraph(r.graph); setAnalysis(r.analysis); })}
+          showBlock={(id) => { setSelectId(id); setTab("design"); }} />}
         {tab === "dataset" && ds && <DatasetTab st={st} ds={ds} setDs={setDs} problems={dsProblems} toast={toast} />}
         {tab === "code" && <CodeTab toast={toast} />}
         {tab === "train" && train && <TrainTab st={st} ok={ok} analysis={analysis} train={train} setTrain={setTrain} runId={runId} openRun={setRunId} toast={toast} startJob={startJob} datasetSource={ds?.source ?? "builtin"} datasetTask={ds?.task ?? "classify"} />}

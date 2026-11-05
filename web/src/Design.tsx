@@ -24,7 +24,7 @@ const GROUPS: [string, string[]][] = [
   ["Branches", ["add", "concat", "multiply"]],
 ];
 
-type LayerData = { kind: string; title: string; params: Params; result?: NodeResult; summary: string };
+type LayerData = { kind: string; title: string; params: Params; result?: NodeResult; summary: string; label?: string };
 
 const n2 = (v: unknown, d = 3): [number, number] => (Array.isArray(v) ? [Number(v[0]), Number(v[1])] : [Number(v ?? d), Number(v ?? d)]);
 const k2 = (v: [number, number]) => (v[0] === v[1] ? `${v[0]}` : `${v[0]}×${v[1]}`);
@@ -65,7 +65,8 @@ function LayerNode({ data, selected }: NodeProps<Node<LayerData>>) {
   return (
     <div className={`layer st-${st} ${selected ? "sel" : ""}`} style={{ borderColor: color.night ? undefined : border, opacity: st === "unconnected" ? 0.6 : 1, "--c": color(data.kind) } as CSSProperties}>
       {data.kind !== "input" && <Handle type="target" position={Position.Left} />}
-      <div className="lh" style={{ background: COLORS[data.kind] }}>{data.title}{st === "error" ? " ✕" : st === "warn" ? " ⚠" : ""}</div>
+      <div className="lh" style={{ background: COLORS[data.kind] }}>{data.label && <span className="lnum" title="this block's label in the Text tab">{data.label}</span>}
+        {data.title}{st === "error" ? " ✕" : st === "warn" ? " ⚠" : ""}</div>
       {data.summary && <div className="ls">{data.summary}</div>}
       <div className="lo">{r?.out ? `→ ${fmt(r.out)}` : st === "unconnected" ? "not connected" : st === "blocked" ? "fix the layer above" : r?.messages[0]?.slice(0, 70) ?? ""}
         {r && r.params > 0 ? <span className="lp"> · {r.params.toLocaleString()} params</span> : null}</div>
@@ -109,20 +110,24 @@ export function isVertical(g: Graph): boolean {
   return g.edges.length > 0 && v > g.edges.length / 2;
 }
 
-export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, reloadProject, remember }: {
-  st: AppState; graph: Graph; setGraph: (g: Graph) => void; analysis: Analysis | null; setAnalysis: (a: Analysis) => void; toast: (m: string) => void;
+export function Design({ st, graph, setGraph, analysis, persist, focus, toast, reloadProject, remember }: {
+  st: AppState; graph: Graph; setGraph: (g: Graph) => void; analysis: Analysis | null; toast: (m: string) => void;
+  /** save the design (the text follows it) */
+  persist: (g: Graph) => Promise<void>;
+  /** a block to select when the tab opens */
+  focus: string | null;
   reloadProject: () => void;
   /** called with the design as it was, before every change (for Undo) */
   remember: (prev: Graph) => void;
 }) {
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(focus);
   const color = useKindColor(), night = color.night;
   // designs saved in the earlier top-to-bottom view are turned left to right once
   useEffect(() => {
     if (isVertical(graph)) {
       const g = arrange(graph);
       setGraph(g);
-      api.saveGraph(g).then((r) => setAnalysis(r.analysis)).catch(() => {});
+      persist(g).catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -134,8 +139,8 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, relo
     remember(graph);
     setGraph(g);
     window.clearTimeout(saveTimer.current);
-    saveTimer.current = window.setTimeout(() => api.saveGraph(g).then((r) => setAnalysis(r.analysis)).catch((e) => toast(errText(e))), 200);
-  }, [setGraph, setAnalysis, toast, remember, graph]);
+    saveTimer.current = window.setTimeout(() => persist(g).catch((e) => toast(errText(e))), 200);
+  }, [setGraph, persist, toast, remember, graph]);
 
   const results = useMemo(() => Object.fromEntries((analysis?.nodes ?? []).map((r) => [r.id, r])), [analysis]);
   // React Flow keeps its own node state (it needs each node's measured size); the design (graph) is synced into it
@@ -162,7 +167,7 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, relo
       return {
         ...(old ?? {}), id: n.id, type: "layer", position: old?.dragging ? old.position : { x: n.x, y: n.y }, selected: n.id === selected,
         deletable: n.kind !== "input",
-        data: { kind: n.kind, title: titles[n.kind] ?? n.kind, params: n.params, result: results[n.id], summary: summary(n.kind, n.params) },
+        data: { kind: n.kind, title: titles[n.kind] ?? n.kind, params: n.params, result: results[n.id], summary: summary(n.kind, n.params), label: n.label },
       };
     }));
   }, [graph, results, selected, titles, folded]);
