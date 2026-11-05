@@ -31,7 +31,7 @@ fn main() {
             let id = format!("n{}", g.nodes.len());
             let mut params = model::defaults(kind).as_object().cloned().unwrap_or_default();
             for (k, v) in p.as_object().unwrap() { params.insert(k.clone(), v.clone()); }
-            g.nodes.push(Node { id: id.clone(), kind: kind.into(), params, x: 0.0, y: 0.0 });
+            g.nodes.push(Node { id: id.clone(), kind: kind.into(), params, ..Default::default() });
             for f in from { let eid = format!("e{}", g.edges.len()); g.edges.push(Edge { id: eid, source: f.clone(), target: id.clone() }); }
             id
         };

@@ -44,7 +44,7 @@ export default function App() {
   }, []);
   const applyGraph = useCallback((g: Graph) => {
     setGraph(g);
-    api.saveGraph(g).then(setAnalysis).catch(() => {});
+    api.saveGraph(g).then((r) => setAnalysis(r.analysis)).catch(() => {});
   }, []);
 
   const toast = useCallback((m: string) => {

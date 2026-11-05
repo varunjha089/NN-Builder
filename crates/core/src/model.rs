@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Node {
     pub id: String,
     pub kind: String,
@@ -13,6 +13,9 @@ pub struct Node {
     pub x: f64,
     #[serde(default)]
     pub y: f64,
+    /// the block's label in the design text (dsl.rs): "5", or "6.2.b" inside a repeat / function; set by the text sync
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub label: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -28,6 +31,9 @@ pub struct Graph {
     pub nodes: Vec<Node>,
     #[serde(default)]
     pub edges: Vec<Edge>,
+    /// the design as text (dsl.rs), kept in step with the blocks: written by the user (with functions and loops) or printed from the canvas
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub text: String,
 }
 
 /// Every node kind the canvas offers, with its title, its default parameters and how many inputs it takes (None = two or more).
@@ -105,6 +111,30 @@ impl Graph {
     }
 }
 
+/// place the nodes in columns by depth (longest path from the inputs), left to right; branches are stacked in a column. The nodes must be
+/// in computation order (every input before its user).
+pub fn layout(g: &mut Graph) {
+    use std::collections::HashMap;
+    let mut depth: HashMap<String, usize> = HashMap::new();
+    for n in &g.nodes {
+        let d = g.edges.iter().filter(|e| e.target == n.id).filter_map(|e| depth.get(&e.source)).max().map(|d| d + 1).unwrap_or(0);
+        depth.insert(n.id.clone(), d);
+    }
+    let mut count: HashMap<usize, usize> = HashMap::new();
+    for d in depth.values() {
+        *count.entry(*d).or_default() += 1;
+    }
+    let widest = count.values().copied().max().unwrap_or(1);
+    let mut per_col: HashMap<usize, usize> = HashMap::new();
+    for n in &mut g.nodes {
+        let d = depth[&n.id];
+        let i = per_col.entry(d).or_default();
+        n.x = 60.0 + d as f64 * 300.0;
+        n.y = 60.0 + (widest - count[&d]) as f64 * 75.0 + *i as f64 * 150.0;
+        *i += 1;
+    }
+}
+
 /// A small CNN as the design of a new project.
 pub fn starter() -> Graph {
     let layers: Vec<(&str, Value)> = vec![
@@ -124,7 +154,7 @@ pub fn starter() -> Graph {
         for (k, v) in over.as_object().unwrap() {
             p.insert(k.clone(), v.clone());
         }
-        g.nodes.push(Node { id: format!("n{}", i + 1), kind: kind.into(), params: p, x: 40.0 + 300.0 * i as f64, y: 80.0 });
+        g.nodes.push(Node { id: format!("n{}", i + 1), kind: kind.into(), params: p, x: 40.0 + 300.0 * i as f64, y: 80.0, ..Default::default() });
         if i > 0 {
             g.edges.push(Edge { id: format!("e{}", i), source: format!("n{i}"), target: format!("n{}", i + 1) });
         }

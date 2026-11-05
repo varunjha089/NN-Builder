@@ -1,0 +1,278 @@
+//! The design text (dsl.rs): printing every demo and reading it back, the language (functions, for, repeat, let, expressions), errors,
+//! and keeping the canvas and the text in step.
+
+use nnb_core::dataset::Dataset;
+use nnb_core::dsl::{self, apply, expand, print, same_structure, sync};
+use nnb_core::model::{self, Graph, Node};
+use nnb_core::shapes::analyze;
+use serde_json::{json, Map};
+
+fn dataset_for(t: &nnb_core::templates::Template) -> Dataset {
+    if t.task == "segment" {
+        Dataset { source: "huggingface".into(), task: "segment".into(), hf_repo: "x/y".into(), image_size: [t.input[1], t.input[2]], channels: t.input[0],
+            classes: vec!["background".into(), "flood".into()], ..Default::default() }
+    } else {
+        Dataset { source: "huggingface".into(), hf_repo: "x/y".into(), image_size: [t.input[1], t.input[2]], channels: t.input[0],
+            classes: (0..10).map(|i| format!("c{i}")).collect(), ..Default::default() }
+    }
+}
+
+fn cifar() -> Dataset {
+    Dataset { source: "huggingface".into(), hf_repo: "x/y".into(), image_size: [32, 32], channels: 3,
+        classes: (0..10).map(|i| format!("c{i}")).collect(), ..Default::default() }
+}
+
+fn build(text: &str) -> Graph {
+    match apply(text, &Graph::default()) {
+        Ok(g) => g,
+        Err(e) => panic!("{text}\n{e:?}"),
+    }
+}
+
+fn err(text: &str) -> dsl::Diagnostic {
+    match apply(text, &Graph::default()) {
+        Ok(_) => panic!("expected an error:\n{text}"),
+        Err(e) => e[0].clone(),
+    }
+}
+
+fn by_label<'a>(g: &'a Graph, l: &str) -> &'a Node {
+    g.nodes.iter().find(|n| n.label == l).unwrap_or_else(|| panic!("no block {l}: {:?}", g.nodes.iter().map(|n| &n.label).collect::<Vec<_>>()))
+}
+
+fn inputs(g: &Graph, l: &str) -> Vec<String> {
+    let id = &by_label(g, l).id;
+    g.inputs_of(id).iter().map(|s| g.node(s).unwrap().label.clone()).collect()
+}
+
+#[test]
+fn every_demo_round_trips() {
+    for t in nnb_core::templates::TEMPLATES {
+        let g = nnb_core::templates::build(t.key).unwrap();
+        let ds = dataset_for(t);
+        let synced = sync(&g);
+        // the blocks are unchanged, only labelled
+        assert_eq!(synced.nodes.len(), g.nodes.len());
+        assert!(synced.nodes.iter().all(|n| !n.label.is_empty()), "{}", t.key);
+        // the text describes exactly these blocks
+        let e = expand(&synced.text, &synced).unwrap_or_else(|d| panic!("{}: {d:?}\n{}", t.key, synced.text));
+        assert!(same_structure(&e.graph, &synced), "{}:\n{}", t.key, synced.text);
+        assert_eq!(analyze(&e.graph, &ds).total_params, analyze(&g, &ds).total_params, "{}", t.key);
+        // printing again gives the same text, and sync keeps it
+        assert_eq!(print(&e.graph).0, synced.text, "{}", t.key);
+        assert_eq!(sync(&synced).text, synced.text, "{}", t.key);
+        // the same text into an empty canvas builds an equivalent design
+        let fresh = build(&synced.text);
+        assert_eq!(analyze(&fresh, &ds).total_params, analyze(&g, &ds).total_params, "{}", t.key);
+    }
+}
+
+#[test]
+fn repeated_blocks_are_folded() {
+    let g = sync(&nnb_core::templates::build("vit_g14").unwrap());
+    assert!(g.text.contains("repeat 40 {"), "{}", g.text);
+    assert!(g.text.lines().count() < 30, "ViT-g/14 in {} lines:\n{}", g.text.lines().count(), g.text);
+    let g = sync(&nnb_core::templates::build("vit_b16").unwrap());
+    assert!(g.text.contains("repeat 12 {"), "{}", g.text);
+}
+
+#[test]
+fn every_kind_can_be_written_and_read() {
+    for (kind, _) in model::KINDS {
+        let params = model::defaults(kind).as_object().cloned().unwrap_or_default();
+        let mut g = Graph::default();
+        g.nodes.push(Node { id: "a".into(), kind: "input".into(), ..Default::default() });
+        g.nodes.push(Node { id: "b".into(), kind: kind.to_string(), params: params.clone(), x: 300.0, ..Default::default() });
+        if *kind != "input" {
+            g.edges.push(model::Edge { id: "e".into(), source: "a".into(), target: "b".into() });
+        }
+        let s = sync(&g);
+        let e = expand(&s.text, &s).unwrap_or_else(|d| panic!("{kind}: {d:?}\n{}", s.text));
+        assert!(same_structure(&e.graph, &s), "{kind}:\n{}", s.text);
+    }
+    // non-default values of every short form
+    let cases: &[(&str, serde_json::Value)] = &[
+        ("conv2d", json!({"filters": 48, "kernel": [5, 3], "stride": [2, 1], "padding": 2, "dilation": 2, "activation": "gelu", "bias": false})),
+        ("conv2d", json!({"filters": 8, "padding": "valid", "activation": "none"})),
+        ("dwconv2d", json!({"multiplier": 2, "kernel": [3, 3], "stride": [2, 2], "padding": "valid", "activation": "silu"})),
+        ("convtranspose2d", json!({"filters": 16, "kernel": [4, 4], "stride": [2, 2], "padding": 1, "output_padding": 1, "activation": "none"})),
+        ("pool2d", json!({"mode": "avg", "size": [3, 3], "stride": [1, 1], "padding": 1})),
+        ("pool2d", json!({"mode": "max", "size": [3, 3], "stride": [2, 2]})),
+        ("global_pool", json!({"mode": "max"})),
+        ("upsample", json!({"scale": 4, "mode": "bilinear"})),
+        ("dropout", json!({"rate": 0.125})),
+        ("groupnorm", json!({"groups": 4})),
+        ("dense", json!({"units": 10, "activation": "tanh"})),
+        ("activation", json!({"fn": "leaky_relu"})),
+        ("to_tokens", json!({"mode": "rows"})),
+        ("cls_pos", json!({"cls": false})),
+        ("attention", json!({"heads": 6, "dropout": 0.1})),
+        ("token_pool", json!({"mode": "mean"})),
+        ("dense", json!({"units": 3, "activation": "relu", "unknown_setting": 7})),
+    ];
+    for (kind, p) in cases {
+        let mut g = Graph::default();
+        g.nodes.push(Node { id: "a".into(), kind: "input".into(), ..Default::default() });
+        g.nodes.push(Node { id: "b".into(), kind: kind.to_string(), params: p.as_object().unwrap().clone(), x: 300.0, ..Default::default() });
+        g.edges.push(model::Edge { id: "e".into(), source: "a".into(), target: "b".into() });
+        let s = sync(&g);
+        let e = expand(&s.text, &s).unwrap_or_else(|d| panic!("{kind}: {d:?}\n{}", s.text));
+        assert!(same_structure(&e.graph, &s), "{kind} {p}:\n{}", s.text);
+    }
+}
+
+#[test]
+fn chains_skips_and_concat_order() {
+    let g = build("1 input\n2 conv 64 3x3\n3 conv 64 3x3 none\n4 add <- 2, 3\n5 relu\n6 conv 128 3x3 stride 2\n7 concat <- 6, 6\n8 global_pool\n9 output\n");
+    assert_eq!(inputs(&g, "4"), vec!["2", "3"]);
+    assert_eq!(inputs(&g, "5"), vec!["4"]);
+    assert_eq!(inputs(&g, "7"), vec!["6", "6"]);
+    assert_eq!(by_label(&g, "6").params["stride"], json!([2, 2]));
+    assert_eq!(by_label(&g, "3").params["activation"], json!("none"));
+    let a = analyze(&g, &cifar());
+    assert!(a.ok, "{:?}", a.problems);
+}
+
+#[test]
+fn functions_loops_and_values() {
+    let text = r#"
+net "ResNet-ish"
+let w = 32
+def basic(c, s = 1) {          # a residual block with a projection when the shape changes
+  a conv c 3x3 stride s
+  b conv c 3x3 none
+  p conv c 1x1 stride s none <- in
+  d add <- b, p
+  e relu
+}
+1 input
+2 conv w 3x3
+3 for c, s in (w, 1), (w * 2, 2), (w * 4, 2) {
+    x basic(c, s)
+    y basic(c)
+  }
+4 repeat 2 {
+    a conv 128 * i 1x1        # i = 1, 2
+  }
+5 global_pool
+6 output
+"#;
+    let g = build(text);
+    // 3 passes × 2 calls × 5 blocks, + 2 + 2 + 2
+    assert_eq!(g.nodes.len(), 30 + 6, "{:?}", g.nodes.iter().map(|n| &n.label).collect::<Vec<_>>());
+    assert_eq!(by_label(&g, "3.2.x.a").params["filters"], json!(64));
+    assert_eq!(by_label(&g, "3.2.x.a").params["stride"], json!([2, 2]));
+    assert_eq!(by_label(&g, "3.3.y.a").params["filters"], json!(128));
+    assert_eq!(by_label(&g, "3.3.y.a").params["stride"], json!([1, 1]));
+    assert_eq!(by_label(&g, "4.2.a").params["filters"], json!(256));
+    // wiring: a call takes the line above; inside, "in" is the call's input; passes are chained
+    assert_eq!(inputs(&g, "3.1.x.a"), vec!["2"]);
+    assert_eq!(inputs(&g, "3.1.x.p"), vec!["2"]);
+    assert_eq!(inputs(&g, "3.1.y.a"), vec!["3.1.x.e"]);
+    assert_eq!(inputs(&g, "3.2.x.a"), vec!["3.1.y.e"]);
+    assert_eq!(inputs(&g, "4.1.a"), vec!["3.3.y.e"]);
+    assert_eq!(inputs(&g, "5"), vec!["4.2.a"]);
+    let a = analyze(&g, &cifar());
+    assert!(a.ok, "{:?}", a.problems);
+    // the hand-written text is kept while the blocks are only moved on the canvas
+    let mut moved = g.clone();
+    moved.nodes[3].x += 500.0;
+    assert_eq!(sync(&moved).text, text);
+    // a change on the canvas prints the text again (functions become plain lines and repeats) with the same blocks
+    let mut changed = g.clone();
+    let i = changed.nodes.iter().position(|n| n.label == "2").unwrap();
+    changed.nodes[i].params.insert("filters".into(), json!(40));
+    let s = sync(&changed);
+    assert_ne!(s.text, text);
+    assert!(s.text.contains("conv 40 3x3"), "{}", s.text);
+    let e = expand(&s.text, &s).unwrap();
+    assert!(same_structure(&e.graph, &s));
+}
+
+#[test]
+fn references_into_groups_and_several_inputs() {
+    // a small U-Net: the decoder function takes two inputs (in, in2); skips reach into a repeat by path
+    let text = "def down(c) {\n  a conv c 3x3\n  b conv c 3x3\n}\ndef up(c) {\n  a convT c 2x2 stride 2\n  b concat <- a, in2\n  c conv c 3x3\n}\n\
+1 input\n2 repeat 2 {\n  d down(16 * i)\n  p maxpool 2x2\n}\n3 down(64)\n4 up(32) <- 3, 2.2.d\n5 up(16) <- 4, 2.1.d\n6 seg_output\n";
+    let g = build(text);
+    assert_eq!(inputs(&g, "4.b"), vec!["4.a", "2.2.d.b"]);
+    assert_eq!(inputs(&g, "5.b"), vec!["5.a", "2.1.d.b"]);
+    let ds = Dataset { source: "huggingface".into(), task: "segment".into(), hf_repo: "x/y".into(), image_size: [64, 64], channels: 3,
+        classes: vec!["a".into(), "b".into()], ..Default::default() };
+    let a = analyze(&g, &ds);
+    assert!(a.ok, "{:?}", a.problems);
+}
+
+#[test]
+fn labels_can_be_left_out() {
+    let g = build("input\nconv 32 3x3\nmaxpool 2x2\nrepeat 2 {\n  conv 32 3x3\n  bn\n}\nflatten\ndense 10 none\noutput\n");
+    assert_eq!(inputs(&g, "3"), vec!["2"]);
+    assert_eq!(inputs(&g, "4.2.a"), vec!["4.1.b"]);
+    assert_eq!(by_label(&g, "7").kind, "output");
+}
+
+#[test]
+fn errors_name_the_line() {
+    let e = err("1 input\n2 conv 64 3x3 stide 2\n");
+    assert_eq!(e.line, 2);
+    assert!(e.message.contains("stide"), "{}", e.message);
+    let e = err("1 input\n2 conv 64 3x3\n3 add <- 2, 7\n");
+    assert_eq!((e.line, e.col), (3, 13));
+    assert!(e.message.contains("'7'"), "{}", e.message);
+    let e = err("1 input\n2 convv 64\n");
+    assert!(e.message.contains("did you mean 'conv'"), "{}", e.message);
+    let e = err("1 input\n2 repeat 3 {\n  a conv 8 3x3\n");
+    assert!(e.message.contains("not closed"), "{}", e.message);
+    let e = err("def f(c) {\n  a conv c 3x3\n}\n1 input\n2 f(1, 2)\n");
+    assert_eq!(e.line, 5);
+    assert!(e.message.contains("takes 1"), "{}", e.message);
+    let e = err("1 input\n2 conv 8 3x3\n2 relu\n");
+    assert!(e.message.contains("used twice"), "{}", e.message);
+    let e = err("1 input\n2 g(3)\n");
+    assert!(e.message.contains("no function 'g'"), "{}", e.message);
+    let e = err("def f() {\n  a f()\n}\n1 input\n2 f()\n");
+    assert!(e.message.contains("deep"), "{}", e.message);
+    let e = err("1 input\n2 conv 8 3x3 99\n");
+    assert!(e.message.contains("number 99"), "{}", e.message);
+    let e = err("1 input\n2 repeat k {\n  a relu\n}\n");
+    assert!(e.message.contains("'k' is not a number"), "{}", e.message);
+}
+
+#[test]
+fn editing_the_text_keeps_blocks_and_positions() {
+    let g = sync(&nnb_core::templates::build("lenet5").unwrap());
+    // change one number in the text: every block keeps its id and place
+    let edited = g.text.replacen("conv 6 ", "conv 8 ", 1);
+    assert_ne!(edited, g.text);
+    let h = apply(&edited, &g).unwrap();
+    assert_eq!(h.nodes.len(), g.nodes.len());
+    for n in &g.nodes {
+        let m = h.node(&n.id).unwrap_or_else(|| panic!("block {} lost", n.id));
+        assert_eq!((m.x, m.y), (n.x, n.y));
+    }
+    assert!(h.nodes.iter().any(|n| n.params.get("filters") == Some(&json!(8))));
+    // a new line gets a new block next to its input, the others stay
+    let lines: Vec<&str> = h.text.lines().collect();
+    let mut added: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
+    added.insert(2, "2b bn".into());
+    let k = apply(&(added.join("\n") + "\n"), &h).unwrap();
+    assert_eq!(k.nodes.len(), h.nodes.len() + 1);
+    let new = k.nodes.iter().find(|n| n.label == "2b").unwrap();
+    assert!(h.node(&new.id).is_none());
+    assert!(k.nodes.iter().filter(|n| n.id != new.id).all(|n| h.node(&n.id).is_some()));
+    // sync keeps a just-applied text
+    assert_eq!(sync(&k).text, k.text);
+}
+
+#[test]
+fn cycles_and_loose_blocks_still_print() {
+    let mut g = Graph::default();
+    for (id, kind) in [("a", "input"), ("b", "conv2d"), ("c", "relu"), ("d", "dense")] {
+        g.nodes.push(Node { id: id.into(), kind: if kind == "relu" { "activation".into() } else { kind.into() }, params: Map::new(), ..Default::default() });
+    }
+    g.edges.push(model::Edge { id: "1".into(), source: "a".into(), target: "b".into() });
+    let s = sync(&g);
+    assert!(s.text.contains("<- none"), "{}", s.text);
+    let e = expand(&s.text, &s).unwrap();
+    assert!(same_structure(&e.graph, &s), "{}", s.text);
+}

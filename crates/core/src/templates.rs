@@ -5,7 +5,6 @@
 use crate::model::{self, Edge, Graph, Node};
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Template {
@@ -67,7 +66,7 @@ impl B {
         for (k, v) in over.as_object().unwrap() {
             p.insert(k.clone(), v.clone());
         }
-        self.g.nodes.push(Node { id: id.clone(), kind: kind.into(), params: p, x: 0.0, y: 0.0 });
+        self.g.nodes.push(Node { id: id.clone(), kind: kind.into(), params: p, ..Default::default() });
         for f in from {
             let eid = format!("e{}", self.g.edges.len() + 1);
             self.g.edges.push(Edge { id: eid, source: f.to_string(), target: id.clone() });
@@ -109,34 +108,8 @@ impl B {
         let st = if size == stride { json!("size") } else { json!([stride, stride]) };
         self.add("pool2d", json!({"mode": "max", "size": [size, size], "stride": st, "padding": pad}), &[x])
     }
-    /// place the nodes in columns by depth (longest path from the Input), left to right; branches are stacked in a column
     fn layout(mut self) -> Graph {
-        let mut depth: HashMap<String, usize> = HashMap::new();
-        for n in &self.g.nodes {
-            // nodes are added in computation order, so every input already has its depth
-            let d = self.g.edges.iter().filter(|e| e.target == n.id).filter_map(|e| depth.get(&e.source)).max().map(|d| d + 1).unwrap_or(0);
-            depth.insert(n.id.clone(), d);
-        }
-        let mut per_row: HashMap<usize, usize> = HashMap::new();
-        let widest = {
-            let mut c: HashMap<usize, usize> = HashMap::new();
-            for d in depth.values() {
-                *c.entry(*d).or_default() += 1;
-            }
-            c.values().copied().max().unwrap_or(1)
-        };
-        let row_count: HashMap<usize, usize> = depth.values().fold(HashMap::new(), |mut m, d| {
-            *m.entry(*d).or_default() += 1;
-            m
-        });
-        for n in &mut self.g.nodes {
-            let d = depth[&n.id];
-            let i = per_row.entry(d).or_default();
-            let offset = (widest - row_count[&d]) as f64 * 75.0;
-            n.x = 60.0 + d as f64 * 300.0;
-            n.y = 60.0 + offset + *i as f64 * 150.0;
-            *i += 1;
-        }
+        crate::model::layout(&mut self.g);
         self.g
     }
 }

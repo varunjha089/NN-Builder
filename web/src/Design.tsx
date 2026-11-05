@@ -122,7 +122,7 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, relo
     if (isVertical(graph)) {
       const g = arrange(graph);
       setGraph(g);
-      api.saveGraph(g).then(setAnalysis).catch(() => {});
+      api.saveGraph(g).then((r) => setAnalysis(r.analysis)).catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -134,7 +134,7 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, relo
     remember(graph);
     setGraph(g);
     window.clearTimeout(saveTimer.current);
-    saveTimer.current = window.setTimeout(() => api.saveGraph(g).then(setAnalysis).catch((e) => toast(errText(e))), 200);
+    saveTimer.current = window.setTimeout(() => api.saveGraph(g).then((r) => setAnalysis(r.analysis)).catch((e) => toast(errText(e))), 200);
   }, [setGraph, setAnalysis, toast, remember, graph]);
 
   const results = useMemo(() => Object.fromEntries((analysis?.nodes ?? []).map((r) => [r.id, r])), [analysis]);

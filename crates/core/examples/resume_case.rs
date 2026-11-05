@@ -13,11 +13,12 @@ fn main() {
     let mode = std::env::args().nth(2).unwrap_or_default();
     let early = mode == "early";
     let node = |id: &str, kind: &str, p: serde_json::Value| Node { id: id.into(), kind: kind.into(), params: nnb_core::model::defaults(kind).as_object().cloned()
-        .map(|mut d| { d.extend(p.as_object().unwrap().clone()); d }).unwrap_or_default(), x: 0.0, y: 0.0 };
+        .map(|mut d| { d.extend(p.as_object().unwrap().clone()); d }).unwrap_or_default(), ..Default::default() };
     let g = Graph {
         nodes: vec![node("n1", "input", json!({})), node("n2", "conv2d", json!({"filters": 32})), node("n3", "pool2d", json!({})),
                     node("n4", "conv2d", json!({"filters": 32})), node("n5", "global_pool", json!({})), node("n6", "output", json!({}))],
         edges: (1..6).map(|i| Edge { id: format!("e{i}"), source: format!("n{i}"), target: format!("n{}", i + 1) }).collect(),
+        ..Default::default()
     };
     // the recipe check uses six classes, so that top-5 accuracy is measured too
     let names: &[&str] = if mode == "recipe" { &["a", "b", "c", "d", "e", "f"] } else { &["a", "b"] };

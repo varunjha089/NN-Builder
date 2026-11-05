@@ -2,9 +2,9 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export type Params = Record<string, unknown>;
-export interface GNode { id: string; kind: string; params: Params; x: number; y: number }
+export interface GNode { id: string; kind: string; params: Params; x: number; y: number; label?: string }
 export interface GEdge { id: string; source: string; target: string }
-export interface Graph { nodes: GNode[]; edges: GEdge[] }
+export interface Graph { nodes: GNode[]; edges: GEdge[]; text?: string }
 
 export interface NodeResult {
   id: string; kind: string; title: string; inputs: number[][]; out: number[] | null; params: number;
@@ -77,7 +77,9 @@ export const api = {
   projectOpen: (path: string) => invoke<void>("project_open", { path }),
   setProjectsDir: (path: string) => invoke<void>("set_projects_dir", { path }),
   load: () => invoke<ProjectData>("project_load"),
-  saveGraph: (graph: Graph) => invoke<Analysis>("save_graph", { graph }),
+  saveGraph: (graph: Graph) => invoke<{ analysis: Analysis; graph: Graph }>("save_graph", { graph }),
+  designFromText: (text: string) => invoke<{ ok: boolean; graph?: Graph; analysis?: Analysis; errors?: { line: number; col: number; message: string }[] }>("design_from_text", { text }),
+  designFormat: () => invoke<{ graph: Graph; analysis: Analysis }>("design_format"),
   saveDataset: (dataset: Dataset) => invoke<{ analysis: Analysis; problems: string[] }>("save_dataset", { dataset }),
   saveTrain: (train: TrainSettings) => invoke<TrainSettings>("save_train", { train }),
   code: () => invoke<{ ok: boolean; code?: string; error?: string }>("code"),

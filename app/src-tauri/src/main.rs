@@ -151,7 +151,7 @@ async fn set_projects_dir(path: String) -> R<()> {
 #[tauri::command]
 async fn project_load(st: State<'_, App>) -> R<Value> {
     let p = project(&st)?;
-    let (g, d, t) = (p.graph(), p.dataset(), p.train());
+    let (g, d, t) = (nnb_core::dsl::sync(&p.graph()), p.dataset(), p.train());
     let a = shapes::analyze(&g, &d);
     Ok(json!({"name": p.name(), "path": p.dir, "graph": g, "dataset": d, "train": t, "analysis": a, "dataset_problems": d.problems()}))
 }
@@ -159,9 +159,37 @@ async fn project_load(st: State<'_, App>) -> R<Value> {
 #[tauri::command]
 async fn save_graph(st: State<'_, App>, graph: Graph) -> R<Value> {
     let p = project(&st)?;
+    // the design text follows the canvas (kept when it still fits, else printed again)
+    let graph = nnb_core::dsl::sync(&graph);
     p.save_graph(&graph).map_err(e)?;
     let d = p.dataset();
-    serde_json::to_value(shapes::analyze(&graph, &d)).map_err(e)
+    Ok(json!({"analysis": shapes::analyze(&graph, &d), "graph": graph}))
+}
+
+/// the design from its text (Text tab): saved and returned with its analysis, or the problems in the text (nothing saved)
+#[tauri::command]
+async fn design_from_text(st: State<'_, App>, text: String) -> R<Value> {
+    let p = project(&st)?;
+    match nnb_core::dsl::apply(&text, &p.graph()) {
+        Ok(g) => {
+            p.save_graph(&g).map_err(e)?;
+            let d = p.dataset();
+            Ok(json!({"ok": true, "graph": g, "analysis": shapes::analyze(&g, &d)}))
+        }
+        Err(errors) => Ok(json!({"ok": false, "errors": errors})),
+    }
+}
+
+/// the text printed again from the blocks (Format: functions and loops written by hand become plain lines and repeats)
+#[tauri::command]
+async fn design_format(st: State<'_, App>) -> R<Value> {
+    let p = project(&st)?;
+    let mut g = p.graph();
+    g.text.clear();
+    let g = nnb_core::dsl::sync(&g);
+    p.save_graph(&g).map_err(e)?;
+    let d = p.dataset();
+    Ok(json!({"graph": g, "analysis": shapes::analyze(&g, &d)}))
 }
 
 #[tauri::command]
@@ -905,7 +933,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            app_state, templates_list, template_apply, project_from_template, project_save_as, project_new, project_open, set_projects_dir, project_load, save_graph, save_dataset, save_train, code, export_code,
+            app_state, templates_list, template_apply, project_from_template, project_save_as, project_new, project_open, set_projects_dir, project_load, save_graph, design_from_text, design_format, save_dataset, save_train, code, export_code,
             set_kaggle, set_hf, set_aws, clear_secret, test_kaggle, test_hf, test_aws, tools_install,
             machine_save, machine_delete, machine_test, machine_connect, machine_prepare, hf_info, hf_preview, kaggle_files,
             update_settings, set_auto_update, update_check, update_install, update_restart, targets, run_start, run_start_seeds, runs_summary, runs_export, run_resume_on, runs_list, run_status, run_stop, run_fetch, run_results, run_reveal, job_status, open_url

@@ -12,7 +12,7 @@ fn node(id: &str, kind: &str, over: Value) -> Node {
     for (k, v) in over.as_object().unwrap() {
         p.insert(k.clone(), v.clone());
     }
-    Node { id: id.into(), kind: kind.into(), params: p, x: 0.0, y: 0.0 }
+    Node { id: id.into(), kind: kind.into(), params: p, ..Default::default() }
 }
 
 fn chain(layers: Vec<(&str, Value)>) -> Graph {
