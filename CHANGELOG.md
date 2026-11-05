@@ -3,6 +3,15 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 05_11_26_19_29_52
+
+**net "name": explained in the manual, kept on Format, written into train.py** (`a92a72c`)
+
+The design's name line was parsed and then ignored, and lost when the text was printed again. It is now
+kept by sync and Format (dsl::reprint), and the generated train.py names it in its first line after the
+project's name. The manual has a section on it (what it does and does not do) and the Text tab's help
+lists it.
+
 ## 05_11_26_18_54_29
 
 **Manual: the general form of each block above its examples** (`f11de00`)
