@@ -312,12 +312,12 @@ fn modules(n: &Node, a: &Analysis, classes: usize) -> Vec<String> {
         }
         "attention" => {
             let drop = p.get("dropout").and_then(|v| v.as_f64()).unwrap_or(0.0).clamp(0.0, 0.9);
-            m.push(format!("SelfAttention(dim={}, heads={}, dropout={})", inp[1], int(p, "heads", 4, 1, crate::shapes::MAX_HEADS), (drop * 100.0).round() / 100.0));
+            m.push(format!("SelfAttention(dim={}, heads={}, dropout={})", inp[1], int(p, "heads", 4, 1, crate::shapes::MAX_HEADS), drop));
         }
         "token_pool" => m.push(format!("TokenPool({:?})", shapes::text(p, "mode", &["cls", "mean"], "cls"))),
         "dropout" => {
             let rate = p.get("rate").and_then(|v| v.as_f64()).unwrap_or(0.25).clamp(0.0, 0.95);
-            m.push(format!("nn.Dropout(p={})", (rate * 100.0).round() / 100.0));
+            m.push(format!("nn.Dropout(p={rate})"));
         }
         "flatten" => m.push("nn.Flatten()".into()),
         "activation" => m.push(act(activation(p, "fn")).unwrap_or("nn.Identity()").into()),

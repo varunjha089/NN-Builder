@@ -80,8 +80,24 @@ pub fn limits(kind: &str) -> &'static [(&'static str, i64, i64)] {
     }
 }
 
+/// the allowed range of the fraction settings (dropout rates)
+pub fn float_limits(kind: &str) -> &'static [(&'static str, f64, f64)] {
+    match kind {
+        "dropout" => &[("rate", 0.0, 0.95)],
+        "attention" => &[("dropout", 0.0, 0.9)],
+        _ => &[],
+    }
+}
+
 /// a number setting outside its range: the message (the value would otherwise be changed silently, giving a different network)
 fn out_of_range(node: &Node) -> Option<String> {
+    for (key, lo, hi) in float_limits(&node.kind) {
+        if let Some(v) = node.params.get(*key).and_then(|v| v.as_f64()) {
+            if v < *lo || v > *hi {
+                return Some(format!("{key} is {v} but must be from {lo} to {hi}."));
+            }
+        }
+    }
     for (key, lo, hi) in limits(&node.kind) {
         let vals: Vec<f64> = match node.params.get(*key) {
             Some(Value::Array(a)) => a.iter().filter_map(|v| v.as_f64()).collect(),

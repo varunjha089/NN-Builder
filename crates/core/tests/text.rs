@@ -240,6 +240,7 @@ fn errors_name_the_line() {
     assert!(e.message.contains("'stride' means nothing for input"), "{}", e.message);
     let e = err("1 input\n2 dense 10 pad 1\n");
     assert!(e.message.contains("'pad' means nothing for dense"), "{}", e.message);
+    assert!(!e.message.contains("did you mean"), "{}", e.message);
     let e = err("1 input\n2 conv 8 3x3 filtrs=4\n");
     assert!(e.message.contains("no setting 'filtrs'") && e.message.contains("filters"), "{}", e.message);
     let e = err("1 input\n2 relu foo=1\n");
@@ -555,4 +556,73 @@ fn manual_snippets_build() {
     // claims in the text: named values in a call; repeat … as NAME
     build("def basic(c, s = 1) {\n  a conv c 3x3 stride s\n}\n1 input\n2 basic(c=64, s=2)\n3 basic(32)\n");
     build("1 input\n2 repeat 12 as enc {\n  a conv 8 3x3\n}\n");
+}
+
+/// every way of writing a block's settings that the manual's block reference shows, and what it sets
+#[test]
+fn block_reference_forms() {
+    let one = |line: &str| -> Map<String, serde_json::Value> {
+        let g = build(&format!("1 input\n2 {line}\n"));
+        g.nodes.iter().find(|n| n.label == "2").unwrap().params.clone()
+    };
+    let cases: &[(&str, serde_json::Value)] = &[
+        // conv: filters by the first number, kernel KxK, stride, pad / same / valid, dil, activation, nobias; or name=value
+        ("conv 64 3x3", json!({"filters": 64, "kernel": [3, 3], "stride": [1, 1], "padding": "same", "activation": "relu", "bias": true})),
+        ("conv 64 5x3 stride 2 pad 1 dil 2 gelu nobias", json!({"kernel": [5, 3], "stride": [2, 2], "padding": 1, "dilation": 2, "activation": "gelu", "bias": false})),
+        ("conv 8 1x1 valid none", json!({"padding": "valid", "activation": "none"})),
+        ("conv filters=64 kernel=7 stride=2 padding=3 dilation=1 activation=silu bias=false", json!({"filters": 64, "kernel": [7, 7], "stride": [2, 2], "padding": 3, "activation": "silu", "bias": false})),
+        ("conv 32 3x3 stride=2x1", json!({"stride": [2, 1]})),
+        ("Conv2D 16 3x3", json!({"filters": 16})),
+        // depthwise
+        ("dwconv x2 3x3 stride 2 pad 1 none nobias", json!({"multiplier": 2, "stride": [2, 2], "padding": 1, "activation": "none", "bias": false})),
+        ("dwconv multiplier=3 kernel=5x5", json!({"multiplier": 3, "kernel": [5, 5]})),
+        // transposed
+        ("convT 64 2x2 stride 2 none", json!({"filters": 64, "kernel": [2, 2], "stride": [2, 2], "activation": "none"})),
+        ("convT 32 3x3 stride 2 pad 1 outpad 1", json!({"padding": 1, "output_padding": 1})),
+        // pools
+        ("maxpool 2x2", json!({"mode": "max", "size": [2, 2], "stride": "size"})),
+        ("avgpool 3x3 stride 1 pad 1", json!({"mode": "avg", "size": [3, 3], "stride": [1, 1], "padding": 1})),
+        ("maxpool 3", json!({"size": [3, 3]})),
+        ("pool avg size=2 stride=size", json!({"mode": "avg", "size": [2, 2], "stride": "size"})),
+        ("global_pool max", json!({"mode": "max"})),
+        ("gap", json!({"mode": "avg"})),
+        ("upsample x4 bilinear", json!({"scale": 4, "mode": "bilinear"})),
+        ("upsample 2", json!({"scale": 2, "mode": "nearest"})),
+        // normalisation, dropout, dense, activations
+        ("gn 4", json!({"groups": 4})),
+        ("groupnorm groups=16", json!({"groups": 16})),
+        ("dropout 0.125", json!({"rate": 0.125})),
+        ("dropout rate=0.5", json!({"rate": 0.5})),
+        ("dense 10 none", json!({"units": 10, "activation": "none"})),
+        ("linear units=256 activation=tanh", json!({"units": 256, "activation": "tanh"})),
+        ("gelu", json!({"fn": "gelu"})),
+        ("activation leaky_relu", json!({"fn": "leaky_relu"})),
+        ("act fn=silu", json!({"fn": "silu"})),
+    ];
+    for (line, want) in cases {
+        let p = one(line);
+        for (k, v) in want.as_object().unwrap() {
+            assert_eq!(p.get(k), Some(v), "{line}: {k} in {p:?}");
+        }
+    }
+    // transformer blocks (on tokens)
+    let g = build("1 input\n2 conv 16 4x4 stride 4 valid none\n3 to_tokens rows\n4 cls_pos nocls\n5 attention 4 drop 0.1\n6 attn heads=2 dropout=0\n7 token_pool mean\n8 output\n");
+    let p = |l: &str| g.nodes.iter().find(|n| n.label == l).unwrap().params.clone();
+    assert_eq!(p("3")["mode"], json!("rows"));
+    assert_eq!(p("4")["cls"], json!(false));
+    assert_eq!((p("5")["heads"].clone(), p("5")["dropout"].clone()), (json!(4), json!(0.1)));
+    assert_eq!(p("6")["heads"], json!(2));
+    assert_eq!(p("7")["mode"], json!("mean"));
+    // words a block does not have are errors
+    for (line, msg) in [("convT 8 2x2 same", "means nothing for convT"), ("convT 8 2x2 padding=same", "padding is a number of pixels here"), ("dwconv 3x3 dil 2", "no dil setting"),
+        ("conv 8 3x3 stride size", "'stride size' is for a pool"), ("convT 8 2x2 nobias", "no nobias / bias setting"), ("dense 8 3x3", "a size is for")] {
+        let e = err(&format!("1 input\n2 {line}\n"));
+        assert!(e.message.contains(msg), "{line}: {}", e.message);
+    }
+    // a fraction outside its range is an error on the block (not cut silently), and the exact rate reaches the code
+    let ds = cifar();
+    let g = build("1 input\n2 conv 8 3x3\n3 dropout 0.99\n4 global_pool\n5 output\n");
+    assert!(analyze(&g, &ds).nodes.iter().any(|n| n.messages.iter().any(|m| m.contains("rate is 0.99 but must be from 0 to 0.95"))));
+    let g = build("1 input\n2 conv 8 3x3\n3 dropout 0.125\n4 global_pool\n5 output\n");
+    assert!(nnb_core::codegen::model_code(&g, &analyze(&g, &ds)).unwrap().contains("nn.Dropout(p=0.125)"));
 }

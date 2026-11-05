@@ -650,8 +650,16 @@ fn num(v: f64) -> Value {
 /// the parameters as the shape engine reads them: defaults filled in, sizes as [h, w], whole numbers as integers
 pub fn effective(kind: &str, params: &Map<String, Value>) -> Map<String, Value> {
     let mut p = model::defaults(kind).as_object().cloned().unwrap_or_default();
+    // only the settings this block has (anything else does nothing in the shape engine or the generated code)
+    let extra: &[&str] = match kind {
+        "pool2d" | "global_pool" | "upsample" | "to_tokens" | "token_pool" => &["mode"],
+        "activation" => &["fn"],
+        _ => &[],
+    };
     for (k, v) in params {
-        p.insert(k.clone(), v.clone());
+        if p.contains_key(k) || extra.contains(&k.as_str()) {
+            p.insert(k.clone(), v.clone());
+        }
     }
     for (k, v) in p.iter_mut() {
         if let Some(f) = v.as_f64() {
@@ -772,7 +780,7 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
                     p.insert("fn".into(), json!(lw));
                 } else {
                     match (kind, lw.as_str()) {
-                        (_, "same" | "valid") if conv_like => {
+                        (_, "same" | "valid") if matches!(kind, "conv2d" | "dwconv2d") => {
                             p.insert("padding".into(), json!(lw));
                         }
                         (_, "stride") if conv_like || kind == "pool2d" => {
@@ -823,9 +831,17 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
                         }
                         _ => {
                             // the nearest word this block knows, for a typo ("stide" -> "stride")
-                            let mut known: Vec<&str> = vec!["stride", "pad"];
+                            let mut known: Vec<&str> = vec![];
+                            if conv_like || kind == "pool2d" {
+                                known.extend(["stride", "pad"]);
+                            }
+                            known.extend(match kind {
+                                "conv2d" => &["same", "valid", "dil", "nobias", "bias"][..],
+                                "dwconv2d" => &["same", "valid", "nobias", "bias"][..],
+                                "convtranspose2d" => &["outpad"][..],
+                                _ => &[][..],
+                            });
                             if conv_like {
-                                known.extend(["same", "valid", "dil", "nobias", "bias", "outpad"]);
                                 known.extend(ACTS);
                             }
                             known.extend(match kind {
@@ -838,7 +854,8 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
                                 "attention" => &["heads", "drop"][..],
                                 _ => &[][..],
                             });
-                            let near = known.iter().min_by_key(|k| edit_distance(k, &lw)).filter(|k| edit_distance(k, &lw) <= 2);
+                            // (the word itself is never suggested: it exists, just not for this block)
+                            let near = known.iter().filter(|k| **k != lw).min_by_key(|k| edit_distance(k, &lw)).filter(|k| edit_distance(k, &lw) <= 2);
                             return Err(match near {
                                 Some(k) => format!("'{w}' means nothing for {} (did you mean '{k}'?)", kind_word(kind)),
                                 None => format!("'{w}' means nothing for {} (see the list of words in the help)", kind_word(kind)),
@@ -849,6 +866,25 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
             }
         }
         i += 1;
+    }
+    // every setting must be one this block has (a word that set something else would be kept but do nothing)
+    let known: Vec<String> = model::defaults(kind).as_object().map(|d| d.keys().cloned().collect()).unwrap_or_default();
+    let extra = match kind {
+        "pool2d" | "global_pool" | "upsample" | "to_tokens" | "token_pool" => &["mode"][..],
+        "activation" => &["fn"][..],
+        _ => &[][..],
+    };
+    for k in p.keys() {
+        if !known.iter().any(|x| x == k) && !extra.contains(&k.as_str()) {
+            let word = match k.as_str() { "padding" => "pad / same / valid", "dilation" => "dil", "bias" => "nobias / bias", "output_padding" => "outpad", o => o };
+            return Err(format!("{} has no {word} setting (its settings: {})", kind_word(kind), if known.is_empty() { "none".into() } else { known.join(", ") }));
+        }
+    }
+    if matches!(kind, "convtranspose2d" | "pool2d") && p.get("padding").is_some_and(|v| v.is_string()) {
+        return Err(format!("{}: padding is a number of pixels here ('same' / 'valid' are for conv and dwconv)", kind_word(kind)));
+    }
+    if p.get("stride") == Some(&json!("size")) && kind != "pool2d" {
+        return Err("'stride size' is for a pool (stride = pool size); give a number".into());
     }
     Ok(p)
 }

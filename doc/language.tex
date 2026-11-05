@@ -124,34 +124,144 @@ call: line, then block, as in \texttt{7.u}). Together they make U-Net's skip con
 Line 2 builds the encoder as three passes whose width depends on the pass number ($16\cdot2^{i-1}$: 16, 32, 64); lines 4--6 each take
 the block above and the matching encoder output (25 blocks, 482\,050 parameters for $64\times64$ images and two classes).
 
-\subsection{Every block}
-\begin{longtable}{@{}p{3.6cm}p{5.6cm}p{5.8cm}@{}}
+\subsection{Every block and how its values are set}
+\label{sec:blocks-text}
+\subsubsection*{How a value is written}
+A block's line is its word (\texttt{conv}, \texttt{dense}, \dots) followed by its values in any order. Each value can be written in a
+short form, and every value also in a long form \emph{name}\texttt{=}\emph{value}:
+\begin{longtable}{@{}p{3.6cm}p{5.2cm}p{6.2cm}@{}}
 \toprule
-\textbf{Block (other words)} & \textbf{Example} & \textbf{Settings (default)}\\
+\textbf{Form} & \textbf{Example} & \textbf{Sets}\\
 \midrule\endhead
-\texttt{input} & \texttt{1 input} & none: the shape is the dataset's\\
-\texttt{conv} (\texttt{conv2d}) & \texttt{conv 64 3x3 stride 2 pad 1 gelu} & filters (32), kernel \texttt{KxK} or \texttt{K} (3), \texttt{stride} (1), \texttt{pad} n / \texttt{same} / \texttt{valid} (same), \texttt{dil} (1), activation (relu), \texttt{nobias}\\
-\texttt{dwconv} (\texttt{dwconv2d}) & \texttt{dwconv x2 3x3 stride 2} & multiplier \texttt{x}n (1), kernel, stride, padding, activation, \texttt{nobias}\\
-\texttt{convT} (\texttt{convtranspose}) & \texttt{convT 64 2x2 stride 2 none} & filters (32), kernel (2), stride (2), \texttt{pad} (0), \texttt{outpad} (0), activation (relu)\\
-\texttt{maxpool}, \texttt{avgpool} (\texttt{pool}) & \texttt{maxpool 3x3 stride 2 pad 1} & size (2), \texttt{stride} n or \texttt{size} (= size), \texttt{pad} (0)\\
-\texttt{global\_pool} (\texttt{gap}) & \texttt{global\_pool max} & \texttt{avg} / \texttt{max} (avg)\\
-\texttt{upsample} & \texttt{upsample x2 bilinear} & scale \texttt{x}n (2), \texttt{nearest} / \texttt{bilinear}\\
-\texttt{bn}, \texttt{ln}, \texttt{gn} & \texttt{gn 8} & GroupNorm: groups (8; must divide the channels)\\
-\texttt{dropout} & \texttt{dropout 0.3} & rate (0.25)\\
-\texttt{flatten} & \texttt{flatten} & none\\
-\texttt{dense} (\texttt{linear}) & \texttt{dense 128 gelu} & units (128), activation (relu)\\
-\texttt{relu}, \texttt{gelu}, \texttt{silu}, \texttt{tanh}, \texttt{sigmoid}, \texttt{leaky\_relu} & \texttt{gelu} & an activation block\\
-\texttt{add}, \texttt{concat} (\texttt{cat}), \texttt{mul} (\texttt{multiply}) & \texttt{add <- 2, 5} & two or more inputs; Concat joins channels in the order given\\
-\texttt{to\_tokens} & \texttt{to\_tokens patches} & \texttt{patches} (every pixel a token) / \texttt{rows}\\
-\texttt{cls\_pos} & \texttt{cls\_pos} & class token + position embedding; \texttt{nocls}: positions only\\
-\texttt{attention} (\texttt{attn}) & \texttt{attention heads 8 drop 0.1} & \texttt{heads} (4; must divide the token width), \texttt{drop} (0)\\
-\texttt{token\_pool} & \texttt{token\_pool mean} & \texttt{cls} / \texttt{mean} (cls)\\
-\texttt{output}, \texttt{seg\_output} & \texttt{output} & none: classes from the dataset\\
+a plain number & \texttt{conv 64}, \texttt{dense 128}, \texttt{dropout 0.3} & the block's \emph{main number} (filters, units, rate, \dots: see each block; a second plain number is an error)\\
+a size \texttt{H}x\texttt{W} & \texttt{3x3}, \texttt{5x3}, \texttt{2x2} & the kernel (convolutions) or the window (pools); height $\times$ width\\
+\texttt{x}\emph{n} & \texttt{x2} & a multiplier (depthwise) or a scale (upsample)\\
+a word and its value & \texttt{stride 2}, \texttt{pad 1}, \texttt{dil 2}, \texttt{heads 8}, \texttt{drop 0.1} & that setting\\
+a word alone & \texttt{gelu}, \texttt{none}, \texttt{same}, \texttt{nobias}, \texttt{max}, \texttt{bilinear} & a choice (activation, padding mode, bias off, pool mode, \dots)\\
+\emph{name}\texttt{=}\emph{value} & \texttt{filters=64}, \texttt{kernel=7}, \texttt{stride=2x1}, \texttt{bias=false} & any setting by its name (the names are those of the inspector); a single number for a size means a square (\texttt{kernel=7} is $7\times7$)\\
 \bottomrule
 \end{longtable}
-The activation words after a \texttt{conv}, \texttt{dwconv}, \texttt{convT} or \texttt{dense} set its activation (\texttt{none}: without);
-on their own line they are an Activation block. Block words may be written in capitals (\texttt{Conv}); the text the application prints
-uses the short lower-case words.
+Wherever a number goes, an expression may go (\texttt{conv w * 2 3x3}, \texttt{kernel=s+2}). Left-out values take the defaults below,
+which are also the canvas's. A value outside its range, a word the block does not have, or a second plain number is an error on its line
+(Section~\ref{sec:text-errors}); nothing is ever changed silently. Block words are not case-sensitive (\texttt{Conv2D 16 3x3} works).
+
+In the tables: \emph{short} is how the value is written briefly, \emph{name} its long form (\emph{name}\texttt{=}\emph{value}).
+
+\subsubsection*{\texttt{input} --- the images}
+\texttt{1 input}. No values: its shape (channels, height, width) comes from the Dataset tab. Every design has exactly one, as its first
+block; it takes no input.
+
+\subsubsection*{\texttt{conv} (also \texttt{conv2d}) --- 2-D convolution}
+\begin{verbatim}
+2 conv 64 3x3                              # 64 filters, 3×3, stride 1, "same" padding, ReLU
+3 conv 128 3x3 stride 2 pad 1 gelu nobias
+4 conv 32 5x3 dil 2 valid none
+5 conv filters=64 kernel=7 stride=2 padding=3 activation=silu bias=false
+\end{verbatim}
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{2.2cm}>{\raggedright\arraybackslash}p{3.3cm}>{\raggedright\arraybackslash}p{2.8cm}>{\raggedright\arraybackslash}p{1.5cm}>{\raggedright\arraybackslash}p{1.6cm}>{\raggedright\arraybackslash}p{3.1cm}@{}}
+\toprule
+\textbf{Value} & \textbf{short} & \textbf{name} & \textbf{default} & \textbf{range} & \textbf{meaning}\\
+\midrule\endhead
+filters & the plain number: \texttt{64} & \texttt{filters} & 32 & 1--65\,536 & output channels\\
+kernel & \texttt{3x3}, \texttt{5x3} & \texttt{kernel} & $3\times3$ & 1--32 & window size\\
+stride & \texttt{stride 2} & \texttt{stride} & 1 & 1--32 & step (\texttt{stride=2x1} for different steps)\\
+padding & \texttt{same}, \texttt{valid}, \texttt{pad 1} & \texttt{padding} & same & 0--10 & \texttt{same} keeps the size; \texttt{valid} = 0\\
+dilation & \texttt{dil 2} & \texttt{dilation} & 1 & 1--6 & spacing inside the window\\
+activation & \texttt{relu} \texttt{leaky\_relu} \texttt{gelu} \texttt{silu} \texttt{sigmoid} \texttt{tanh} \texttt{none} & \texttt{activation} & relu & & applied after the convolution\\
+bias & \texttt{nobias} (\texttt{bias}) & \texttt{bias} & true & & off before a BatchNorm\\
+\bottomrule
+\end{longtable}
+
+\subsubsection*{\texttt{dwconv} (also \texttt{dwconv2d}) --- depthwise convolution}
+One filter per input channel (MobileNet). \texttt{dwconv 3x3}, \texttt{dwconv x2 3x3 stride 2 pad 1 none nobias},
+\texttt{dwconv multiplier=3 kernel=5x5}.
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{2.2cm}>{\raggedright\arraybackslash}p{3.3cm}>{\raggedright\arraybackslash}p{2.8cm}>{\raggedright\arraybackslash}p{1.5cm}>{\raggedright\arraybackslash}p{1.6cm}>{\raggedright\arraybackslash}p{3.1cm}@{}}
+\toprule
+\textbf{Value} & \textbf{short} & \textbf{name} & \textbf{default} & \textbf{range} & \textbf{meaning}\\
+\midrule\endhead
+multiplier & \texttt{x2} & \texttt{multiplier} & 1 & 1--8 & output channels = input channels $\times$ multiplier\\
+kernel, stride, padding, activation, bias & as for \texttt{conv} & & & & (no dilation; no plain number)\\
+\bottomrule
+\end{longtable}
+
+\subsubsection*{\texttt{convT} (also \texttt{convtranspose}) --- transposed convolution}
+Makes the image larger (U-Net's decoder). \texttt{convT 64 2x2 stride 2 none} doubles height and width; \texttt{convT 32 3x3 stride 2 pad 1
+outpad 1} too.
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{2.2cm}>{\raggedright\arraybackslash}p{3.3cm}>{\raggedright\arraybackslash}p{2.8cm}>{\raggedright\arraybackslash}p{1.5cm}>{\raggedright\arraybackslash}p{1.6cm}>{\raggedright\arraybackslash}p{3.1cm}@{}}
+\toprule
+\textbf{Value} & \textbf{short} & \textbf{name} & \textbf{default} & \textbf{range} & \textbf{meaning}\\
+\midrule\endhead
+filters & the plain number & \texttt{filters} & 32 & 1--65\,536 & output channels\\
+kernel & \texttt{2x2} & \texttt{kernel} & $2\times2$ & 1--32 & \\
+stride & \texttt{stride 2} & \texttt{stride} & 2 & 1--32 & the enlargement\\
+padding & \texttt{pad 1} & \texttt{padding} & 0 & 0--10 & a number only (no \texttt{same})\\
+output padding & \texttt{outpad 1} & \texttt{output\_padding} & 0 & 0--7 & extra rows / columns at the end\\
+activation & as for \texttt{conv} & \texttt{activation} & relu & & (no bias setting)\\
+\bottomrule
+\end{longtable}
+
+\subsubsection*{\texttt{maxpool}, \texttt{avgpool} (also \texttt{pool}) --- pooling}
+\texttt{maxpool 2x2} (halves the size), \texttt{maxpool 3x3 stride 2 pad 1}, \texttt{avgpool 3x3 stride 1 pad 1}, \texttt{maxpool 3}
+($3\times3$), \texttt{pool avg size=2 stride=size}.
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{2.2cm}>{\raggedright\arraybackslash}p{3.3cm}>{\raggedright\arraybackslash}p{2.8cm}>{\raggedright\arraybackslash}p{1.5cm}>{\raggedright\arraybackslash}p{1.6cm}>{\raggedright\arraybackslash}p{3.1cm}@{}}
+\toprule
+\textbf{Value} & \textbf{short} & \textbf{name} & \textbf{default} & \textbf{range} & \textbf{meaning}\\
+\midrule\endhead
+mode & the word \texttt{maxpool} / \texttt{avgpool}, or \texttt{max}, \texttt{avg} & \texttt{mode} & max & & maximum or average of the window\\
+size & \texttt{2x2}, or the plain number \texttt{3} & \texttt{size} & $2\times2$ & 1--8 & window\\
+stride & \texttt{stride 1}, \texttt{stride size} & \texttt{stride} & size & 1--32 & \texttt{size}: the same as the window\\
+padding & \texttt{pad 1} & \texttt{padding} & 0 & 0--4 & a number only\\
+\bottomrule
+\end{longtable}
+
+\subsubsection*{\texttt{global\_pool} (also \texttt{gap}) --- one value per channel}
+\texttt{global\_pool} (average over the whole image), \texttt{global\_pool max}. Value: mode, \texttt{avg} / \texttt{max}
+(\texttt{mode=}), default avg. From $(C, H, W)$ to $(C)$.
+
+\subsubsection*{\texttt{upsample} --- enlarge without weights}
+\texttt{upsample x2}, \texttt{upsample 2}, \texttt{upsample x4 bilinear}. Values: scale, \texttt{x}\emph{n} or the plain number
+(\texttt{scale=}), default 2, range 2--8; mode, \texttt{nearest} / \texttt{bilinear} (\texttt{mode=}), default nearest.
+
+\subsubsection*{\texttt{bn}, \texttt{ln}, \texttt{gn} --- normalisation}
+\texttt{bn} (also \texttt{batchnorm}) and \texttt{ln} (also \texttt{layernorm}) have no values. \texttt{gn 8} (also \texttt{groupnorm},
+\texttt{groups=8}): GroupNorm with 8 groups, default 8, range 1--65\,536; the number must divide the channels.
+
+\subsubsection*{\texttt{dropout}}
+\texttt{dropout 0.3}, \texttt{dropout rate=0.5}. Value: rate, the plain number (\texttt{rate=}), default 0.25, range 0--0.95: the
+fraction of values set to zero during training.
+
+\subsubsection*{\texttt{flatten}}
+\texttt{flatten}. No values: $(C, H, W)$ becomes one vector of $C\cdot H\cdot W$ values (before \texttt{dense}).
+
+\subsubsection*{\texttt{dense} (also \texttt{linear}) --- fully connected}
+\texttt{dense 128}, \texttt{dense 10 none}, \texttt{linear units=256 activation=tanh}. Values: units, the plain number (\texttt{units=}),
+default 128, range 1--1\,048\,576; activation, as for \texttt{conv} (\texttt{activation=}), default relu. On tokens it acts on every token
+separately (a Transformer's MLP).
+
+\subsubsection*{Activation blocks}
+A line with only an activation word is an activation block: \texttt{relu}, \texttt{leaky\_relu}, \texttt{gelu}, \texttt{silu},
+\texttt{sigmoid}, \texttt{tanh}. Also \texttt{activation gelu}, \texttt{act fn=silu} (the name of the value is \texttt{fn}).
+
+\subsubsection*{\texttt{add}, \texttt{concat} (\texttt{cat}), \texttt{mul} (\texttt{multiply}) --- joining}
+No values; the inputs come after \texttt{<-}: \texttt{add <- 2, 5} (same shapes, summed: residual), \texttt{concat <- 3, 7} (channels
+joined in this order; same height and width), \texttt{mul <- 4, 6} (element-wise; a vector of $C$ values may multiply a $(C, H, W)$
+image: an attention gate or squeeze-and-excitation). Two or more inputs.
+
+\subsubsection*{Transformer blocks: \texttt{to\_tokens}, \texttt{cls\_pos}, \texttt{attention}, \texttt{token\_pool}}
+\begin{verbatim}
+3 to_tokens patches        # (C, H, W) -> H·W tokens of C values;  "rows": H tokens of C·W values
+4 cls_pos                  # a learnt class token in front + learnt positions;  "nocls": positions only
+5 attention heads 8 drop 0.1      # also: attention 8, attn heads=8 dropout=0.1
+6 token_pool cls           # the class token's vector;  "mean": the mean of all tokens
+\end{verbatim}
+\texttt{to\_tokens}: mode \texttt{patches} / \texttt{rows} (\texttt{mode=}), default patches. \texttt{cls\_pos}: \texttt{cls} /
+\texttt{nocls} (\texttt{cls=true} / \texttt{false}), default cls. \texttt{attention} (also \texttt{attn}): heads, the plain number or
+\texttt{heads 8} (\texttt{heads=}), default 4, range 1--512, must divide the token width; dropout, \texttt{drop 0.1}
+(\texttt{dropout=}), default 0, range 0--0.9. \texttt{token\_pool}: \texttt{cls} / \texttt{mean} (\texttt{mode=}), default cls.
+
+\subsubsection*{\texttt{output}, \texttt{seg\_output}}
+No values: \texttt{output} gives one score per class of the dataset (classification); \texttt{seg\_output} one score per class for every
+pixel (segmentation; it must be at the size of the masks). Exactly one, as the last block.
 
 \subsection{The rules in brief}
 \begin{verbatim}
@@ -166,6 +276,7 @@ REF:  a label | in | in2 | a path like 5.2.b    EXPR: numbers, names, + - * / //
 \end{verbatim}
 
 \subsection{Mistakes and what the application says}
+\label{sec:text-errors}
 A text with a problem is not applied: the canvas keeps the last valid design, the status says ``not applied'', the line number in the
 gutter turns red and the message below the text names the line (click it to jump there). Typical messages:
 \begin{longtable}{@{}p{4.6cm}p{10.4cm}@{}}
