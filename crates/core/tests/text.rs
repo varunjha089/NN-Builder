@@ -489,3 +489,10 @@ fn a_new_text_does_not_take_places_of_other_blocks() {
     assert!(same("1") && same("2"));
     assert!(!same("3") && !same("4"));
 }
+
+#[test]
+fn too_many_blocks_is_reported_on_the_repeat_line() {
+    let e = err("1 input\n2 repeat 9000 {\n  a ln\n  b dense 64\n  c add <- in, b\n}\n3 output\n");
+    assert_eq!(e.line, 2);
+    assert!(e.message.contains("27000 blocks") && e.message.contains("At most 6666 passes"), "{}", e.message);
+}

@@ -1188,11 +1188,23 @@ impl Ctx<'_> {
     fn passes(&mut self, passes: &[HashMap<String, Val>], body: &[Stmt], full: &str, ins: &[String], sc: &Scope, line: usize, col: usize)
         -> Result<String, Diagnostic> {
         let mut cur: Vec<String> = ins.to_vec();
+        let before = self.nodes.len();
         for (r, extra) in passes.iter().enumerate() {
             let mut vars = sc.vars.clone();
             vars.extend(extra.clone());
             let mut inner = Scope { prefix: format!("{full}.{}.", r + 1), vars, inputs: cur.clone(), local: HashMap::new(), auto: 0 };
             let out = self.stmts(body, &mut inner)?.ok_or_else(|| diag(line, col, "the braces contain no blocks"))?;
+            // after the first pass the size is known: say so on this line (not on a block inside, deep into the expansion)
+            if r == 0 {
+                let per = self.nodes.len() - before;
+                let total = before + per * passes.len();
+                if total > MAX_BLOCKS {
+                    return Err(diag(line, col, format!(
+                        "{} passes × {per} blocks = {} blocks, more than the {} a design may have (the canvas needs about 0.3 MB per \
+                         block: {} would take about {:.1} GB). At most {} passes fit here.",
+                        passes.len(), per * passes.len(), MAX_BLOCKS, total, total as f64 * 0.3 / 1024.0, (MAX_BLOCKS.saturating_sub(before)) / per.max(1))));
+                }
+            }
             self.outputs.insert(format!("{full}.{}", r + 1), out.clone());
             // the next pass takes this one's output (and the same further inputs, if any)
             cur = std::iter::once(out).chain(ins.iter().skip(1).cloned()).collect();
