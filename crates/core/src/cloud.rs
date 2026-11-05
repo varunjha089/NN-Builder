@@ -38,7 +38,7 @@ pub fn tools_ready() -> bool {
 /// make the tools environment and install kaggle + boto3 (about 60 MB)
 pub fn install_tools(log: &Log) -> Result<String, String> {
     if !bin("python").exists() {
-        let base = ["python3.13", "python3.12", "python3.11", "python3.10", "python3"]
+        let base = ["python3.13", "python3.12", "python3.11", "python3.10", "python3", "python"]
             .iter()
             .flat_map(|n| ["/opt/homebrew/bin/", "/usr/local/bin/", "/usr/bin/", ""].iter().map(move |d| format!("{d}{n}")))
             .find(|exe| capture(Command::new(exe).args(["-c", "import sys; sys.exit(0 if (3,9) <= sys.version_info[:2] <= (3,14) else 1)"]), None).0 == 0)

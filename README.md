@@ -59,19 +59,96 @@ The app checks the GitHub releases once a day (switch on the Projects page; or C
 exists, a bar offers "Install and restart": the download is checked against the release's SHA-256, then the app replaces itself and restarts.
 Your projects, settings and keychain entries are not touched.
 
-## Install and run
+## Install
 
-Download the file for your system from the [releases](https://github.com/varunjha089/NN-Builder/releases/latest) (macOS: unzip and move
-`NN Builder.app` to Applications; the builds are not signed, so the first time right-click → Open), or build it with the steps below. First steps in the app: Connection → Install tools → add your
-Kaggle token (and/or a machine) → Project → New → Design → Dataset → Train.
+Download the file for your system from the **[latest release](https://github.com/varunjha089/NN-Builder/releases/latest)**. The app is
+small (5 MB on macOS); it needs no PyTorch and no GPU on your computer, because training runs on Kaggle, a server or AWS.
 
-## Build
+| System | File | Requirements |
+|---|---|---|
+| macOS (Apple silicon: M1 or newer) | `NN-Builder_X_aarch64.app.zip` | macOS 11 or newer. Intel Macs: build from source (below) |
+| Windows 10 / 11 (64-bit) | `NN-Builder_X_x64-setup.exe` | Microsoft Edge WebView2 (built into Windows 11; the installer adds it on Windows 10 if missing) |
+| Linux (64-bit), Debian / Ubuntu | `nn-builder_X_amd64.deb` | Ubuntu 22.04 or newer, Debian 12 or newer |
+| Linux (64-bit), any distribution | `nn-builder_X_amd64.AppImage` | FUSE 2 (`libfuse2`; on Ubuntu 24.04 `libfuse2t64`) |
+
+The builds are not signed with a paid Apple or Microsoft certificate, so each system warns the first time you open the app.
+
+### macOS
+
+1. Unzip `NN-Builder_X_aarch64.app.zip` (double-click it) and drag **NN Builder.app** into **Applications**.
+2. Open it. macOS says it cannot verify the developer: click **Done**, then open **System Settings → Privacy & Security**, scroll to
+   *"NN Builder" was blocked…* and click **Open Anyway** (enter your password). This is needed once.
+   (On macOS 14 and older, right-click the app → **Open** → **Open** does the same.)
+3. When you save a Kaggle, Hugging Face or AWS key, macOS asks whether NN Builder may use it in your keychain: enter your login password and
+   click **Always Allow**.
+
+Or in Terminal, after moving the app to Applications: `xattr -dr com.apple.quarantine "/Applications/NN Builder.app"`, then open it normally.
+
+### Windows
+
+1. Run `NN-Builder_X_x64-setup.exe`. If Windows SmartScreen shows *"Windows protected your PC"*, click **More info → Run anyway**.
+2. Follow the installer; NN Builder is then in the Start menu.
+3. Keys are stored in the Windows Credential Manager.
+
+**Training on Windows:** Kaggle works. Training on a college server or AWS over SSH is **not supported on Windows yet** (it needs `rsync` and
+OpenSSH connection sharing, which Windows' built-in OpenSSH lacks); use Kaggle, or run NN Builder on macOS or Linux for SSH machines.
+
+### Linux
+
+Debian / Ubuntu (`.deb`, installs the dependencies too):
 
 ```
+sudo apt install ./nn-builder_X_amd64.deb
+nn-builder-app        # or start "NN Builder" from the applications menu
+```
+
+Any distribution (`.AppImage`, nothing to install):
+
+```
+chmod +x nn-builder_X_amd64.AppImage
+./nn-builder_X_amd64.AppImage
+```
+
+If the AppImage does not start, install FUSE 2: `sudo apt install libfuse2` (Ubuntu 22.04) or `sudo apt install libfuse2t64` (24.04).
+Keys are stored through the Secret Service (GNOME Keyring or KWallet), which normal desktops have.
+
+### First steps (all systems)
+
+1. **Connection → Install tools** (once): makes a small private Python environment with the `kaggle` and `boto3` helpers (about 60 MB). It
+   needs **Python 3.9–3.14** on your computer: macOS and Linux usually have it; on Windows install it from
+   [python.org](https://www.python.org/downloads/) (tick *Add python.exe to PATH*).
+2. **Connection → Kaggle:** paste your API token (kaggle.com → Settings → API → Create New Token). The Kaggle account must be
+   phone-verified for GPU notebooks. Add a college server or an AWS instance here too if you have one.
+3. **Projects:** create a project, or open a demo architecture and save it (⌘S / Ctrl+S).
+4. **Design → Dataset → Train → Results.** The full guide is the [manual](doc/nn_builder_manual.pdf).
+
+### Updating and uninstalling
+
+- **Updates:** the app checks the releases once a day (Settings) and offers *Install and restart*; or download the new file and install it
+  over the old one. Projects, settings and keys are kept.
+- **Uninstall:** macOS: move NN Builder.app to the Trash. Windows: Settings → Apps → NN Builder → Uninstall. Linux: `sudo apt remove
+  nn-builder`, or delete the AppImage.
+  Your **projects** stay where you saved them (by default `~/NN_Builder_Projects`). The app's **settings** folder is
+  `~/Library/Application Support/NN Builder` (macOS), `%APPDATA%\NN Builder` (Windows) or `~/.local/share/nn-builder` (Linux); the **keys** are
+  the "NN Builder" entries in the keychain / Credential Manager / Secret Service. Delete those too to remove everything.
+
+## Build from source
+
+Needs [Rust](https://rustup.rs) (stable), [Node.js](https://nodejs.org) 20 or newer, and the Tauri system packages:
+
+- **macOS:** Xcode Command Line Tools (`xcode-select --install`).
+- **Windows:** Microsoft C++ Build Tools ("Desktop development with C++") and WebView2.
+- **Linux (Debian/Ubuntu):** `sudo apt install build-essential curl wget file libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf`
+
+```
+git clone https://github.com/varunjha089/NN-Builder.git && cd NN-Builder
 cd web && npm ci && npm run build && cd ..          # the window
 cargo test -p nnb-core                               # core tests (no network, no PyTorch)
-cd app && npm ci && npx tauri build && cd ..         # target/release/bundle/macos/NN Builder.app
+cd app && npm ci && npx tauri build && cd ..         # the installer
 ```
+
+The result is in `target/release/bundle/`: `macos/NN Builder.app` (copy it to Applications), `nsis/…-setup.exe` (Windows), or `deb/` and
+`appimage/` (Linux).
 
 ## Where things are
 
