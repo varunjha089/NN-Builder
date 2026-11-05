@@ -522,6 +522,10 @@ def export_model(model, example):
     except Exception as e:
         emit("warning", message=f"TorchScript export failed: {type(e).__name__}: {e}")
     try:
+        import onnx  # noqa: F401  (torch.onnx.export needs it; Kaggle and a fresh venv may not have it)
+    except ImportError:
+        subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "onnx"], check=False)
+    try:
         args = dict(input_names=["image"], output_names=["logits"], dynamic_axes={"image": {0: "batch"}, "logits": {0: "batch"}}, opset_version=17)
         try:
             torch.onnx.export(m, (x,), os.path.join(OUT, "model.onnx"), dynamo=False, **args)

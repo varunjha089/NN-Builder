@@ -57,7 +57,8 @@ def main(run):
     x = torch.randn(3, 3, 32, 32)
     with torch.no_grad():
         assert float((ts(x) - net(x)).abs().max()) < 1e-4, "TorchScript differs from model.pt"
-    assert os.path.getsize(os.path.join(run, "model.onnx")) > 1000, "ONNX file"
+    warns = [e["message"] for e in ev if e["event"] == "warning"]
+    assert os.path.exists(os.path.join(run, "model.onnx")) and os.path.getsize(os.path.join(run, "model.onnx")) > 1000, f"ONNX file; warnings: {warns}"
     print(f"recipe ran: learning rate per epoch {lrs}; test accuracy {ev[-1]['test_acc']}, top-5 {ev[-1]['test_top5']}; "
           f"Grad-CAM on {res['cam_layer']}, {len(res['mistakes'])} mistakes shown; TorchScript = model.pt, ONNX written")
 
