@@ -3,6 +3,21 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 05_11_26_18_13_36
+
+**Manual: how every block is written and how each of its values is set** (`a0f58fb`)
+
+The language chapter's block reference now explains the forms of a value (main number, HxW size, xN,
+word + value, word alone, name=value, expressions) and, for every block, its examples and a table of
+its values: short form, name, default, range and meaning. tests/text.rs block_reference_forms checks
+every form shown.
+
+Fixed while checking them: the text accepted words for settings a block does not have (same on convT,
+dil on dwconv, nobias on convT, stride size on conv) and kept them doing nothing; now an error naming
+the block's settings, and unknown keys are ignored when comparing. Dropout rates were cut to 0.95 / 0.9
+and rounded to 2 decimals in the code without notice: now an error on the block when out of range, and
+the exact value in train.py. 'Did you mean' suggests only the block's own words.
+
 ## 05_11_26_17_58_10
 
 **Test: read the manual chapter with Windows line endings too** (`5a2f05d`)
