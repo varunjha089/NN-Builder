@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Version 0.2.0 (2026-11-04). Public repository github.com/varunjha089/NN-Builder (MIT); releases there feed the app's automatic update.
+Version 0.3.0 (2026-11-05). Public repository github.com/varunjha089/NN-Builder (MIT); releases there feed the app's automatic update.
 Kaggle, a college server and EC2 are tested with stand-ins only (never against real accounts in tests). The earlier Python/Blockly app
 (0.1.1, 2026-11-03) is in the Trash.
 
