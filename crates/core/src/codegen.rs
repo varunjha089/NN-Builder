@@ -80,6 +80,17 @@ pub struct TrainSettings {
     /// also save model.ts (TorchScript) and model.onnx at the end
     #[serde(default)]
     pub export: bool,
+    /// GPU memory: recompute activations in the backward pass instead of keeping them (activation checkpointing; ~2-4x less memory
+    /// for the layer outputs, ~30 % slower)
+    #[serde(default)]
+    pub save_memory: bool,
+    /// GPU memory: when a batch does not fit, process it in 2, 4, 8 ... parts and add up their gradients (same batch, same results)
+    #[serde(default = "yes")]
+    pub auto_split: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 fn default_freeze() -> String {
@@ -114,7 +125,7 @@ impl Default for TrainSettings {
             aug_hflip: false, aug_vflip: false, aug_crop: 0, aug_rotate: 0.0, aug_color: false, checkpoint_minutes: 0.0, max_resumes: default_max_resumes(),
             val_fraction: 0.0, early_stop: false, patience: default_patience(), monitor: default_monitor(),
             weight_decay: 0.0, schedule: default_schedule(), warmup_epochs: 0.0, label_smoothing: 0.0, grad_clip: 0.0,
-            pretrained: String::new(), freeze: default_freeze(), export: false }
+            pretrained: String::new(), freeze: default_freeze(), export: false, save_memory: false, auto_split: true }
     }
 }
 
@@ -327,6 +338,37 @@ fn fmt(s: &[usize]) -> String {
 
 /// The `Net` class, LAYERS (module name, label, is a convolution) and EXPECTED (module name -> output shape). Fails for a design with problems.
 pub fn model_code(g: &Graph, a: &Analysis) -> Result<String> {
+    model_code_opts(g, a, false)
+}
+
+/// where `forward` can be cut into parts for activation checkpointing: after line i when nothing computed before i is used later (only
+/// line i's own output crosses the cut). `inputs[j]` = the lines whose outputs line j uses; the result line counts as used at the end.
+/// About sqrt(n) parts of similar length; fewer than two parts = nothing to gain.
+pub fn checkpoint_cuts(inputs: &[Vec<usize>], result: usize) -> Vec<usize> {
+    let n = inputs.len();
+    let mut last_use: Vec<usize> = (0..n).collect();
+    for (j, ins) in inputs.iter().enumerate() {
+        for &i in ins {
+            last_use[i] = last_use[i].max(j);
+        }
+    }
+    if result < n {
+        last_use[result] = n;
+    }
+    let target = (n as f64 / (n as f64).sqrt().ceil()).ceil() as usize;
+    // earlier = the last line that uses any output before line i; a cut after i is possible when that is at most i
+    let (mut cuts, mut earlier, mut start) = (vec![], 0, 0);
+    for (i, &used) in last_use.iter().enumerate().take(n.saturating_sub(1)) {
+        if earlier <= i && i + 1 - start >= target.max(2) && n - (i + 1) >= 2 {
+            cuts.push(i);
+            start = i + 1;
+        }
+        earlier = earlier.max(used);
+    }
+    cuts
+}
+
+fn model_code_opts(g: &Graph, a: &Analysis, save_memory: bool) -> Result<String> {
     if !a.ok {
         bail!("the design has problems; fix the red blocks first");
     }
@@ -338,6 +380,9 @@ pub fn model_code(g: &Graph, a: &Analysis) -> Result<String> {
     let mut expected = serde_json::Map::new();
     expected.insert("input".into(), json!(a.input));
     let mut result_var = String::new();
+    let pos: std::collections::HashMap<&str, usize> = order.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+    let line_inputs: Vec<Vec<usize>> = order.iter().map(|id| g.inputs_of(id).iter().filter_map(|s| pos.get(s).copied()).collect()).collect();
+    let mut result_pos = order.len();
     for (i, id) in order.iter().enumerate() {
         let n = g.node(id).unwrap();
         let r = a.get(id).unwrap();
@@ -372,17 +417,47 @@ pub fn model_code(g: &Graph, a: &Analysis) -> Result<String> {
         }
         if n.kind == "output" || n.kind == "seg_output" {
             result_var = v.clone();
+            result_pos = i;
         }
     }
     let mut s = String::new();
     if g.nodes.iter().any(|n| order.contains(&n.id.as_str()) && matches!(n.kind.as_str(), "to_tokens" | "cls_pos" | "attention" | "token_pool")) {
         s += TOKEN_MODULES;
     }
+    let cuts = if save_memory { checkpoint_cuts(&line_inputs, result_pos) } else { vec![] };
+    if save_memory {
+        s += "import torch.utils.checkpoint\n\n\n";
+    }
     s += "class Net(nn.Module):\n    def __init__(self):\n        super().__init__()\n";
+    if !cuts.is_empty() {
+        s += "        self.save_memory = True  # Train tab \"save memory\": recompute the parts' inner outputs in the backward pass\n";
+    }
     s += &init.join("\n");
     s += "\n\n    def forward(self, x):\n";
+    if !cuts.is_empty() {
+        let names: Vec<&String> = order.iter().map(|id| &var[id]).collect();
+        s += "        if self.save_memory and self.training and torch.is_grad_enabled():\n";
+        let mut prev = "x".to_string();
+        for (j, &c) in cuts.iter().enumerate() {
+            s += &format!("            {} = torch.utils.checkpoint.checkpoint(self._part{j}, {prev}, use_reentrant=False)\n", names[c]);
+            prev = names[c].clone();
+        }
+        s += &format!("            return self._part{}({prev})\n", cuts.len());
+    }
     s += &fwd.join("\n");
-    s += &format!("\n        return {result_var}\n\n\n");
+    s += &format!("\n        return {result_var}\n");
+    if !cuts.is_empty() {
+        // the same lines as forward, in parts: part j runs from the line after the previous cut to cut j and returns that line's output
+        let mut start = 0;
+        let ends: Vec<usize> = cuts.iter().copied().chain(std::iter::once(order.len() - 1)).collect();
+        for (j, &end) in ends.iter().enumerate() {
+            let arg = if j == 0 { "x".to_string() } else { var[order[start - 1]].clone() };
+            let ret = if j == cuts.len() { result_var.clone() } else { var[order[end]].clone() };
+            s += &format!("\n    def _part{j}(self, {arg}):\n{}\n        return {ret}\n", fwd[start..=end].join("\n"));
+            start = end + 1;
+        }
+    }
+    s += "\n\n";
     s += &format!("# {} trainable parameters\n", a.total_params);
     s += &format!("LAYERS = {}   # module name, label, is a convolution\n", py_json(&Value::Array(layers)));
     s += &format!("EXPECTED = {}   # output shape of each module (without the batch)\n", py_json(&Value::Object(expected)));
@@ -406,14 +481,15 @@ pub fn train_script(g: &Graph, ds: &Dataset, a: &Analysis, t: &TrainSettings, ti
     if let Some(p) = ds.problems().first() {
         bail!("{p}");
     }
-    let model = model_code(g, a)?;
+    let model = model_code_opts(g, a, t.save_memory)?;
     let ds_json = serde_json::to_value(ds)?;
     let title: String = title.chars().filter(|c| !matches!(c, '"' | '\\' | '\n' | '\r')).collect();
     let t_json = json!({"epochs": t.epochs, "batch_size": t.batch_size, "lr": t.lr, "optimizer": t.optimizer, "seed": t.seed, "amp": t.amp,
-        "limit_train": t.limit_train, "num_workers": 2, "task": ds.task, "checkpoint_minutes": t.checkpoint_minutes,
+        "limit_train": t.limit_train, "num_workers": "auto", "task": ds.task, "checkpoint_minutes": t.checkpoint_minutes,
         "val_fraction": t.val_fraction, "early_stop": t.early_stop, "patience": t.patience, "monitor": t.monitor,
         "weight_decay": t.weight_decay, "schedule": t.schedule, "warmup_epochs": t.warmup_epochs, "label_smoothing": t.label_smoothing,
         "grad_clip": t.grad_clip, "pretrained": t.pretrained, "freeze": t.freeze, "export": t.export,
+        "save_memory": t.save_memory, "auto_split": t.auto_split,
         "aug": {"hflip": t.aug_hflip, "vflip": t.aug_vflip, "crop": t.aug_crop, "rotate": t.aug_rotate, "color": t.aug_color}});
     let head = format!(
         "\"\"\"{title}: generated by NN Builder {}. Run: python train.py\n\

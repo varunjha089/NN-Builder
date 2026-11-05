@@ -37,6 +37,12 @@ jobs:
         run: |
           cargo run -q -p nnb-core --example resume_case -- ci_recipe recipe
           python python/ci_recipe_check.py ci_recipe
+      - name: GPU memory features (save memory, automatic batch split; real PyTorch on CPU)
+        run: |
+          cargo run -q -p nnb-core --example memory_case -- ci_memory
+          cargo run -q -p nnb-core --example resume_case -- ci_split_a split
+          cargo run -q -p nnb-core --example resume_case -- ci_split_b split
+          python python/ci_memory_check.py ci_memory ci_split_a ci_split_b
       - name: ImageNet weights in the demos (real PyTorch, downloads torchvision weights)
         run: |
           cargo run -q -p nnb-core --example pretrained_case -- ci_pretrained

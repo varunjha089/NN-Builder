@@ -59,6 +59,17 @@ crates/core/src/
                            Build workflow: macOS-Intel (x86_64-apple-darwin cross-build, NN-Builder_X_x64.app.zip); Dataset: hf_preview
                            (class balance from datasets-server /statistics, 8 example images from /first-rows as data URLs on request),
                            no-image-column error.
+                           GPU memory / smoother running: TrainSettings.auto_split (default on: a batch that runs out of memory is
+                           processed in 2, 4, 8 ... parts, gradients weighted by share, "memory_split" event, parts kept in the
+                           checkpoint, version 5; evaluation batches halve the same way; one_batch_check uses 2 images) and save_memory
+                           (codegen checkpoint_cuts: forward cut where only one tensor crosses, ~sqrt(n) parts, _partN methods +
+                           torch.utils.checkpoint; generated only when on); bf16 on compute capability 8+, channels-last for conv nets,
+                           workers "auto" = min(8, CPUs) with prefetch 4, "memory" event (measured peak after the first epoch),
+                           data_wait per epoch; Train tab "GPU memory" box and run-card notes; status polls slow to 15 s when the
+                           window is hidden. Mac side: memo'd blocks, onlyRenderVisibleElements above 150 blocks, undo history capped
+                           by block count, charts thinned to ~1500 points. CI: ci_memory_check.py (parts = plain forward and gradients
+                           on 7 demos; a run with NNB_TEST_OOM_ABOVE=8 ends with the same weights as without). The design text
+                           language is planned in PROGRAMMING_LANGUAGE.md (FUTURE_PLAN.md: Sentinel-1/2).
                            Kaggle runs: data in /tmp/nnb_data (not /kaggle/working, the notebook output), checkpoint removed at the
                            end, kaggle_output deleted after metrics/results/model/log are copied; the run card shows the last check.
   dataset.rs               Dataset (builtin | huggingface | kaggle; task classify | segment; resize (built-in); hf_mask_col, kaggle_mask_dir;

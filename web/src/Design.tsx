@@ -1,5 +1,5 @@
 // The canvas: layer nodes joined by tensor edges (React Flow), a palette, and the inspector for the selected node.
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   ReactFlow, Background, Controls, MiniMap, Handle, Position, addEdge, applyEdgeChanges, applyNodeChanges,
   type Connection, type Edge, type EdgeChange, type Node, type NodeChange, type NodeProps, MarkerType,
@@ -73,7 +73,8 @@ function LayerNode({ data, selected }: NodeProps<Node<LayerData>>) {
     </div>
   );
 }
-const nodeTypes = { layer: LayerNode };
+// memo: a block is drawn again only when its own data or selection changes (dragging one block in a 290-block design stays smooth)
+const nodeTypes = { layer: memo(LayerNode) };
 
 const STEP_X = 300, STEP_Y = 150;
 
@@ -346,6 +347,7 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, relo
       <div className="canvas">
         {rfNodes.length > 0 && <ReactFlow nodes={rfNodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect}
           onPaneClick={() => setSelected(null)} fitView fitViewOptions={{ padding: 0.2, maxZoom: 1 }} minZoom={0.05}
+          onlyRenderVisibleElements={rfNodes.length > 150}
           deleteKeyCode={collapsed ? null : ["Backspace", "Delete"]} nodesConnectable={!collapsed}
           onNodeDoubleClick={(_, n) => { if (n.id.startsWith("repeat")) setCollapsed(false); }} key={collapsed ? "folded" : "all"}>
           <Background gap={24} />

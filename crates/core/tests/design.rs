@@ -322,3 +322,37 @@ fn groupnorm_block() {
     let gn = a.nodes.iter().find(|n| n.kind == "groupnorm").unwrap();
     assert!(!a.ok && gn.status == "error" && gn.messages[0].contains("32 channels into 5 groups"), "{:?}", gn.messages);
 }
+
+#[test]
+fn save_memory_parts() {
+    use nnb_core::codegen::checkpoint_cuts;
+    // a chain of 9 lines: cuts every ~3 lines, never in the last two
+    let chain: Vec<Vec<usize>> = (0..9).map(|j| if j == 0 { vec![] } else { vec![j - 1] }).collect();
+    assert_eq!(checkpoint_cuts(&chain, 8), vec![2, 5]);
+    // a skip from line 1 to line 5 (an Add): nothing between 1 and 4 may be a cut, since line 1's output crosses it
+    let mut skip = chain.clone();
+    skip[5] = vec![4, 1];
+    assert!(checkpoint_cuts(&skip, 8).iter().all(|&c| !(1..5).contains(&c)), "{:?}", checkpoint_cuts(&skip, 8));
+    // the result line counts as used at the end: no cut after it, even when lines follow
+    assert!(checkpoint_cuts(&chain, 3).iter().all(|&c| c < 3));
+
+    let t = TrainSettings { save_memory: true, ..TrainSettings::default() };
+    for tp in nnb_core::templates::TEMPLATES {
+        let g = nnb_core::templates::build(tp.key).unwrap();
+        let ds = dataset_for(tp);
+        let a = analyze(&g, &ds);
+        let code = train_script(&g, &ds, &a, &t, tp.title).unwrap();
+        if ["resnet18", "vit_tiny", "vgg16"].contains(&tp.key) {
+            assert!(code.contains("def _part1(self, ") && code.contains("torch.utils.checkpoint.checkpoint(self._part0, x"), "{}", tp.key);
+        }
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("t.py"), &code).unwrap();
+        if let Some(out) = py_compile(&dir.path().join("t.py")) {
+            assert!(out.status.success(), "{}: {}", tp.key, String::from_utf8_lossy(&out.stderr));
+        }
+    }
+    // without the setting the code is unchanged (no parts)
+    let g = nnb_core::templates::build("resnet18").unwrap();
+    let a = analyze(&g, &dataset_for(nnb_core::templates::get("resnet18").unwrap()));
+    assert!(!model_code(&g, &a).unwrap().contains("_part0"));
+}

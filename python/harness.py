@@ -60,6 +60,15 @@ class Interrupted(Exception):
     """a spot interruption notice arrived during evaluation: leave at once (the checkpoint is saved by the caller)"""
 
 
+OOM = getattr(torch.cuda, "OutOfMemoryError", RuntimeError)
+TEST_OOM_ABOVE = int(os.environ.get("NNB_TEST_OOM_ABOVE") or 0)  # CI only: pretend that more than this many images do not fit
+
+
+def is_oom(e):
+    """the GPU ran out of memory (PyTorch's own error, or the older RuntimeError some libraries still raise)"""
+    return (OOM is not RuntimeError and isinstance(e, OOM)) or (isinstance(e, RuntimeError) and "out of memory" in str(e).lower())
+
+
 def save_checkpoint(path, state):
     """atomic: an interruption or a full disk during the write leaves the previous checkpoint intact. False when it could not be written."""
     tmp = path + ".tmp"
@@ -411,7 +420,7 @@ def one_batch_check(model, loader, device):
     hooks = [getattr(model, name).register_forward_hook(lambda m, i, o, name=name: seen.__setitem__(name, list(o.shape[1:])))
              for name, _, _ in LAYERS]
     x, y = next(iter(loader))
-    x, y = x.to(device), y.to(device)
+    x, y = x[:2].to(device), y[:2].to(device)  # two images check every shape; a full batch might not fit before the split is known
     if list(x.shape[1:]) != EXPECTED["input"]:
         raise SystemExit(f"CHECK: the images are {list(x.shape[1:])}, but the design's Input is {EXPECTED['input']}.")
     out = model(x)
@@ -616,17 +625,32 @@ def main():
             emit("info", message=f"training only {sum(p.numel() for p in model.parameters() if p.requires_grad):,} parameters (the backbone is frozen)")
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     train, val, test = load_data(cfg)
-    workers = cfg.get("num_workers", 2) if device.type == "cuda" else 0
+    # data loading: one worker per CPU core (at most 8) on a GPU machine, each preparing batches ahead
+    nw = cfg.get("num_workers", "auto")
+    workers = (min(8, os.cpu_count() or 2) if nw == "auto" else int(nw)) if device.type == "cuda" else 0
+    ahead = {"prefetch_factor": 4} if workers else {}
     bs = cfg["batch_size"]
 
     def loader(epoch, skip_batches=0):
         return DataLoader(train, batch_size=bs, sampler=EpochOrder(len(train), cfg["seed"], epoch, skip_batches * bs), num_workers=workers,
-                          pin_memory=device.type == "cuda")
+                          pin_memory=device.type == "cuda", **ahead)
 
-    eval_bs = 64 if SEG else 256
+    # evaluation batches: halved when they do not fit (evaluate_safe)
+    eval_bs = {"v": 64 if SEG else 256}
     # per-epoch validation: the held-out part of the training data, or (without one) the test data as before
-    vl = DataLoader(val if val is not None else test, batch_size=eval_bs, shuffle=False, num_workers=workers)
-    test_l = DataLoader(test, batch_size=eval_bs, shuffle=False, num_workers=workers) if val is not None else vl
+    val_data = val if val is not None else test
+
+    def evaluate_safe(data):
+        while True:
+            try:
+                return evaluate(model, DataLoader(data, batch_size=eval_bs["v"], shuffle=False, num_workers=workers, **ahead), device)
+            except Exception as e:
+                if not is_oom(e) or eval_bs["v"] <= 1:
+                    raise
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
+            eval_bs["v"] //= 2
+            emit("memory_split", what="evaluation", batch=eval_bs["v"])
     # early stopping: the monitored value, the best epoch so far and how many epochs since then (kept in the checkpoint)
     monitor = cfg.get("monitor", "val_loss")
     early, patience = bool(cfg.get("early_stop")), max(1, int(cfg.get("patience", 5)))
@@ -646,7 +670,18 @@ def main():
     clip = float(cfg.get("grad_clip") or 0)
     schedule = cfg.get("schedule", "constant")
     amp = bool(cfg.get("amp", True)) and device.type == "cuda"
-    scaler = torch.amp.GradScaler("cuda", enabled=amp)
+    # bfloat16 on GPUs that have it (A100, A6000, RTX 30xx and newer: compute capability 8+): the range of float32, so no loss scaling
+    bf16 = amp and torch.cuda.get_device_capability(0)[0] >= 8
+    amp_dtype = torch.bfloat16 if bf16 else torch.float16
+    precision = ("bf16" if bf16 else "fp16") if amp else "fp32"
+    scaler = torch.amp.GradScaler("cuda", enabled=amp and not bf16)
+    # channels-last memory layout: faster convolutions with mixed precision on NVIDIA GPUs
+    channels_last = device.type == "cuda" and any(isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)) for m in model.modules())
+    if channels_last:
+        model.to(memory_format=torch.channels_last)
+    # a batch that does not fit is processed in `parts` pieces whose gradients add up to the batch's (kept in the checkpoint)
+    auto_split = bool(cfg.get("auto_split", True))
+    split = {"parts": 1, "reported": False}
     ck_path = os.path.join(OUT, "checkpoint.pt")
     steps = (len(train) + bs - 1) // bs
     total_steps, warm_steps = cfg["epochs"] * steps, int(float(cfg.get("warmup_epochs") or 0) * steps)
@@ -679,6 +714,7 @@ def main():
         pos = {"epoch": ck["epoch"], "step": ck.get("step", 0), "sums": ck.get("sums") or dict(zero)}
         es = ck.get("es") or es
         plat = ck.get("plat") or plat
+        split["parts"] = int(ck.get("parts") or 1)
         if ck.get("steps") not in (None, steps):
             pos["step"], pos["sums"] = 0, dict(zero)  # a different batch size or dataset size: restart the epoch
         rng = ck.get("rng") or {}
@@ -699,7 +735,7 @@ def main():
         if device.type == "cuda":
             rng["cuda"] = torch.cuda.get_rng_state_all()
         return {"model": model.state_dict(), "opt": opt.state_dict(), "scaler": scaler.state_dict(), "epoch": pos["epoch"], "step": pos["step"],
-                "steps": steps, "sums": pos["sums"], "rng": rng, "resumes": resumes, "es": es, "plat": plat, "version": 4}
+                "steps": steps, "sums": pos["sums"], "rng": rng, "resumes": resumes, "es": es, "plat": plat, "parts": split["parts"], "version": 5}
 
     def checkpoint(reason):
         if save_checkpoint(ck_path, state()):
@@ -717,7 +753,9 @@ def main():
          train_size=len(train), val_size=len(val) if val is not None else 0, test_size=len(test), epochs=cfg["epochs"],
          early_stop=early, patience=patience if early else None, monitor=monitor if early else None,
          recipe={"optimizer": cfg["optimizer"], "lr": base_lr, "weight_decay": wd, "schedule": schedule, "warmup_epochs": cfg.get("warmup_epochs", 0),
-                 "label_smoothing": smoothing, "grad_clip": clip}, amp=amp, augmentation={k: v for k, v in AUG.items() if v})
+                 "label_smoothing": smoothing, "grad_clip": clip}, amp=amp, augmentation={k: v for k, v in AUG.items() if v},
+         precision=precision, channels_last=channels_last, workers=workers, save_memory=bool(getattr(model, "save_memory", False)),
+         auto_split=auto_split)
     if pos["epoch"] == 0 and pos["step"] == 0:
         one_batch_check(model, loader(1), device)
     every = max(1, steps // 20)
@@ -730,29 +768,57 @@ def main():
             model.train()
             t0 = time.time()
             sums = pos["sums"] if pos["step"] else dict(zero)
+            waited, mark, began = 0.0, time.time(), time.time()  # time spent waiting for the next batch (data loading too slow?)
             for step, (x, y) in enumerate(loader(epoch, pos["step"]), pos["step"] + 1):
-                x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
+                waited += time.time() - mark
+                x = x.to(device, non_blocking=True, memory_format=torch.channels_last) if channels_last and x.dim() == 4 else x.to(device, non_blocking=True)
+                y = y.to(device, non_blocking=True)
                 lr_now = lr_at((epoch - 1) * steps + step - 1)
                 for g in opt.param_groups:
                     g["lr"] = lr_now
-                opt.zero_grad(set_to_none=True)
-                with torch.autocast(device_type="cuda", enabled=amp):
-                    out = model(x)
-                    loss = nn.functional.cross_entropy(out, y, label_smoothing=smoothing)
-                scaler.scale(loss).backward()
+                while True:
+                    # the batch in `parts` pieces (1 = all at once); each piece's loss is weighted by its share, so the gradients add up to
+                    # exactly the whole batch's (BatchNorm sees the smaller pieces, the only difference)
+                    try:
+                        opt.zero_grad(set_to_none=True)
+                        batch_loss, batch_correct = 0.0, 0
+                        for xs, ys in zip(x.tensor_split(split["parts"]), y.tensor_split(split["parts"])):
+                            if TEST_OOM_ABOVE and len(ys) > TEST_OOM_ABOVE:
+                                raise OOM("CUDA out of memory (simulated for the test)")
+                            with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp):
+                                out = model(xs)
+                                loss = nn.functional.cross_entropy(out, ys, label_smoothing=smoothing) * (len(ys) / len(y))
+                            scaler.scale(loss).backward()
+                            batch_loss += loss.item()
+                            batch_correct += int((out.argmax(1) == ys).sum())
+                        break
+                    except Exception as e:
+                        if not (auto_split and is_oom(e)) or split["parts"] >= len(y):
+                            if is_oom(e):
+                                raise SystemExit("MEMORY: even one image at a time does not fit on this GPU. Use a smaller design or input, "
+                                                 "switch on \"save memory\" in the Train tab, or a GPU with more memory.")
+                            raise
+                    # out of memory (handled outside `except`, so that the failed attempt's tensors are freed): twice as many pieces
+                    out = loss = None
+                    opt.zero_grad(set_to_none=True)
+                    if device.type == "cuda":
+                        torch.cuda.empty_cache()
+                    split["parts"] = min(len(y), split["parts"] * 2)
+                    emit("memory_split", what="training", batch=len(y), parts=split["parts"], part_size=-(-len(y) // split["parts"]),
+                         epoch=epoch, step=step)
                 if clip:
                     scaler.unscale_(opt)
                     torch.nn.utils.clip_grad_norm_(params, clip)
                 scaler.step(opt)
                 scaler.update()
-                sums["loss_sum"] += loss.item() * len(y)
+                sums["loss_sum"] += batch_loss * len(y)
                 sums["n"] += len(y)
-                sums["correct"] += int((out.argmax(1) == y).sum())
+                sums["correct"] += batch_correct
                 sums["units"] += y.numel()
                 pos.update(step=step, sums=sums)
                 dirty["v"] = True
                 if step % every == 0 or step == steps:
-                    emit("batch", epoch=epoch, step=step, steps=steps, loss=round(loss.item(), 5))
+                    emit("batch", epoch=epoch, step=step, steps=steps, loss=round(batch_loss, 5))
                 if INTERRUPT:
                     sums["seconds"] += time.time() - t0
                     interrupted()
@@ -764,10 +830,18 @@ def main():
                 if STOP:
                     stopped = True
                     break
-            val_loss, val_acc, _, miou, _, val_top5 = evaluate(model, vl, device)
+                mark = time.time()
+            data_wait = waited / max(time.time() - began, 1e-9)
+            if device.type == "cuda" and not split["reported"]:
+                # the real peak of this run (the Train tab's figure is an estimate), once, after the first epoch it trained
+                split["reported"] = True
+                emit("memory", peak_gb=round(torch.cuda.max_memory_allocated() / 1e9, 2), reserved_gb=round(torch.cuda.max_memory_reserved() / 1e9, 2),
+                     total_gb=round(torch.cuda.get_device_properties(0).total_memory / 1e9, 1), batch=bs, parts=split["parts"],
+                     precision=precision, save_memory=bool(getattr(model, "save_memory", False)))
+            val_loss, val_acc, _, miou, _, val_top5 = evaluate_safe(val_data)
             ev = dict(epoch=epoch, train_loss=round(sums["loss_sum"] / max(sums["n"], 1), 5), train_acc=round(sums["correct"] / max(sums["units"], 1), 5),
                       val_loss=round(val_loss, 5), val_acc=round(val_acc, 5), seconds=round(sums["seconds"] + time.time() - t0, 2), partial=stopped,
-                      lr=float(f"{opt.param_groups[0]['lr']:.3g}"))
+                      lr=float(f"{opt.param_groups[0]['lr']:.3g}"), data_wait=round(data_wait, 3))
             if SEG:
                 ev["val_miou"] = round(miou, 5)
             if val_top5 is not None:
@@ -804,7 +878,7 @@ def main():
         if early and os.path.exists(best_path):
             # the final model is the best epoch's, not the last one's
             model.load_state_dict(torch.load(best_path, map_location=device))
-        val_loss, val_acc, confusion, miou, iou, test_top5 = evaluate(model, test_l, device)
+        val_loss, val_acc, confusion, miou, iou, test_top5 = evaluate_safe(test)
     except Interrupted:
         interrupted()
     torch.save(model.state_dict(), os.path.join(OUT, "model.pt"))

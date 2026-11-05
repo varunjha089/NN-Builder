@@ -35,7 +35,9 @@ export default function App() {
     const now = Date.now();
     if (now - lastPush.current > 600 || past.current.length === 0) {
       past.current.push(prev);
-      if (past.current.length > 100) past.current.shift();
+      // at most 100 steps, and fewer for very large designs (every step is a whole copy of the design)
+      let blocks = past.current.reduce((t, g) => t + g.nodes.length, 0);
+      while (past.current.length > 100 || (past.current.length > 10 && blocks > 20000)) blocks -= past.current.shift()!.nodes.length;
     }
     lastPush.current = now;
     future.current = [];

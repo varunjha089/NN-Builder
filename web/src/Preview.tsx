@@ -77,6 +77,8 @@ export function Chart({ title, series, percent }: { title: string; series: Serie
     g.font = "11px -apple-system, sans-serif";
     g.fillStyle = ink;
     g.fillText(title, 8, 14);
+    // a long run has many points: at most ~1500 per curve are drawn (every k-th, plus the last one)
+    series = series.map((s) => s.pts.length <= 1500 ? s : { ...s, pts: s.pts.filter((_, i) => i % Math.ceil(s.pts.length / 1500) === 0 || i === s.pts.length - 1) });
     const all = series.flatMap((s) => s.pts);
     if (!all.length) { g.fillStyle = muted; g.fillText("no data yet", W / 2 - 25, H / 2); return; }
     const xmax = Math.max(1, ...all.map((p) => p[0]));

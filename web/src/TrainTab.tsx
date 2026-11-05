@@ -8,11 +8,13 @@ const RECOMMENDED: Partial<TrainSettings> = { optimizer: "adamw", weight_decay: 
 
 /** rough GPU memory for training, in GB: weights + gradients + Adam's two moments (16 bytes per parameter), the layer outputs kept for the
  *  backward pass (about twice each output, 2 bytes with mixed precision, 4 without), and about 0.6 GB for CUDA itself */
-function memoryGB(a: Analysis | null, batch: number, amp: boolean): { total: number; state: number; act: number } | null {
+function memoryGB(a: Analysis | null, batch: number, amp: boolean, saveMemory: boolean): { total: number; state: number; act: number } | null {
   if (!a) return null;
   const state = (a.total_params * 16) / 1e9;
   const outs = a.nodes.reduce((t, n) => t + (n.out ? n.out.reduce((p, x) => p * x, 1) : 0), 0);
-  const act = (outs * batch * (amp ? 2 : 4) * 2) / 1e9;
+  // "save memory" keeps only the outputs at the cuts plus one part's at a time: about 2/sqrt(layers) of them
+  const kept = saveMemory ? Math.min(1, 2 / Math.sqrt(Math.max(1, a.nodes.length))) : 1;
+  const act = (outs * batch * (amp ? 2 : 4) * 2 * kept) / 1e9;
   return { total: state + act + 0.6, state, act };
 }
 
@@ -58,7 +60,7 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
         if (stop) return;
         setStatus({ ...s, events: events.current });
         // an interrupted spot run is followed more slowly: the app asks AWS at most every 30 s
-        if (["starting", "running"].includes(s.state)) timer = window.setTimeout(tick, 3000);
+        if (["starting", "running"].includes(s.state)) timer = window.setTimeout(tick, document.hidden ? 15000 : 3000);
         else if (s.state === "interrupted") timer = window.setTimeout(tick, 15000);
         else api.runs().then(setRuns).catch(() => {});
       } catch (e) { if (!stop) toast(errText(e)); }
@@ -160,6 +162,18 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
           {!train.early_stop && train.val_fraction === 0 && <p className="muted small">0% = the curves' "validation" is the test data (fine for
             a quick look; for a paper, hold out a validation part instead).</p>}
         </div>
+        <div className="wide aug"><strong>GPU memory</strong>
+          <span className="muted small"> (what happens when the network or the batch is too big for the GPU)</span>
+          <div className="row">
+            <label className="chk"><input type="checkbox" checked={train.auto_split} onChange={(e) => set({ auto_split: e.target.checked })} />
+              split a batch that does not fit into 2, 4, 8 … parts (same batch and results; slower)</label>
+            <label className="chk"><input type="checkbox" checked={train.save_memory} onChange={(e) => set({ save_memory: e.target.checked })} />
+              save memory: recompute layer outputs instead of keeping them (much less memory, about 30% slower)</label>
+          </div>
+          <p className="muted small">Newer GPUs (A100, A6000, RTX 30xx/40xx) train in bfloat16 by themselves; convolutions use the faster
+            channels-last layout. The run card shows the memory really used after the first epoch.{train.auto_split ? " With BatchNorm, the parts" +
+            " normalise over fewer images than the whole batch, the only difference a split makes." : ""}</p>
+        </div>
         <label className="chk wide"><input type="checkbox" checked={train.export} onChange={(e) => set({ export: e.target.checked })} />
           Also save the trained model as TorchScript (model.ts) and ONNX (model.onnx), to use it without this code</label>
         <label className="chk wide"><input type="checkbox" checked={train.amp} onChange={(e) => set({ amp: e.target.checked })} />Mixed precision on the GPU (faster on a T4)</label>
@@ -173,7 +187,7 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
         if ((kind === "kaggle" || kind === "aws") && !st.tools_ready) need.push("Install the tools (Connection → Install tools)");
         if (kind === "kaggle" && !st.secrets.kaggle) need.push("add your Kaggle API token (Connection → Kaggle)");
         if (kind === "aws" && !st.secrets.aws) need.push("add your AWS access key (Connection → AWS)");
-        const mem = memoryGB(analysis, train.batch_size, train.amp), gpu = gpuGB(st, target, kind);
+        const mem = memoryGB(analysis, train.batch_size, train.amp, train.save_memory), gpu = gpuGB(st, target, kind);
         return <>
           {need.length > 0 && <div className="msg warn">Before training on {target}: {need.join("; ")}.</div>}
           {mem && <p className={`small ${gpu && mem.total > gpu * 0.9 ? "st-warn" : "muted"}`}>Estimated GPU memory for training: about
@@ -181,7 +195,8 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
             {" "}{mem.act.toFixed(2)} GB at batch {train.batch_size})
             {gpu ? ` · ${target === "Kaggle" ? "Kaggle's GPU" : target} has ${gpu.toFixed(0)} GB` : ""}
             {gpu && mem.state + 0.6 > gpu ? ": the model alone does not fit; use a larger GPU." :
-              gpu && mem.total > gpu * 0.9 ? ": likely out of memory, lower the batch size." : "."}
+              gpu && mem.total > gpu * 0.9 ? (train.auto_split ? ": the batches will probably be split into parts (slower; \"save memory\" may avoid it)."
+                : ": likely out of memory, lower the batch size or switch on splitting.") : "."}
             {" "}A rough estimate: the first epoch shows the real use.</p>}
         </>;
       })()}
@@ -209,6 +224,22 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
           finished, the results are downloaded and shown here.</p>}
         {!status.info.reachable && running && <div className="msg warn">The machine does not answer right now; the run goes on there and the app will catch up.</div>}
         {check && <div className="msg ok">{check.message}</div>}
+        {(() => {
+          // GPU memory: what the run really used, batches split for memory, and time lost waiting for data
+          const m = status.events.find((e) => e.event === "memory");
+          const sp = status.events.filter((e) => e.event === "memory_split");
+          const tr = sp.filter((e) => e.what === "training").pop(), ev = sp.filter((e) => e.what === "evaluation").pop();
+          const last = ep[ep.length - 1], wait = last && typeof last.data_wait === "number" ? last.data_wait : 0;
+          return <>
+            {m && <p className="muted small">GPU memory: peak {m.peak_gb} GB of {m.total_gb} GB ({m.precision}{m.save_memory ? ", save memory" : ""}
+              {m.parts > 1 ? `, batch ${m.batch} in ${m.parts} parts` : `, batch ${m.batch}`}).</p>}
+            {tr && <div className="msg warn">The GPU ran out of memory, so each batch of {tr.batch} is now processed in {tr.parts} parts of {tr.part_size}
+              {" "}(same results, slower). A smaller batch or "save memory" would be faster.</div>}
+            {ev && <p className="muted small">Evaluation batches were reduced to {ev.batch} images to fit in GPU memory.</p>}
+            {wait > 0.3 && <div className="msg warn">The GPU waited for data {Math.round(wait * 100)}% of the last epoch: loading and augmenting images
+              is the bottleneck (fewer augmentations, smaller images, or a machine with more CPU cores would help).</div>}
+          </>;
+        })()}
         {errEv && <div className="msg error">{errEv.message}</div>}
         {status.info.error && <div className="msg error">{status.info.error}</div>}
         {status.state === "crashed" && <div className="msg error">The run ended without a result: see the log.</div>}

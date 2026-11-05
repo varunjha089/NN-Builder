@@ -630,7 +630,9 @@ Automatic resumes & spot instances: how many interruptions are resumed automatic
 Validation part of the training data & held out from the training images (default 0\%: the curves' ``validation'' is then the test data). Use 10--20\% whenever results are reported: the test data is then touched only once, at the end\\
 Early stopping & stop when the validation loss (or accuracy, or mIoU) has not improved for \emph{patience} epochs; the best epoch's weights become \file{model.pt} and the test accuracy is measured on them. Switching it on sets a 10\% validation part if there is none. Epochs is then the maximum\\
 Random seed & fixes the initial weights, the derived splits and the batch order; run several seeds to report a mean and spread\\
-Mixed precision & faster on T4/A100-class GPUs, half the activation memory~\cite{micikevicius2017mixed}\\
+Mixed precision & faster on T4/A100-class GPUs, half the activation memory~\cite{micikevicius2017mixed}. GPUs with bfloat16 (A100, A6000, RTX 30xx and newer) use it by themselves (no loss scaling needed); networks with convolutions use the faster channels-last memory layout on any NVIDIA GPU\\
+Split a batch that does not fit & on by default: when the GPU runs out of memory, the batch is processed in 2, 4, 8\,\dots\ parts whose gradients add up to the whole batch's, and the run continues instead of failing. Same batch, schedule and results (BatchNorm normalises over the smaller parts, the only difference); slower. The run card says when it happened\\
+Save memory & activation checkpointing~\cite{chen2016checkpoint}: \file{train.py} cuts the network into about $\sqrt{n}$ parts at places where only one tensor passes, keeps only the parts' outputs and recomputes the inside of each part in the backward pass. The layer outputs then need roughly $2/\sqrt{n}$ of the memory, for about 30\% more time; the results are the same\\
 Stop the EC2 instance & stop the instance when the run ends (saves money)\\
 Data augmentation & horizontal / vertical flip, random crop after padding, rotation, brightness/contrast; training images only~\cite{cubuk2018autoaugment}. Flips change the meaning of digits; vertical flips suit aerial images\\
 Copy my token to the machine & needed for Kaggle data on a server/EC2 and for gated Hugging Face data\\
@@ -697,6 +699,12 @@ Use the 16-bytes-per-parameter rule of Section~\ref{sec:math} plus room for acti
 (about 18 GB of fixed state) with batches of roughly 16 to 32 images at 224$\times$224; a 16 GB T4 cannot. Large networks trained from
 scratch on small datasets overfit: ViT-g was trained on billions of images~\cite{zhai2021scaling}, and even ViT-Base needs strong
 augmentation and regularisation, or pre-training, to do well on small data~\cite{steiner2021howtotrain,touvron2020deit}.
+
+With \ui{Save memory} the layer outputs shrink to a small fraction (the estimate on the Train tab takes it into account), so a network
+whose weights and optimizer state fit can usually train with a reasonable batch; the weights and optimizer state themselves (16 bytes per
+parameter) do not shrink. After the first epoch the run card shows the memory really used (the peak of the GPU allocator), the precision,
+and whether batches were split; it also warns when the GPU waited for data more than 30\% of an epoch (loading and augmenting images is
+then the bottleneck: the data workers already use one CPU core each, up to 8).
 
 %=====================================================================================================================================
 \section{The Results tab}
@@ -1263,8 +1271,9 @@ not: no training results exist yet. Treat it as a starting point for experiments
         type the class folder names). Text datasets cannot be used.
   \item[The one-batch check stops the run.] A layer's real shape differed from the application's (for example images of an unexpected
         size in a custom dataset). The message names the layer; check the image size and channels in the Dataset tab.
-  \item[``CUDA out of memory''.] Halve the batch size; turn mixed precision on; use a smaller input size or network
-        (Section~\ref{sec:math}).
+  \item[``CUDA out of memory''.] With \ui{Split a batch that does not fit} on (the default) the run handles this itself and continues
+        more slowly. If even one image at a time does not fit, the run stops with a message: switch on \ui{Save memory}, keep mixed
+        precision on, or use a smaller input size, network or a larger GPU (Section~\ref{sec:math}).
   \item[Kaggle run fails to start.] The account must be phone-verified for GPU and internet access; the token must be current.
   \item[SSH machine does not answer.] Password machines: press \ui{Connect} again (the login lasts a few hours); key machines:
         \ui{Test}. A running training is not affected.
