@@ -256,10 +256,22 @@ How the two views stay in step: the graph is the truth and carries the text (`Gr
 tab calls `design_from_text` (`dsl::apply`: blocks keep ids and positions by label; new blocks go next to their first input; a text into
 an empty design is arranged). `design_format` prints the text again. The window applies the text 0.5 s after typing stops.
 
-Left for later:
+Done since (2026-11-05, later):
 
-1. **Keeping hand-written functions after a canvas change.** Today any change of blocks on the canvas prints the text again, so `def`
-   and `for` become plain lines and repeats. Next step: when the changed block came from a plain top-level line, change only that line.
-2. Editor comfort (step 4): CodeMirror with colours, completion and clickable numbers; ids are already kept on Apply.
-3. Files and clipboard (step 5): `.nnb` import/export, the text next to copied blocks.
-4. Section 7 step 6 (torchvision import, variables for sweeps, diff by block number).
+- **Settings changed on the canvas keep the hand-written text:** when only settings of blocks that have their own top-level line
+  changed, `dsl::sync` rewrites just those lines (keeping indentation, label, `<-` and comment) and checks that the result gives exactly
+  the canvas design; otherwise it prints the text again.
+- **Layer table by text:** the blocks of one `repeat` / `for` / call line form one group named after the line (Design.tsx groupByText).
+- **Long designs from text** are laid out in rows of 24 columns (`wrap_rows`), not one very wide row.
+- **Files:** File → Export Design… writes `.nnb` (design text) or `.json`; Import Design… reads both.
+- Found by testing and fixed: a label spelled like a block word; a name equal to a setting word; settings a block does not have were
+  accepted silently; a loop on the canvas gave an unclear message; an unapplied text was lost on a tab switch.
+
+Left for later (also in FUTURE_PLAN.md):
+
+1. **Structural canvas changes and functions:** adding, removing or connecting blocks, or changing a block made by a function or loop,
+   still prints the text again. Next: add / remove a top-level line for a block added at the end or removed; change the function body when
+   every call's copy changed the same way.
+2. **Editor comfort:** CodeMirror with colours, completion and clickable numbers.
+3. **Clipboard:** the text form next to copied blocks.
+4. Section 7 step 6: torchvision import, variables for sweeps, diff by block number.

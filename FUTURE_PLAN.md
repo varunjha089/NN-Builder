@@ -1,11 +1,43 @@
 # Future plan
 
-## A text language for designs
+What is still open, in the suggested order. Done work is in git and CLAUDE.md; this file lists only what is left.
 
-Numbered blocks with their connections written as text, editable next to the canvas: the detailed plan is in
-[PROGRAMMING_LANGUAGE.md](PROGRAMMING_LANGUAGE.md).
+## 1. Needs the owner (cannot be done from here)
 
-## Sentinel-1 and Sentinel-2 datasets
+- **Stable signing certificate.** Create a self-signed code-signing certificate in Keychain Access; the build then uses it through an
+  environment variable (never in the repository). Ends the Keychain "Always Allow" question after every update.
+- **Release 0.4.0.** Phases 2–4, smoother running and the text language are installed on the owner's Mac but not released; the
+  Windows / Linux / Intel downloads are still 0.3.0. It is also the first real test of the automatic updater (Check for Updates →
+  Install and restart).
+- **First real runs of the new training features** (only CI has run them, on a CPU): ImageNet weights, Grad-CAM and the mistakes
+  gallery, TorchScript / ONNX export, bfloat16, channels-last, the automatic batch split on a real out-of-memory, save memory, the
+  measured memory and data-wait figures. A short Kaggle run of the ResNet-18 demo with ImageNet weights and export would cover most.
+
+## 2. The text language (details in [PROGRAMMING_LANGUAGE.md](PROGRAMMING_LANGUAGE.md), section 9)
+
+- Keep functions and loops through **structural** canvas changes (adding, removing or connecting blocks; a changed block made by a
+  function or loop). Settings changes and moves already keep the hand-written text.
+- Editor comfort: CodeMirror (colours, completion, clickable block numbers).
+- The text form on the clipboard next to copied blocks.
+- Import a torchvision model as text; variables for sweeps; a diff of two designs by block number.
+
+## 3. Models and training
+
+- **MobileNet v2 / EfficientNet-B0 demos with ImageNet weights** (the plan named MobileNet; the current MobileNet demo is v1, which
+  torchvision has no weights for).
+- Mixup / CutMix and RandAugment; a class-weighted loss for imbalanced data (the Dataset tab already reads the class balance).
+- A hyperparameter sweep (grid over learning rate and batch size) on the seed-group machinery.
+- `torch.compile` as an option.
+
+## 4. Workflow and window
+
+- A run queue (several runs one after another); a macOS notification when a run ends; notes on each run.
+- Click a confusion-matrix cell to see those images.
+- Kaggle's 20 GB output limit: warn before a run would exceed it.
+- The layer table's automatic groups (from shapes) suit plain CNNs and ViTs; hybrid designs drawn on the canvas can get odd group names
+  (designs written as text are grouped by their lines).
+
+## 5. Sentinel-1 and Sentinel-2 datasets
 
 ### Why the current data path is not enough
 

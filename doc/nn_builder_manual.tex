@@ -533,8 +533,12 @@ def basic(c, s = 1) {              # a function: blocks with values
 \end{longtable}
 Labels may be left out (they are then numbered), and \texttt{\#} starts a comment. \ui{Format} prints the text again from the blocks;
 \ui{Copy} puts it on the clipboard, e.g.\ for a paper's appendix. A design of identical consecutive groups prints as a \texttt{repeat}:
-ViT-g/14's 287 blocks take 16 lines. Functions and \texttt{for} loops written by hand stay as long as the canvas only moves blocks; a
-change of blocks on the canvas prints the text again, with functions written out as lines (Undo brings the hand-written text back).
+ViT-g/14's 287 blocks take 16 lines. What a change on the canvas does to a hand-written text: moving blocks keeps it; a changed
+setting of a block on its own line rewrites only that line (names, functions, loops and comments stay); adding, removing or connecting
+blocks, or changing a block made by a function or loop, prints the text again with functions written out as lines (Undo brings the
+hand-written text back). In the layer table, the blocks of one \texttt{repeat}, \texttt{for} or function line form one group named after
+the line. A long design typed into an empty canvas is laid out in rows of 24 columns. \ui{File → Export Design\dots} saves the design as
+\file{.json} (with positions) or as design text (\file{.nnb}); \ui{Import Design\dots} reads both.
 
 %=====================================================================================================================================
 \section{The Dataset tab}

@@ -71,7 +71,10 @@ crates/core/src/
                            on 7 demos; a run with NNB_TEST_OOM_ABOVE=8 ends with the same weights as without). The design text
                            language (crates/core/src/dsl.rs, tests/text.rs, web/src/TextTab.tsx; Graph.text + Node.label; save_graph
                            = dsl::sync, design_from_text = dsl::apply, design_format; Text tab after Design; block labels in the block
-                           headers; manual sec:text; doc/examples/everything.nnb = every language feature and block kind, checked in tests/text.rs
+                           headers; manual sec:text; dsl::patch_settings rewrites only the lines of
+                           blocks whose settings changed on the canvas; Design.tsx groupByText groups the layer table by text line;
+                           wrap_rows lays long text designs out in rows of 24; File → Import/Export Design… reads/writes .nnb too;
+                           doc/examples/everything.nnb = every language feature and block kind, checked in tests/text.rs
                            and run in PyTorch by CI via dump_cases) is described in PROGRAMMING_LANGUAGE.md (section 9: as built, what is left) (FUTURE_PLAN.md: Sentinel-1/2).
                            Kaggle runs: data in /tmp/nnb_data (not /kaggle/working, the notebook output), checkpoint removed at the
                            end, kaggle_output deleted after metrics/results/model/log are copied; the run card shows the last check.

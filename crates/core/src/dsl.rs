@@ -1238,6 +1238,7 @@ pub fn expand(text: &str, old: &Graph) -> Result<Expanded, Vec<Diagnostic>> {
     let mut g = Graph { nodes: std::mem::take(&mut nodes), edges, text: text.to_string() };
     if kept == 0 {
         model::layout(&mut g);
+        wrap_rows(&mut g, 24);
     } else {
         // a new block goes to the right of its first input, below anything already there
         for i in 0..g.nodes.len() {
@@ -1264,6 +1265,22 @@ pub fn expand(text: &str, old: &Graph) -> Result<Expanded, Vec<Diagnostic>> {
         }
     }
     Ok(Expanded { graph: g, name: prog.name, lines })
+}
+
+/// a long chain laid out by columns would be one very wide row: more than `cols` columns are cut into bands, one below the other
+fn wrap_rows(g: &mut Graph, cols: usize) {
+    let col = |x: f64| ((x - 60.0) / 300.0).round().max(0.0) as usize;
+    let columns = g.nodes.iter().map(|n| col(n.x)).max().unwrap_or(0) + 1;
+    if columns <= cols + cols / 4 {
+        return;
+    }
+    let (top, bottom) = g.nodes.iter().fold((f64::MAX, f64::MIN), |(a, b), n| (a.min(n.y), b.max(n.y)));
+    let band = (bottom - top) + 330.0;
+    for n in &mut g.nodes {
+        let c = col(n.x);
+        n.x = 60.0 + (c % cols) as f64 * 300.0;
+        n.y += (c / cols) as f64 * band;
+    }
 }
 
 // ---------------------------------------------------------------- from blocks to text
@@ -1479,6 +1496,12 @@ pub fn sync(g: &Graph) -> Graph {
             if same_structure(&e.graph, g) {
                 return g.clone();
             }
+            // only settings of blocks on plain lines changed: rewrite those lines, keep the rest (functions, loops, names, comments)
+            if let Some(text) = patch_settings(&g.text, &e, g) {
+                let mut out = g.clone();
+                out.text = text;
+                return out;
+            }
         }
     }
     let (text, labels) = print(g);
@@ -1488,6 +1511,62 @@ pub fn sync(g: &Graph) -> Graph {
         n.label = labels.get(&n.id).cloned().unwrap_or_default();
     }
     out
+}
+
+/// the text with the lines of changed blocks rewritten, when the canvas changed nothing but the settings of blocks that each have their
+/// own top-level line (not inside a repeat, loop or function: those lines make several blocks). None when anything else changed.
+fn patch_settings(text: &str, e: &Expanded, g: &Graph) -> Option<String> {
+    let old = &e.graph;
+    if old.nodes.len() != g.nodes.len() {
+        return None;
+    }
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let mut changed = 0;
+    for n in &g.nodes {
+        let o = old.node(&n.id)?;
+        if o.kind != n.kind || o.label != n.label || old.inputs_of(&o.id) != g.inputs_of(&n.id) {
+            return None;
+        }
+        if effective(&o.kind, &o.params) == effective(&n.kind, &n.params) {
+            continue;
+        }
+        if n.label.contains('.') {
+            return None;
+        }
+        let ln = *e.lines.get(&n.label)?;
+        let line = lines.get(ln - 1)?.clone();
+        // keep the indentation, the label (if written), the inputs and the comment; replace the block and its settings
+        let (body, comment) = match line.find('#') {
+            Some(i) => (&line[..i], Some(line[i..].trim_end())),
+            None => (line.as_str(), None),
+        };
+        let (head, inputs) = match body.find("<-") {
+            Some(i) => (&body[..i], Some(body[i..].trim_end())),
+            None => (body, None),
+        };
+        let indent: String = head.chars().take_while(|c| c.is_whitespace()).collect();
+        let first = head.split_whitespace().next()?;
+        let label = if first == n.label { format!("{first} ") } else { String::new() };
+        let mut new = format!("{indent}{label}{}", block_text(&n.kind, &n.params));
+        if let Some(i) = inputs {
+            new = format!("{new} {i}");
+        }
+        if let Some(c) = comment {
+            new = format!("{new}  {c}");
+        }
+        lines[ln - 1] = new;
+        changed += 1;
+    }
+    if changed == 0 {
+        return None;
+    }
+    let mut out = lines.join("\n");
+    if text.ends_with('\n') {
+        out.push('\n');
+    }
+    // the rewritten text must give exactly the canvas design
+    let check = expand(&out, g).ok()?;
+    same_structure(&check.graph, g).then_some(out)
 }
 
 /// after the text was edited: the blocks it describes (ids and positions kept by label), with the text

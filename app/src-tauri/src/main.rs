@@ -868,9 +868,17 @@ fn on_menu(h: &tauri::AppHandle, id: &str) {
         "import-design" => {
             let Some(p) = st.project.lock().unwrap().clone() else { return toast(h, "Open or create a project first.") };
             let h2 = h.clone();
-            h.dialog().file().set_title("Import a design (model.json)").add_filter("Design", &["json"]).pick_file(move |f| {
+            h.dialog().file().set_title("Import a design (model.json, or design text .nnb)").add_filter("Design", &["json", "nnb"]).pick_file(move |f| {
                 let Some(path) = f.and_then(|f| f.into_path().ok()) else { return };
-                let res = std::fs::read_to_string(&path).map_err(e).and_then(|t| serde_json::from_str::<Graph>(&t).map_err(|x| format!("Not an NN Builder design: {x}")))
+                let is_text = path.extension().is_some_and(|x| x.eq_ignore_ascii_case("nnb"));
+                let res = std::fs::read_to_string(&path).map_err(e).and_then(|t| if is_text {
+                    // the design text: built like the Text tab does (blocks with a known label keep their place)
+                    nnb_core::dsl::apply(&t, &p.graph()).map_err(|d| {
+                        d.first().map(|d| format!("{}: line {}: {}", path.display(), d.line, d.message)).unwrap_or_default()
+                    })
+                } else {
+                    serde_json::from_str::<Graph>(&t).map_err(|x| format!("Not an NN Builder design: {x}"))
+                })
                     .and_then(|g| {
                         if !g.nodes.iter().any(|n| n.kind == "input") {
                             return Err("Not an NN Builder design (it has no Input block).".to_string());
@@ -890,10 +898,14 @@ fn on_menu(h: &tauri::AppHandle, id: &str) {
         "export-design" => {
             let Some(p) = st.project.lock().unwrap().clone() else { return toast(h, "Open or create a project first.") };
             let h2 = h.clone();
-            h.dialog().file().set_title("Export the design").set_file_name(format!("{}_design.json", p.name().replace(['/', '\\'], "_"))).add_filter("Design", &["json"])
+            h.dialog().file().set_title("Export the design (.json with positions, or .nnb design text)")
+                .set_file_name(format!("{}_design.json", p.name().replace(['/', '\\'], "_"))).add_filter("Design", &["json"]).add_filter("Design text", &["nnb"])
                 .save_file(move |f| {
                     let Some(path) = f.and_then(|f| f.into_path().ok()) else { return };
-                    match serde_json::to_string_pretty(&p.graph()).map_err(e).and_then(|t| std::fs::write(&path, t).map_err(e)) {
+                    let is_text = path.extension().is_some_and(|x| x.eq_ignore_ascii_case("nnb"));
+                    let g = nnb_core::dsl::sync(&p.graph());
+                    let out = if is_text { Ok(g.text) } else { serde_json::to_string_pretty(&g).map_err(e) };
+                    match out.and_then(|t| std::fs::write(&path, t).map_err(e)) {
                         Ok(()) => toast(&h2, format!("Design saved to {}", path.display())),
                         Err(err) => toast(&h2, err),
                     }

@@ -354,3 +354,43 @@ fn everything_design() {
     assert!(same_structure(&e.graph, &formatted), "{}", formatted.text);
     assert_eq!(analyze(&e.graph, &ds).total_params, a.total_params);
 }
+
+#[test]
+fn canvas_setting_changes_keep_the_hand_written_text() {
+    let text = "let w = 32\ndef pair(c) {\n  a conv c 3x3\n  b conv c 3x3\n}\n1 input\n2 conv w 3x3   # the stem\n3 pair(w * 2)\n4 dense 10 <- 3\n5 output\n";
+    let g = build(text);
+    // a setting of a block on its own line: only that line changes (the comment and the inputs stay)
+    let mut c = g.clone();
+    let i = c.nodes.iter().position(|n| n.label == "2").unwrap();
+    c.nodes[i].params.insert("filters".into(), json!(48));
+    let s = sync(&c);
+    assert!(s.text.contains("def pair(c)") && s.text.contains("let w = 32"), "{}", s.text);
+    assert!(s.text.contains("2 conv 48 3x3  # the stem"), "{}", s.text);
+    let i = c.nodes.iter().position(|n| n.label == "4").unwrap();
+    c.nodes[i].params.insert("units".into(), json!(20));
+    let s = sync(&c);
+    assert!(s.text.contains("4 dense 20 relu <- 3") || s.text.contains("4 dense 20 <- 3"), "{}", s.text);
+    assert!(same_structure(&expand(&s.text, &s).unwrap().graph, &c));
+    // a block made by a function: the function cannot change for one call, so the text is printed again
+    let mut f = g.clone();
+    let i = f.nodes.iter().position(|n| n.label == "3.a").unwrap();
+    f.nodes[i].params.insert("filters".into(), json!(8));
+    let s = sync(&f);
+    assert!(!s.text.contains("def pair"), "{}", s.text);
+    assert!(same_structure(&expand(&s.text, &s).unwrap().graph, &s));
+    assert!(s.nodes.iter().any(|n| n.params.get("filters") == Some(&json!(8))));
+}
+
+#[test]
+fn long_text_designs_wrap_into_rows() {
+    let g = build("1 input\n2 repeat 40 {\n  a conv 8 3x3\n}\n3 global_pool\n4 output\n");
+    let width = g.nodes.iter().map(|n| n.x).fold(0.0, f64::max);
+    assert!(width <= 60.0 + 23.0 * 300.0, "{width}");
+    let rows: std::collections::BTreeSet<i64> = g.nodes.iter().map(|n| n.y as i64).collect();
+    assert!(rows.len() >= 2, "{rows:?}");
+    // positions stay distinct
+    let mut pos: Vec<(i64, i64)> = g.nodes.iter().map(|n| (n.x as i64, n.y as i64)).collect();
+    pos.sort();
+    pos.dedup();
+    assert_eq!(pos.len(), g.nodes.len());
+}

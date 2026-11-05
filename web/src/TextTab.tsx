@@ -140,8 +140,9 @@ export function TextTab({ graph, analysis, persist, applyText, format, showBlock
           onClick={() => format().then(() => setErrors([])).catch((e) => toast(errText(e)))}>Format</button>
         <button onClick={() => navigator.clipboard.writeText(text).then(() => toast("Copied the design text"))}>Copy</button>
       </div>
-      <p className="muted small">The design as numbered lines. Edits here change the canvas (after a short pause, when the text is valid); a change on
-        the canvas rewrites this text, unless it only moved blocks. Undo (⌘Z) works for both.</p>
+      <p className="muted small">The design as numbered lines. Edits here change the canvas (after a short pause, when the text is valid). On the
+        canvas, moving blocks keeps this text and a changed setting rewrites only its own line; adding, removing or connecting blocks, or changing a
+        block made by a function or loop, prints the text again. Undo (⌘Z) works for both. File → Export Design… saves it as a .nnb file.</p>
       {help && <table className="text-help"><tbody>{HELP.map(([code, what]) => <tr key={code}><td><code>{code}</code></td><td className="small">{what}</td></tr>)}</tbody></table>}
       <div className="editor">
         <div className="gutter" ref={gutter}>

@@ -360,7 +360,7 @@ export function Design({ st, graph, setGraph, analysis, persist, focus, toast, r
             maskColor={night ? "rgba(5,6,12,.7)" : undefined} />
         </ReactFlow>}
       </div>
-      <Inspector node={sel} result={sel ? results[sel.id] : undefined} analysis={analysis} st={st} setParam={setParam} setParams={setParams}
+      <Inspector node={sel} result={sel ? results[sel.id] : undefined} analysis={analysis} graph={graph} st={st} setParam={setParam} setParams={setParams}
         candidates={candidates} addSkip={addSkip} />
     </div>
   );
@@ -483,6 +483,59 @@ export function groupLayers(nodes: NodeResult[]): Group[] {
   return groups;
 }
 
+/** the line of the design text that starts with `label` at the top level (not inside braces), without its label, braces and comment */
+function textLine(text: string, label: string): string {
+  let depth = 0;
+  for (const raw of text.split("\n")) {
+    const line = raw.replace(/#.*/, "");
+    if (depth === 0) {
+      const m = new RegExp(`^\\s*${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+(.*)$`).exec(line);
+      if (m) return m[1].replace(/\{\s*$/, "").trim();
+    }
+    depth += (line.match(/\{/g) ?? []).length - (line.match(/\}/g) ?? []).length;
+  }
+  return "";
+}
+
+/** for a design written as text with repeat / for / function calls: the blocks of one such line form one group, named after the line
+ *  ("5 · for c, s in (w, 1), (w * 2, 2)"); the other blocks keep the groups found from their shapes. Unchanged without such lines. */
+export function groupByText(nodes: NodeResult[], g: Graph): Group[] {
+  const label = new Map(g.nodes.map((n) => [n.id, n.label ?? ""]));
+  if (!g.text || ![...label.values()].some((l) => l.includes("."))) return groupLayers(nodes);
+  // the table in the order of the text (the engine's order may interleave branches): by the line of the block's top-level label
+  const lineOf = new Map<string, number>();
+  let depth = 0;
+  g.text.split("\n").forEach((raw, i) => {
+    const line = raw.replace(/#.*/, "");
+    const m = depth === 0 ? /^\s*([A-Za-z0-9_]+)\s+\S/.exec(line) : null;
+    if (m) lineOf.set(m[1], i);
+    depth += (line.match(/\{/g) ?? []).length - (line.match(/\}/g) ?? []).length;
+  });
+  const index = new Map(g.nodes.map((n, i) => [n.id, i]));
+  const key = (r: NodeResult) => [lineOf.get((label.get(r.id) ?? "").split(".")[0]) ?? 1e9, index.get(r.id) ?? 1e9];
+  const sorted = [...nodes].sort((a, b) => { const [x, y] = [key(a), key(b)]; return x[0] - y[0] || x[1] - y[1]; });
+  const groups = groupLayers(sorted);
+  const out: (Group & { key: string })[] = [];
+  groups.forEach((gr, gi) => gr.rows.forEach((r) => {
+    const l = label.get(r.id) ?? "";
+    const top = l.split(".")[0];
+    const key = l.includes(".") ? `line ${top}` : `shape ${gi}`;
+    const cur = out[out.length - 1];
+    if (cur && cur.key === key) { cur.rows.push(r); return; }
+    const line = l.includes(".") ? textLine(g.text!, top) : "";
+    const name = l.includes(".") ? `${top} · ${line.length > 42 ? line.slice(0, 40) + "…" : line}` : gr.name;
+    out.push({ key, name, rows: [r] });
+  }));
+  // groups of plain lines: named by their lines (the shape name only where it still fits the blocks left in the group)
+  for (const gr of out) if (gr.key.startsWith("shape")) {
+    const ls = gr.rows.map((r) => label.get(r.id) ?? "").filter((l) => l);
+    const range = ls.length > 1 ? `${ls[0]}–${ls[ls.length - 1]}` : ls[0] ?? "";
+    const fits = !gr.name.startsWith("Encoder block") || gr.rows.some((r) => r.kind === "attention");
+    gr.name = range ? `${range} · ${fits ? gr.name : "Tokens"}` : gr.name;
+  }
+  return out;
+}
+
 /** "Conv2D ×3, Pool": runs of the same block, each with its kind */
 function contents(rows: NodeResult[]): { title: string; kind: string; n: number }[] {
   const parts: { title: string; kind: string; n: number }[] = [];
@@ -521,8 +574,8 @@ export function collapseRepeats(g: Graph, a: Analysis | null): Graph | null {
   return arrange({ nodes: [...g.nodes.filter((n) => !owner.has(n.id)), ...synth], edges });
 }
 
-function LayerTable({ nodes }: { nodes: NodeResult[] }) {
-  const groups = useMemo(() => groupLayers(nodes), [nodes]);
+function LayerTable({ nodes, graph }: { nodes: NodeResult[]; graph: Graph }) {
+  const groups = useMemo(() => groupByText(nodes, graph), [nodes, graph]);
   const color = useKindColor();
   /** a block's name in its kind's colour (as on the canvas), with ✕ / ⚠ when it has a problem */
   const kc = (kind: string, text: string, status = "ok") => <span className="kc" style={{ "--c": color(kind) } as CSSProperties}>{text}{status === "error" ? " ✕" : status === "warn" ? " ⚠" : ""}</span>;
@@ -557,8 +610,8 @@ function LayerTable({ nodes }: { nodes: NodeResult[] }) {
   );
 }
 
-function Inspector({ node, result, analysis, st, setParam, setParams, candidates, addSkip }: {
-  node: { id: string; kind: string; params: Params } | null; result?: NodeResult; analysis: Analysis | null; st: AppState;
+function Inspector({ node, result, analysis, graph, st, setParam, setParams, candidates, addSkip }: {
+  node: { id: string; kind: string; params: Params } | null; result?: NodeResult; analysis: Analysis | null; graph: Graph; st: AppState;
   setParam: (k: string, v: unknown) => void; setParams: (p: Params) => void;
   candidates: { id: string; label: string }[]; addSkip: (src: string, mode: "add" | "concat") => void;
 }) {
@@ -573,7 +626,7 @@ function Inspector({ node, result, analysis, st, setParam, setParams, candidates
         {analysis?.problems.map((p) => <div key={p} className="msg error">{p}</div>)}
         {analysis?.ok && <div className="msg ok">The design is complete: every shape fits. Next: Dataset, then Train.</div>}
         <p className="muted">Click a block to set its filters, kernel, stride, padding or pooling, and to see how its output size is computed.</p>
-        {analysis && <LayerTable nodes={analysis.nodes} />}
+        {analysis && <LayerTable nodes={analysis.nodes} graph={graph} />}
       </div>
     );
   }
