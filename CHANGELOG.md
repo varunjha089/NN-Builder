@@ -3,6 +3,10 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 05_11_26_17_50_07
+
+**dsl: clippy (redundant slice)** (`43fffbb`)
+
 ## 05_11_26_17_49_50
 
 **Manual: a full chapter on writing designs in the NNB language** (`2dd973d`)
