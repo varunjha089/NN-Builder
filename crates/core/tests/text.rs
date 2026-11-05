@@ -276,3 +276,59 @@ fn cycles_and_loose_blocks_still_print() {
     let e = expand(&s.text, &s).unwrap();
     assert!(same_structure(&e.graph, &s), "{}", s.text);
 }
+
+/// doc/examples/everything.nnb: every part of the language and every block kind but seg_output, in one valid design
+#[test]
+fn everything_design() {
+    let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../doc/examples/everything.nnb")).unwrap();
+    let g = build(&text);
+    let a = analyze(&g, &cifar());
+    let bad: Vec<_> = a.nodes.iter().filter(|n| n.status == "error" || n.status == "blocked").map(|n| (g.node(&n.id).unwrap().label.clone(), n.messages.clone())).collect();
+    assert!(a.ok, "{:?} {bad:?}", a.problems);
+    // not even a warning (an unused block, rows lost to a stride) at 3×32×32
+    let warns: Vec<_> = a.nodes.iter().filter(|n| n.status != "ok").map(|n| (g.node(&n.id).unwrap().label.clone(), n.messages.clone())).collect();
+    assert!(warns.is_empty(), "{warns:?}");
+    // every block kind except the segmentation output
+    for (kind, _) in model::KINDS {
+        if *kind != "seg_output" {
+            assert!(g.nodes.iter().any(|n| n.kind == *kind), "no {kind} block");
+        }
+    }
+    // values that came through functions, defaults, loops and arithmetic
+    assert_eq!(by_label(&g, "5.2.m.gate.d1").params["units"], json!(8)); // 32 // 4
+    assert_eq!(by_label(&g, "5.1.m.b3.n").params["groups"], json!(4)); // 4 + 16 % 4
+    assert_eq!(by_label(&g, "5.2.d.dw").params["stride"], json!([2, 2]));
+    assert_eq!(by_label(&g, "5.2.d.dw").params["kernel"], json!([4, 4]));
+    assert_eq!(by_label(&g, "5.2.m.b3.dw").params["kernel"], json!([3, 3]));
+    assert_eq!(by_label(&g, "5.2.d.pw").params["filters"], json!(64));
+    assert_eq!(by_label(&g, "6.2.a").params["filters"], json!(64)); // 2^6 + 0*i
+    assert_eq!(by_label(&g, "8.u").params["kernel"], json!([2, 2]));
+    assert_eq!(by_label(&g, "16.1.b").params["heads"], json!(2)); // the setting word "heads" and the name heads
+    assert_eq!(by_label(&g, "16.2.e").params["units"], json!(64));
+    assert_eq!(by_label(&g, "23").params["units"], json!(64));
+    // wiring: several inputs, skips by path, concat order, the label left out in the bottleneck
+    assert_eq!(inputs(&g, "5.1.m.cat"), vec!["5.1.m.b1", "5.1.m.b2", "5.1.m.b3.a", "5.1.m.b5"]);
+    assert_eq!(inputs(&g, "5.1.m.gate.m"), vec!["5.1.m.fuse", "5.1.m.gate.s"]);
+    assert_eq!(inputs(&g, "7.j"), vec!["7.u", "5.2.m.gate.m"]);
+    assert_eq!(inputs(&g, "8.j"), vec!["8.u", "5.1.m.gate.m"]);
+    assert_eq!(inputs(&g, "6.2.a"), vec!["6.1.d"]);
+    assert_eq!(inputs(&g, "11"), vec!["10", "8.r"]);
+    assert_eq!(inputs(&g, "19"), vec!["11"]);
+    assert_eq!(inputs(&g, "22"), vec!["18", "21"]);
+    // the generated PyTorch code compiles
+    let ds = cifar();
+    let code = nnb_core::codegen::train_script(&g, &ds, &a, &nnb_core::codegen::TrainSettings::default(), "everything").unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("t.py"), &code).unwrap();
+    if let Some(out) = ["python3", "python"].iter().find_map(|py| std::process::Command::new(py).args(["-m", "py_compile"]).arg(dir.path().join("t.py")).output().ok()) {
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    }
+    // the hand-written text survives the canvas sync; Format prints an equivalent text that builds the same blocks
+    assert_eq!(sync(&g).text, text);
+    let mut cleared = g.clone();
+    cleared.text.clear();
+    let formatted = sync(&cleared);
+    let e = expand(&formatted.text, &formatted).unwrap_or_else(|d| panic!("{d:?}\n{}", formatted.text));
+    assert!(same_structure(&e.graph, &formatted), "{}", formatted.text);
+    assert_eq!(analyze(&e.graph, &ds).total_params, a.total_params);
+}

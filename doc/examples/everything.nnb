@@ -1,0 +1,101 @@
+net "Everything net"
+# A hybrid CNN + transformer for 3×32×32 images (CIFAR-10) that uses every part of the NNB text language and every block kind
+# except seg_output (a network is either a classifier or a segmenter). The tests build it, check it, round-trip it, and CI runs it in
+# PyTorch.
+
+let w = 16
+let heads = 2
+let depth = 2
+
+# squeeze-and-excitation: one weight per channel (global pool, two dense, sigmoid), multiplied into the input
+def se(c, r = 4) {
+  g global_pool
+  d1 dense c // r relu
+  d2 dense c none
+  s sigmoid
+  m mul <- in, s
+}
+
+# depthwise-separable convolution: depthwise ×2 channels (kernel s + 2 with padding 1: 3×3 keeps the size, 4×4 / stride 2 halves it
+# exactly), pointwise, group norm (4 groups: 4 + c % 4 when c is a multiple of 4), SiLU
+def dsconv(c, s = 1) {
+  dw dwconv x2 kernel=s+2 stride s pad 1 none nobias
+  pw conv c 1x1 none nobias
+  n gn 4 + c % 4
+  a silu
+}
+
+# Inception-style mixer: five branches (one a function call, one dilated, one through a pool), joined in this order, then an SE gate
+def mixer(c) {
+  b1 conv c 1x1
+  b2 conv c 3x3 dil 2 pad 2 <- in
+  b3 dsconv(c) <- in
+  b4 avgpool 3x3 stride 1 pad 1 <- in
+  b5 conv c 1x1 <- b4
+  cat concat <- b1, b2, b3, b5
+  fuse conv c 1x1 none
+  gate se(c)
+}
+
+# decoder step: transposed convolution (kernel = stride = k), the skip as the second input, refine
+def up(c, k = 2) {
+  u convT c kernel=k stride=k none
+  j concat <- u, in2
+  r Conv c 3x3 leaky_relu
+}
+
+1 input
+2 conv w 3x3 nobias
+3 bn
+4 relu
+
+# encoder: once per (channels, stride), chained
+5 for c, s in (w, 2), (w * 2, 2) {
+    m mixer(c)
+    d dsconv(c * 2, s)
+  }
+
+# bottleneck: residual blocks, the width from arithmetic (2^6 = 64) and the pass number (i)
+6 repeat depth {
+    a conv 2 ^ 6 + 0 * i 3x3 none
+    b bn
+    c add <- b, in
+    relu
+  }
+
+# decoder: skips into the encoder's passes by path (line 5, pass 2 / 1, call m)
+7 up(32) <- 6, 5.2.m
+8 up(w, k = 2) <- 7, 5.1.m
+
+# a side path that pools and upsamples back, added to the main path
+9 maxpool 2x2
+10 upsample x2 bilinear
+11 add <- 10, 8
+
+# transformer: 4×4 patches as tokens, class token + positions, encoder blocks
+12 conv 32 4x4 stride 4 valid none
+13 to_tokens patches
+14 cls_pos
+15 dropout 0.1
+16 repeat depth {
+     a ln
+     b attention heads heads drop 0.1
+     c add <- in, b
+     d layernorm
+     e dense 32 * 2 gelu
+     f dropout 0.1
+     g dense 32 none
+     h add <- c, g
+   }
+17 ln
+18 token_pool cls
+
+# a CNN head on the decoder output, joined with the transformer's vector
+19 avgpool 4x4 <- 11
+20 flatten
+21 dense 16 tanh
+22 concat <- 18, 21
+23 dense 64 - 1 + 1 gelu
+24 dropout 0.2
+25 activation relu
+26 output

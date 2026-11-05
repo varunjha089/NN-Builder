@@ -373,7 +373,10 @@ impl Parser {
             _ => unreachable!(),
         };
         // a label first, unless the line starts with a block, repeat, for or a function (then a label is made up)
-        let label = if self.starts_item(&w) && !matches!(self.peek2().tok, Tok::Word(_) if !self.starts_item(&w)) {
+        // the first word is a label when a block (or repeat / for / call) follows it, even if it is a block word itself ("cat concat");
+        // otherwise a line that starts with a block has no label and gets one made up
+        let next_starts = matches!(&self.peek2().tok, Tok::Word(n) if self.starts_item(n));
+        let label = if !next_starts && self.starts_item(&w) {
             None
         } else {
             self.next();
@@ -963,11 +966,31 @@ fn eval(e: &Expr, vars: &HashMap<String, Val>) -> Result<Val, String> {
     })
 }
 
+/// words that set something (and take the value after them, for the first group): never replaced by a name of the same spelling, so
+/// `let heads = 2` and then `attention heads heads` means heads = 2
+const TAKES_VALUE: &[&str] = &["stride", "pad", "dil", "outpad", "heads", "drop"];
+const SETTING_WORDS: &[&str] = &["nobias", "bias", "same", "valid", "max", "avg", "nearest", "bilinear", "patches", "rows", "cls", "nocls", "mean"];
+
 fn eval_args(args: &[Arg], vars: &HashMap<String, Val>) -> Result<Vec<(Option<String>, Val)>, String> {
-    args.iter().map(|a| match a {
-        Arg::Pos(e) => Ok((None, eval(e, vars)?)),
-        Arg::Key(k, e) => Ok((Some(k.clone()), eval(e, vars)?)),
-    }).collect()
+    let mut out = vec![];
+    let mut value_next = false;
+    for a in args {
+        match a {
+            Arg::Pos(Expr::Word(w)) if !value_next && (TAKES_VALUE.contains(&w.as_str()) || SETTING_WORDS.contains(&w.as_str()) || ACTS.contains(&w.as_str())) => {
+                value_next = TAKES_VALUE.contains(&w.as_str());
+                out.push((None, Val::Word(w.clone())));
+            }
+            Arg::Pos(e) => {
+                value_next = false;
+                out.push((None, eval(e, vars)?));
+            }
+            Arg::Key(k, e) => {
+                value_next = false;
+                out.push((Some(k.clone()), eval(e, vars)?));
+            }
+        }
+    }
+    Ok(out)
 }
 
 fn count_of(e: &Expr, vars: &HashMap<String, Val>, what: &str) -> Result<usize, String> {

@@ -71,5 +71,13 @@ fn main() {
         assert!(a.ok, "template {}", t.key);
         cases.push(json!({"case": t.key, "ok": true, "code": model_code(&g, &a).unwrap(), "input": a.input, "params": a.total_params}));
     }
+    // a design written in the text language that uses every part of it (doc/examples/everything.nnb)
+    let text = include_str!("../../../doc/examples/everything.nnb");
+    let g = nnb_core::dsl::apply(text, &nnb_core::model::Graph::default()).expect("everything.nnb");
+    let ds = Dataset { source: "huggingface".into(), hf_repo: "x/y".into(), image_size: [32, 32], channels: 3,
+        classes: (0..10).map(|i| i.to_string()).collect(), ..Default::default() };
+    let a = analyze(&g, &ds);
+    assert!(a.ok, "everything.nnb: {:?}", a.problems);
+    cases.push(json!({"case": "everything.nnb", "ok": true, "code": model_code(&g, &a).unwrap(), "input": a.input, "params": a.total_params}));
     println!("{}", serde_json::to_string(&cases).unwrap());
 }
