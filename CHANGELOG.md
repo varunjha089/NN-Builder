@@ -3,6 +3,13 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 05_11_26_18_54_29
+
+**Manual: the general form of each block above its examples** (`f11de00`)
+
+The Settings section shows the general form of a conv line (capitals are your values, [ ] optional,
+| one of) above the examples, and every block in the reference starts with its general form.
+
 ## 05_11_26_18_13_36
 
 **Manual: how every block is written and how each of its values is set** (`a0f58fb`)
