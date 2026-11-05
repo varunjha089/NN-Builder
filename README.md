@@ -7,7 +7,8 @@ server** (SSH) or an **AWS EC2** instance (g4dn.xlarge). Your computer only desi
 application, designing a network step by step, the arithmetic behind every number, all blocks, training on Kaggle / SSH / EC2 (spot), and
 the fifteen demo architectures explained, with references to the original papers (arXiv).
 
-Version 0.3.0 · MIT licence · Rust (Tauri 2) + React; the generated training code is Python (PyTorch).
+Version 0.3.0 (main has newer changes, listed in [CHANGELOG.md](CHANGELOG.md)) · MIT licence · Rust (Tauri 2) + React; the generated
+training code is Python (PyTorch). Planned work: [FUTURE_PLAN.md](FUTURE_PLAN.md); the design language: [PROGRAMMING_LANGUAGE.md](PROGRAMMING_LANGUAGE.md).
 
 ## What it does
 
@@ -27,8 +28,27 @@ Version 0.3.0 · MIT licence · Rust (Tauri 2) + React; the generated training c
     small for the window, Dense without Flatten, Add of different shapes, Concat of different sizes, a loop, no Output; yellow: a stride that
     drops rows or skips pixels, a huge Dense layer). Click a block for the formula with its numbers, its receptive field and an animation of
     the window sliding over the padded input.
-- **Menus:** File (New Project, Open Project…, New from Demo, Import / Export Design, Export train.py, Show Project in Finder) and
-  Edit (Undo / Redo of every design change, Arrange Left to Right).
+- **Text tab:** the same design as numbered lines, kept in step with the canvas both ways (typing changes the canvas a moment later; a
+  change on the canvas edits only the lines it concerns). One block per line, inputs with `<-`, and repeated parts written once:
+  `repeat 12 { … }`, `for c, s in (64, 1), (128, 2) { … }`, functions `def block(c, s = 1) { … }`, names and arithmetic (`let w = 64`,
+  `conv w * 2 3x3`). Coloured text, errors on their line, ⌘-click a number to select its block; File → Import / Export Design reads and
+  writes `.nnb` text. A design using every feature: [doc/examples/everything.nnb](doc/examples/everything.nnb).
+  ```
+  1 input
+  2 conv 64 3x3
+  3 repeat 2 {
+      a conv 64 3x3 none
+      b add <- a, in
+    }
+  4 global_pool
+  5 output
+  ```
+- **Menus:** File (New Project, Open Project…, Save Project, Close Project, New from Demo, Import / Export Design (`.json` or `.nnb`),
+  Export train.py, Show Project in Finder), Edit (Undo / Redo of every design change, Arrange Left to Right), View (Night Mode),
+  Connection, and Help (Documentation opens this manual inside the app; Check for Updates…).
+- **Projects page:** new project, open a recent one, **Delete** a project (its folder goes to the Trash, from where it can be put back),
+  and the demo architectures. **Settings** (⚙): day / neon night theme, the night panel colours, automatic updates, and **Design size**
+  (the most blocks a design may have: recommended from the computer's memory, editable).
 - **Dataset tab:** classification or **segmentation** (images + masks; pixel accuracy and mean IoU). Built-in (MNIST, Fashion-MNIST, CIFAR-10), **Hugging Face** (reads the dataset's splits, columns and class names through
   the public datasets-server API, nothing is downloaded) or **Kaggle** (reads the file list through the Kaggle API and finds the folder with one
   subfolder per class; for segmentation an images folder and a masks folder). Images are resized and converted to grey or colour as you choose
@@ -37,6 +57,12 @@ Version 0.3.0 · MIT licence · Rust (Tauri 2) + React; the generated training c
   image and its mask are flipped and rotated together.
 - **Code tab:** the standalone `train.py` the GPU machine runs: the model, the data loading, a training loop with mixed precision, a
   checkpoint every epoch and automatic resume, a one-batch shape check before training, and the results. Export it to run it anywhere.
+- **Training recipe and validation:** Adam / AdamW / SGD, weight decay, cosine or plateau schedule with warm-up, label smoothing, gradient
+  clipping ("Use recommended"); a validation split with early stopping on validation loss, accuracy or mIoU; checks before a run (tools,
+  tokens) and a GPU-memory estimate for the target.
+- **GPU memory:** a batch that runs out of GPU memory is processed in 2, 4, 8 … parts with the same result instead of failing; "save
+  memory" recomputes layer outputs instead of keeping them (much less memory, ~30% slower); bfloat16 on newer GPUs, channels-last
+  convolutions, data loading on all CPU cores; the run card shows the real peak memory and whether the GPU waited for data.
 - **Better models and insight:** start from torchvision's ImageNet weights (ResNet-18, VGG-16, ViT-B/16) and fine-tune or train only the
   head; Grad-CAM heat maps and a gallery of misclassified images; save the trained model as TorchScript and ONNX.
 - **Designing:** copy and paste blocks, a residual-block shortcut, GroupNorm, and a ×N view that draws repeated blocks once (ViT-g/14's
@@ -165,9 +191,20 @@ The result is in `target/release/bundle/`: `macos/NN Builder.app` (copy it to Ap
   (`train.py`, `run.sh`, `metrics.jsonl`, `log.txt`, `results.json`, `model.pt`).
 - On a remote machine: `~/.nn_builder/` (`venv/`, `data/`, `runs/`).
 
+## How large a design can be
+
+The app never holds weights, so the parameter count does not matter to it; the number of blocks does (the canvas needs about 0.3 MB per
+block drawn). Measured: a 100-billion-parameter ViT with 392 blocks opens in about 190 MB; a 25-billion one with 3,507 blocks in about 1 GB.
+Settings → Design size sets the limit (recommended: a quarter of the computer's memory); the ×N view and the Text tab handle very large
+designs without drawing every block. Details in the manual.
+
 ## How correctness is checked
 
 `cargo test -p nnb-core` checks the shape engine on hand-made designs (CNN, residual Add, a small U-Net, loops, unconnected blocks), compiles the
 generated Python, and runs a whole SSH run and a whole Kaggle run through stand-in `ssh`, `rsync`, `python` and `kaggle` programs.
-GitHub Actions (`.github/workflows/ci.yml`) also builds 300 random designs in real PyTorch and compares every layer's shape and the parameter
-count with the app's.
+GitHub Actions (`.github/workflows/ci.yml`) also builds 300 random designs (and every demo, and `doc/examples/everything.nnb`) in real PyTorch
+and compares every layer's shape and the parameter count with the app's. It also runs real (CPU) trainings of generated scripts: spot
+interruption and resume, early stopping, the training recipe with Grad-CAM and TorchScript / ONNX export, the GPU-memory features (the
+recomputed forward equals the plain one; a split batch ends with the same weights), and the ImageNet weights against torchvision's own
+models. `cargo test -p nnb-core --test text` checks the design language: every demo round-trips through the text, every block kind, functions,
+loops, errors on the right line, and canvas edits that keep the hand-written text.

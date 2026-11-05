@@ -7,7 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Version 0.3.0 (2026-11-05). Public repository github.com/varunjha089/NN-Builder (MIT); releases there feed the app's automatic update.
 Kaggle, a college server and EC2 are tested with stand-ins only (never against real accounts in tests). The earlier Python/Blockly app
 (0.1.1, 2026-11-03) is in the Trash.
-Planned work not yet started (Sentinel-1/2 multispectral and radar datasets) is in FUTURE_PLAN.md.
+Open work (owner tasks, the design language, models, workflow, Sentinel-1/2) is in FUTURE_PLAN.md; the design language in
+PROGRAMMING_LANGUAGE.md. CHANGELOG.md lists every commit by time (dd_mm_yy_hr_min_sec, newest first); after committing, run
+`python3 scripts/make_changelog.py` and commit the result as "CHANGELOG: …" (such commits are left out of the list).
 
 ## Layout
 
