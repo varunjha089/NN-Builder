@@ -31,8 +31,13 @@ those of Section~\ref{sec:math}: 61\,706 parameters.
 
 \subsection{Settings: words and numbers}
 Settings are written the way you would say them. For a convolution, the first plain number is the number of filters, \texttt{5x5} is
-the kernel, and words set the rest:
+the kernel, and words set the rest. In general (capitals are your values, \texttt{[ ]} is optional, \texttt{|} means one of):
 
+\begin{Verbatim}[fontsize=\small]
+LABEL conv FILTERS HxW [stride S] [pad P | same | valid] [dil D] [ACTIVATION] [nobias]
+      ACTIVATION: relu | leaky_relu | gelu | silu | sigmoid | tanh | none
+\end{Verbatim}
+For example:
 \begin{verbatim}
 2 conv 64 3x3                      # 64 filters, 3×3, stride 1, padding "same", ReLU
 3 conv 128 3x3 stride 2 pad 1 gelu # stride 2, padding 1, GELU
@@ -145,13 +150,23 @@ Wherever a number goes, an expression may go (\texttt{conv w * 2 3x3}, \texttt{k
 which are also the canvas's. A value outside its range, a word the block does not have, or a second plain number is an error on its line
 (Section~\ref{sec:text-errors}); nothing is ever changed silently. Block words are not case-sensitive (\texttt{Conv2D 16 3x3} works).
 
-In the tables: \emph{short} is how the value is written briefly, \emph{name} its long form (\emph{name}\texttt{=}\emph{value}).
+Each block starts with its general form: capitals are your values, \texttt{[ ]} is optional, \texttt{|} means one of, and
+\texttt{ACTIVATION} is one of \texttt{relu}, \texttt{leaky\_relu}, \texttt{gelu}, \texttt{silu}, \texttt{sigmoid}, \texttt{tanh},
+\texttt{none}. Every value can also be given as \emph{name}\texttt{=}\emph{value}, the label may be left out, and every block
+except \texttt{input} may end with \texttt{<- INPUT} (by default the line above). In the tables:
+\emph{short} is how the value is written briefly, \emph{name} its long form.
 
 \subsubsection*{\texttt{input} --- the images}
+\begin{Verbatim}[fontsize=\small]
+LABEL input
+\end{Verbatim}
 \texttt{1 input}. No values: its shape (channels, height, width) comes from the Dataset tab. Every design has exactly one, as its first
 block; it takes no input.
 
 \subsubsection*{\texttt{conv} (also \texttt{conv2d}) --- 2-D convolution}
+\begin{Verbatim}[fontsize=\small]
+LABEL conv FILTERS HxW [stride S] [pad P | same | valid] [dil D] [ACTIVATION] [nobias]
+\end{Verbatim}
 \begin{verbatim}
 2 conv 64 3x3                              # 64 filters, 3×3, stride 1, "same" padding, ReLU
 3 conv 128 3x3 stride 2 pad 1 gelu nobias
@@ -173,6 +188,9 @@ bias & \texttt{nobias} (\texttt{bias}) & \texttt{bias} & true & & off before a B
 \end{longtable}
 
 \subsubsection*{\texttt{dwconv} (also \texttt{dwconv2d}) --- depthwise convolution}
+\begin{Verbatim}[fontsize=\small]
+LABEL dwconv [xM] HxW [stride S] [pad P | same | valid] [ACTIVATION] [nobias]
+\end{Verbatim}
 One filter per input channel (MobileNet). \texttt{dwconv 3x3}, \texttt{dwconv x2 3x3 stride 2 pad 1 none nobias},
 \texttt{dwconv multiplier=3 kernel=5x5}.
 \begin{longtable}{@{}>{\raggedright\arraybackslash}p{2.2cm}>{\raggedright\arraybackslash}p{3.3cm}>{\raggedright\arraybackslash}p{2.8cm}>{\raggedright\arraybackslash}p{1.5cm}>{\raggedright\arraybackslash}p{1.6cm}>{\raggedright\arraybackslash}p{3.1cm}@{}}
@@ -185,6 +203,9 @@ kernel, stride, padding, activation, bias & as for \texttt{conv} & & & & (no dil
 \end{longtable}
 
 \subsubsection*{\texttt{convT} (also \texttt{convtranspose}) --- transposed convolution}
+\begin{Verbatim}[fontsize=\small]
+LABEL convT FILTERS HxW [stride S] [pad P] [outpad O] [ACTIVATION]
+\end{Verbatim}
 Makes the image larger (U-Net's decoder). \texttt{convT 64 2x2 stride 2 none} doubles height and width; \texttt{convT 32 3x3 stride 2 pad 1
 outpad 1} too.
 \begin{longtable}{@{}>{\raggedright\arraybackslash}p{2.2cm}>{\raggedright\arraybackslash}p{3.3cm}>{\raggedright\arraybackslash}p{2.8cm}>{\raggedright\arraybackslash}p{1.5cm}>{\raggedright\arraybackslash}p{1.6cm}>{\raggedright\arraybackslash}p{3.1cm}@{}}
@@ -201,6 +222,9 @@ activation & as for \texttt{conv} & \texttt{activation} & relu & & (no bias sett
 \end{longtable}
 
 \subsubsection*{\texttt{maxpool}, \texttt{avgpool} (also \texttt{pool}) --- pooling}
+\begin{Verbatim}[fontsize=\small]
+LABEL maxpool | avgpool HxW [stride S | stride size] [pad P]
+\end{Verbatim}
 \texttt{maxpool 2x2} (halves the size), \texttt{maxpool 3x3 stride 2 pad 1}, \texttt{avgpool 3x3 stride 1 pad 1}, \texttt{maxpool 3}
 ($3\times3$), \texttt{pool avg size=2 stride=size}.
 \begin{longtable}{@{}>{\raggedright\arraybackslash}p{2.2cm}>{\raggedright\arraybackslash}p{3.3cm}>{\raggedright\arraybackslash}p{2.8cm}>{\raggedright\arraybackslash}p{1.5cm}>{\raggedright\arraybackslash}p{1.6cm}>{\raggedright\arraybackslash}p{3.1cm}@{}}
@@ -215,39 +239,70 @@ padding & \texttt{pad 1} & \texttt{padding} & 0 & 0--4 & a number only\\
 \end{longtable}
 
 \subsubsection*{\texttt{global\_pool} (also \texttt{gap}) --- one value per channel}
+\begin{Verbatim}[fontsize=\small]
+LABEL global_pool [avg | max]
+\end{Verbatim}
 \texttt{global\_pool} (average over the whole image), \texttt{global\_pool max}. Value: mode, \texttt{avg} / \texttt{max}
 (\texttt{mode=}), default avg. From $(C, H, W)$ to $(C)$.
 
 \subsubsection*{\texttt{upsample} --- enlarge without weights}
+\begin{Verbatim}[fontsize=\small]
+LABEL upsample [xN] [nearest | bilinear]
+\end{Verbatim}
 \texttt{upsample x2}, \texttt{upsample 2}, \texttt{upsample x4 bilinear}. Values: scale, \texttt{x}\emph{n} or the plain number
 (\texttt{scale=}), default 2, range 2--8; mode, \texttt{nearest} / \texttt{bilinear} (\texttt{mode=}), default nearest.
 
 \subsubsection*{\texttt{bn}, \texttt{ln}, \texttt{gn} --- normalisation}
+\begin{Verbatim}[fontsize=\small]
+LABEL bn | ln
+LABEL gn GROUPS
+\end{Verbatim}
 \texttt{bn} (also \texttt{batchnorm}) and \texttt{ln} (also \texttt{layernorm}) have no values. \texttt{gn 8} (also \texttt{groupnorm},
 \texttt{groups=8}): GroupNorm with 8 groups, default 8, range 1--65\,536; the number must divide the channels.
 
 \subsubsection*{\texttt{dropout}}
+\begin{Verbatim}[fontsize=\small]
+LABEL dropout RATE
+\end{Verbatim}
 \texttt{dropout 0.3}, \texttt{dropout rate=0.5}. Value: rate, the plain number (\texttt{rate=}), default 0.25, range 0--0.95: the
 fraction of values set to zero during training.
 
 \subsubsection*{\texttt{flatten}}
+\begin{Verbatim}[fontsize=\small]
+LABEL flatten
+\end{Verbatim}
 \texttt{flatten}. No values: $(C, H, W)$ becomes one vector of $C\cdot H\cdot W$ values (before \texttt{dense}).
 
 \subsubsection*{\texttt{dense} (also \texttt{linear}) --- fully connected}
+\begin{Verbatim}[fontsize=\small]
+LABEL dense UNITS [ACTIVATION]
+\end{Verbatim}
 \texttt{dense 128}, \texttt{dense 10 none}, \texttt{linear units=256 activation=tanh}. Values: units, the plain number (\texttt{units=}),
 default 128, range 1--1\,048\,576; activation, as for \texttt{conv} (\texttt{activation=}), default relu. On tokens it acts on every token
 separately (a Transformer's MLP).
 
 \subsubsection*{Activation blocks}
+\begin{Verbatim}[fontsize=\small]
+LABEL relu | leaky_relu | gelu | silu | sigmoid | tanh
+\end{Verbatim}
 A line with only an activation word is an activation block: \texttt{relu}, \texttt{leaky\_relu}, \texttt{gelu}, \texttt{silu},
 \texttt{sigmoid}, \texttt{tanh}. Also \texttt{activation gelu}, \texttt{act fn=silu} (the name of the value is \texttt{fn}).
 
 \subsubsection*{\texttt{add}, \texttt{concat} (\texttt{cat}), \texttt{mul} (\texttt{multiply}) --- joining}
+\begin{Verbatim}[fontsize=\small]
+LABEL add | concat | mul <- INPUT, INPUT [, INPUT ...]
+\end{Verbatim}
 No values; the inputs come after \texttt{<-}: \texttt{add <- 2, 5} (same shapes, summed: residual), \texttt{concat <- 3, 7} (channels
 joined in this order; same height and width), \texttt{mul <- 4, 6} (element-wise; a vector of $C$ values may multiply a $(C, H, W)$
 image: an attention gate or squeeze-and-excitation). Two or more inputs.
 
 \subsubsection*{Transformer blocks: \texttt{to\_tokens}, \texttt{cls\_pos}, \texttt{attention}, \texttt{token\_pool}}
+\begin{Verbatim}[fontsize=\small]
+LABEL to_tokens [patches | rows]
+LABEL cls_pos [cls | nocls]
+LABEL attention [heads] HEADS [drop RATE]
+LABEL token_pool [cls | mean]
+\end{Verbatim}
 \begin{verbatim}
 3 to_tokens patches        # (C, H, W) -> H·W tokens of C values;  "rows": H tokens of C·W values
 4 cls_pos                  # a learnt class token in front + learnt positions;  "nocls": positions only
@@ -260,6 +315,9 @@ image: an attention gate or squeeze-and-excitation). Two or more inputs.
 (\texttt{dropout=}), default 0, range 0--0.9. \texttt{token\_pool}: \texttt{cls} / \texttt{mean} (\texttt{mode=}), default cls.
 
 \subsubsection*{\texttt{output}, \texttt{seg\_output}}
+\begin{Verbatim}[fontsize=\small]
+LABEL output | seg_output
+\end{Verbatim}
 No values: \texttt{output} gives one score per class of the dataset (classification); \texttt{seg\_output} one score per class for every
 pixel (segmentation; it must be at the size of the masks). Exactly one, as the last block.
 
