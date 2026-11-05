@@ -95,6 +95,9 @@ crates/core/src/
                            Help menu: Documentation opens the bundled manual PDF (tauri.conf.json bundle.resources).
                            Kaggle runs: data in /tmp/nnb_data (not /kaggle/working, the notebook output), checkpoint removed at the
                            end, kaggle_output deleted after metrics/results/model/log are copied; the run card shows the last check.
+  dataset.rs               Multispectral / radar: bands, band_order, sensor (s2 | s1 | other), s1_db; SENTINEL2_BANDS (EuroSAT order),
+                           SENTINEL1_BANDS; input channels = bands.len() (≤ 32); Kaggle folders of .tif / .npy only. harness: read_bands,
+                           BandFolder, multiband_stats (band_stats.json), composite(); CI ci_multiband_check.py (examples/multiband_case.rs).
   dataset.rs               Dataset (builtin | huggingface | kaggle; task classify | segment; resize (built-in); hf_mask_col, kaggle_mask_dir;
                            image_size, channels, classes), BUILTINS, input_shape, problems()
   shapes.rs                analyze(graph, dataset) -> Analysis: computation order (Kahn), per-node in/out shapes, params, rf, padding/stride

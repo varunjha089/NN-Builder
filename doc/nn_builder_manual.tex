@@ -540,6 +540,37 @@ names. The class list maps mask values to classes (value 0 is the first class; w
 \ui{Image height}, \ui{Image width} and \ui{Channels} set the shape of the Input block; images are resized to it. The class names, one per
 line in label order, set the Output block's size.
 
+\subsection{Satellite images: Sentinel-2, Sentinel-1 and other bands}
+\label{sec:bands}
+Multispectral and radar images have more than three bands and values that are not 0--255 colours, so they are read as arrays, not as
+pictures. A Kaggle dataset with one folder per class of GeoTIFF (\file{.tif}, \file{.tiff}) or \file{.npy} files works, as in
+EuroSAT-MS. Choose it as usual (\ui{Read files}, the training folder), then under \ui{Image bands}:
+\begin{itemize}[nosep]
+  \item \ui{Sentinel-2 (13 bands)}: the files' band order is filled in as EuroSAT-MS stores it (B01 \dots\ B12, then B8A; correct it if
+        the dataset's description says otherwise). Tick the bands the network should see, or use a preset: all 13, the ten 10\,m and 20\,m
+        bands, true colour (B04 B03 B02), or colour and near infrared. Each band shows its wavelength and resolution.
+  \item \ui{Sentinel-1 radar (VV, VH)}: the two polarisations; tick \ui{convert to decibels} when the files hold linear backscatter
+        (values around 0.01--0.5), since a network learns radar much better in dB.
+  \item \ui{other bands}: type the bands of the files in their order and tick the ones to use.
+\end{itemize}
+The Input block then has as many channels as bands are ticked (up to 32), and the first convolution's parameters follow (13 bands into a
+$3\times3$ convolution with 16 filters: $13\cdot9\cdot16+16 = 1\,888$). On the GPU machine \file{train.py}:
+\begin{itemize}[nosep]
+  \item reads each file (bands first or last), picks the ticked bands by name, converts Sentinel-1 to dB if asked, and resizes to the image
+        size of the Dataset tab;
+  \item measures the mean and spread of every band on up to 256 training images and normalises each band with its own values (kept in
+        \file{band\_stats.json}, so a resumed run normalises the same way);
+  \item augments with horizontal / vertical flips and quarter turns (a satellite image has no ``up''), when flips or rotation are ticked
+        in the Train tab;
+  \item shows the result pictures as composites: true colour (B04 B03 B02) for Sentinel-2, VV / VH / VV$-$VH for Sentinel-1, else the
+        first three bands, each stretched between its 2nd and 98th percentile.
+\end{itemize}
+Not yet: ImageNet weights for more than three bands, multispectral segmentation, Hugging Face datasets with band arrays, one label per
+band combination (multi-label, BigEarthNet), and Sentinel-1 and Sentinel-2 together in one network (fusion). These are the next steps in
+\file{FUTURE\_PLAN.md}. GitHub Actions trains on generated Sentinel-2 (mixed \file{.tif} and \file{.npy}) and Sentinel-1 folders on every
+change and checks the bands, the statistics and the accuracy.
+
+
 %=====================================================================================================================================
 \section{The Code tab: what the generated script does}
 
