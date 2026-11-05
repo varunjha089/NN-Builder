@@ -347,7 +347,6 @@ export function Design({ st, graph, setGraph, analysis, setAnalysis, toast, relo
       <div className="canvas">
         {rfNodes.length > 0 && <ReactFlow nodes={rfNodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect}
           onPaneClick={() => setSelected(null)} fitView fitViewOptions={{ padding: 0.2, maxZoom: 1 }} minZoom={0.05}
-          onlyRenderVisibleElements={rfNodes.length > 150}
           deleteKeyCode={collapsed ? null : ["Backspace", "Delete"]} nodesConnectable={!collapsed}
           onNodeDoubleClick={(_, n) => { if (n.id.startsWith("repeat")) setCollapsed(false); }} key={collapsed ? "folded" : "all"}>
           <Background gap={24} />

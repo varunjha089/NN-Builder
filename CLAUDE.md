@@ -66,7 +66,7 @@ crates/core/src/
                            torch.utils.checkpoint; generated only when on); bf16 on compute capability 8+, channels-last for conv nets,
                            workers "auto" = min(8, CPUs) with prefetch 4, "memory" event (measured peak after the first epoch),
                            data_wait per epoch; Train tab "GPU memory" box and run-card notes; status polls slow to 15 s when the
-                           window is hidden. Mac side: memo'd blocks, onlyRenderVisibleElements above 150 blocks, undo history capped
+                           window is hidden. Mac side: memo'd blocks (not onlyRenderVisibleElements: it empties the minimap), undo history capped
                            by block count, charts thinned to ~1500 points. CI: ci_memory_check.py (parts = plain forward and gradients
                            on 7 demos; a run with NNB_TEST_OOM_ABOVE=8 ends with the same weights as without). The design text
                            language is planned in PROGRAMMING_LANGUAGE.md (FUTURE_PLAN.md: Sentinel-1/2).
