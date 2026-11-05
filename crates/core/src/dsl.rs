@@ -829,7 +829,7 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
                                 known.extend(ACTS);
                             }
                             known.extend(match kind {
-                                "dense" => &ACTS[..],
+                                "dense" => ACTS,
                                 "pool2d" | "global_pool" => &["max", "avg"][..],
                                 "upsample" => &["nearest", "bilinear"][..],
                                 "to_tokens" => &["patches", "rows"][..],
