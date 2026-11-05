@@ -60,6 +60,40 @@ impl Analysis {
 }
 
 // ---------------------------------------------------------------- reading parameters (the canvas sends them; never trust them blindly)
+/// the highest number of filters (Conv2D, ConvTranspose2D) and attention heads: enough for the largest published models (ViT-22B has
+/// 6144 values per token and 48 heads; LLM-sized widths reach 16384+)
+pub const MAX_FILTERS: i64 = 65536;
+pub const MAX_HEADS: i64 = 512;
+
+/// the allowed range of every number setting, per block kind (the same limits the shape engine and the code generator read)
+pub fn limits(kind: &str) -> &'static [(&'static str, i64, i64)] {
+    match kind {
+        "conv2d" => &[("filters", 1, MAX_FILTERS), ("kernel", 1, 32), ("stride", 1, 32), ("dilation", 1, 6), ("padding", 0, 10)],
+        "dwconv2d" => &[("multiplier", 1, 8), ("kernel", 1, 32), ("stride", 1, 32), ("padding", 0, 10)],
+        "convtranspose2d" => &[("filters", 1, MAX_FILTERS), ("kernel", 1, 32), ("stride", 1, 32), ("padding", 0, 10), ("output_padding", 0, 7)],
+        "pool2d" => &[("size", 1, 8), ("stride", 1, 32), ("padding", 0, 4)],
+        "upsample" => &[("scale", 2, 8)],
+        "groupnorm" => &[("groups", 1, MAX_FILTERS)],
+        "attention" => &[("heads", 1, MAX_HEADS)],
+        "dense" => &[("units", 1, 1 << 20)],
+        _ => &[],
+    }
+}
+
+/// a number setting outside its range: the message (the value would otherwise be changed silently, giving a different network)
+fn out_of_range(node: &Node) -> Option<String> {
+    for (key, lo, hi) in limits(&node.kind) {
+        let vals: Vec<f64> = match node.params.get(*key) {
+            Some(Value::Array(a)) => a.iter().filter_map(|v| v.as_f64()).collect(),
+            Some(v) => v.as_f64().into_iter().collect(),
+            None => vec![],
+        };
+        if let Some(v) = vals.iter().find(|v| v.round() < *lo as f64 || v.round() > *hi as f64) {
+            return Some(format!("{key} is {v} but must be from {lo} to {hi}."));
+        }
+    }
+    None
+}
 pub fn int(p: &Map<String, Value>, key: &str, default: i64, lo: i64, hi: i64) -> usize {
     let v = p.get(key).and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))).map(|f| f.round() as i64).unwrap_or(default);
     v.clamp(lo, hi) as usize
@@ -121,6 +155,16 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
     let mut problems: Vec<String> = vec![];
     let ids: HashSet<&str> = g.nodes.iter().map(|n| n.id.as_str()).collect();
     let edges: Vec<_> = g.edges.iter().filter(|e| ids.contains(e.source.as_str()) && ids.contains(e.target.as_str()) && e.source != e.target).collect();
+    // lookups by id (a design can have thousands of blocks: no search through all blocks or edges per block)
+    let node_of: HashMap<&str, &Node> = g.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+    let mut out_edges: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut in_edges: HashMap<&str, Vec<&str>> = HashMap::new(); // in edge order (Concat joins in this order)
+    for e in &edges {
+        out_edges.entry(e.source.as_str()).or_default().push(e.target.as_str());
+        in_edges.entry(e.target.as_str()).or_default().push(e.source.as_str());
+    }
+    let has_any_output: HashSet<&str> = g.edges.iter().map(|e| e.source.as_str()).collect();
+    let no_targets: Vec<&str> = vec![];
 
     let inputs: Vec<&Node> = g.nodes.iter().filter(|n| n.kind == "input").collect();
     if inputs.len() != 1 {
@@ -132,9 +176,7 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
         let mut q = VecDeque::from([inp.id.as_str()]);
         while let Some(id) = q.pop_front() {
             if reach.insert(id) {
-                for e in edges.iter().filter(|e| e.source == id) {
-                    q.push_back(e.target.as_str());
-                }
+                q.extend(out_edges.get(id).unwrap_or(&no_targets).iter().copied());
             }
         }
     }
@@ -143,19 +185,20 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
     for e in edges.iter().filter(|e| reach.contains(e.source.as_str()) && reach.contains(e.target.as_str())) {
         *indeg.get_mut(e.target.as_str()).unwrap() += 1;
     }
-    let mut ready: Vec<&str> = g.nodes.iter().map(|n| n.id.as_str()).filter(|id| indeg.get(id) == Some(&0)).collect();
+    let mut ready: VecDeque<&str> = g.nodes.iter().map(|n| n.id.as_str()).filter(|id| indeg.get(id) == Some(&0)).collect();
     let mut order: Vec<&str> = vec![];
-    while let Some(id) = (!ready.is_empty()).then(|| ready.remove(0)) {
+    while let Some(id) = ready.pop_front() {
         order.push(id);
-        for e in edges.iter().filter(|e| e.source == id && reach.contains(e.target.as_str())) {
-            let d = indeg.get_mut(e.target.as_str()).unwrap();
+        for t in out_edges.get(id).unwrap_or(&no_targets).iter().copied().filter(|t| reach.contains(t)) {
+            let d = indeg.get_mut(t).unwrap();
             *d -= 1;
             if *d == 0 {
-                ready.push(e.target.as_str());
+                ready.push_back(t);
             }
         }
     }
-    let looped: Vec<&str> = reach.iter().copied().filter(|id| !order.contains(id)).collect();
+    let ordered: HashSet<&str> = order.iter().copied().collect();
+    let looped: Vec<&str> = reach.iter().copied().filter(|id| !ordered.contains(id)).collect();
     if !looped.is_empty() {
         problems.push("The design has a loop (an arrow leads back to an earlier layer). Networks must flow one way.".into());
     }
@@ -163,11 +206,11 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
     let mut results: HashMap<&str, NodeResult> = HashMap::new();
     let mut rfs: HashMap<&str, ([usize; 2], [usize; 2])> = HashMap::new();
     let is_out = |k: &str| k == "output" || k == "seg_output";
-    let n_out = order.iter().filter(|id| g.node(id).map(|n| is_out(&n.kind)).unwrap_or(false)).count();
+    let n_out = order.iter().filter(|id| node_of.get(*id).map(|n| is_out(&n.kind)).unwrap_or(false)).count();
     let mut total = 0u64;
     for id in &order {
-        let node = g.node(id).unwrap();
-        let srcs: Vec<&str> = edges.iter().filter(|e| e.target == *id && reach.contains(e.source.as_str())).map(|e| e.source.as_str()).collect();
+        let node = node_of[id];
+        let srcs: Vec<&str> = in_edges.get(id).unwrap_or(&no_targets).iter().copied().filter(|s| reach.contains(s)).collect();
         let mut r = NodeResult { id: id.to_string(), kind: node.kind.clone(), title: model::title(&node.kind).into(), status: "ok".into(), ..Default::default() };
         let blocked = srcs.iter().any(|s| results.get(s).map(|x| x.out.is_none()).unwrap_or(true));
         if node.kind == "input" {
@@ -181,7 +224,13 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
             let rf_in = srcs.iter().filter_map(|s| rfs.get(s)).fold(([1, 1], [1, 1]), |a, b| {
                 ([a.0[0].max(b.0[0]), a.0[1].max(b.0[1])], [a.1[0].max(b.1[0]), a.1[1].max(b.1[1])])
             });
-            let out = step(node, &mut r, classes, rf_in, &mut rfs);
+            let out = match out_of_range(node) {
+                Some(m) => {
+                    err(&mut r, &m);
+                    None
+                }
+                None => step(node, &mut r, classes, rf_in, &mut rfs),
+            };
             if r.status != "error" {
                 r.out = out;
             }
@@ -211,11 +260,11 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
                 err(&mut r, "There is more than one Output block.");
                 r.out = None;
             }
-            if !g.outputs_of(id).is_empty() {
+            if has_any_output.contains(id) {
                 err(&mut r, "Output must be the last block: nothing can come after it.");
                 r.out = None;
             }
-        } else if r.out.is_some() && !edges.iter().any(|e| e.source == *id) {
+        } else if r.out.is_some() && !out_edges.contains_key(id) {
             warn(&mut r, "The result of this layer is not used: connect it to a following layer.");
         }
         if r.out.is_some() {
@@ -248,7 +297,7 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
         }
     }
     for r in nodes.iter_mut().filter(|r| r.out.is_some() && !matches!(r.status.as_str(), "error" | "blocked" | "unconnected")) {
-        let bias = g.node(&r.id).map(|n| n.params.get("bias").and_then(|b| b.as_bool()).unwrap_or(true)).unwrap_or(true);
+        let bias = node_of.get(r.id.as_str()).map(|n| n.params.get("bias").and_then(|b| b.as_bool()).unwrap_or(true)).unwrap_or(true);
         r.macs = macs(r, bias);
     }
     let total_macs = nodes.iter().map(|r| r.macs).sum();
@@ -386,7 +435,7 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
             let hw = window_node(r, kernel, stride, pad, dil)?;
             let c = x[0];
             let bias = p.get("bias").and_then(|v| v.as_bool()).unwrap_or(true) as u64;
-            let f = if k == "conv2d" { int(p, "filters", 32, 1, 4096) } else { c * int(p, "multiplier", 1, 1, 8) };
+            let f = if k == "conv2d" { int(p, "filters", 32, 1, MAX_FILTERS) } else { c * int(p, "multiplier", 1, 1, 8) };
             r.params = if k == "conv2d" { (kernel[0] * kernel[1] * c) as u64 * f as u64 + bias * f as u64 } else { (kernel[0] * kernel[1]) as u64 * f as u64 + bias * f as u64 };
             let next = rf_after(kernel, stride, dil);
             rfs.insert(id, next);
@@ -424,7 +473,7 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
                 err(r, &format!("Output padding {op} must be smaller than the stride (PyTorch rule)."));
                 return None;
             }
-            let f = int(p, "filters", 32, 1, 4096);
+            let f = int(p, "filters", 32, 1, MAX_FILTERS);
             let side = |n: usize, k: usize, s: usize| (n as i64 - 1) * s as i64 - 2 * pd as i64 + (k as i64 - 1) + op as i64 + 1;
             let (oh, ow) = (side(x[1], kernel[0], stride[0]), side(x[2], kernel[1], stride[1]));
             r.formula = vec![
@@ -460,7 +509,7 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
                 need3(r);
                 return None;
             }
-            let g = int(p, "groups", 8, 1, 1024);
+            let g = int(p, "groups", 8, 1, MAX_FILTERS);
             if !x[0].is_multiple_of(g) {
                 let fits: Vec<String> = [32, 16, 8, 4, 2, 1].iter().filter(|d| x[0].is_multiple_of(**d)).map(|d| d.to_string()).collect();
                 err(r, &format!("GroupNorm splits the {} channels into {g} groups, but {} does not divide by {g}; for example {} groups.", x[0], x[0], fits.join(", ")));
@@ -502,7 +551,7 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
                 need2(r);
                 return None;
             }
-            let h = int(p, "heads", 4, 1, 64);
+            let h = int(p, "heads", 4, 1, MAX_HEADS);
             if !x[1].is_multiple_of(h) {
                 err(r, &format!("The token dimension {} must divide evenly by the number of heads {h}.", x[1]));
                 return None;

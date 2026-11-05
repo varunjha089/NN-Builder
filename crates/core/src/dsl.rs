@@ -1503,9 +1503,10 @@ pub fn same_structure(a: &Graph, b: &Graph) -> bool {
         return false;
     }
     let bm: HashMap<&str, &Node> = b.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+    let (ia, ib) = (a.input_map(), b.input_map());
     a.nodes.iter().all(|n| match bm.get(n.id.as_str()) {
         Some(m) => n.kind == m.kind && n.label == m.label && effective(&n.kind, &n.params) == effective(&m.kind, &m.params)
-            && a.inputs_of(&n.id) == b.inputs_of(&m.id),
+            && ia.get(n.id.as_str()) == ib.get(m.id.as_str()),
         None => false,
     })
 }
@@ -1555,9 +1556,11 @@ fn patch_settings(text: &str, e: &Expanded, g: &Graph) -> Option<String> {
     }
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
     let mut changed = 0;
+    let (io, ig) = (old.input_map(), g.input_map());
+    let old_by_id: HashMap<&str, &Node> = old.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
     for n in &g.nodes {
-        let o = old.node(&n.id)?;
-        if o.kind != n.kind || o.label != n.label || old.inputs_of(&o.id) != g.inputs_of(&n.id) {
+        let o = *old_by_id.get(n.id.as_str())?;
+        if o.kind != n.kind || o.label != n.label || io.get(o.id.as_str()) != ig.get(n.id.as_str()) {
             return None;
         }
         if effective(&o.kind, &o.params) == effective(&n.kind, &n.params) {

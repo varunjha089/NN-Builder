@@ -128,7 +128,7 @@ Installers are published with every release on GitHub (\url{https://github.com/v
 \subsection{Automatic updates}
 Once a day (if enabled), the application asks GitHub for the latest release. When a newer version exists, a banner appears under the top
 bar with \ui{Install and restart}. The download is checked against the SHA-256 checksum published with the release before anything is
-replaced. The switch is in \ui{Settings} (and on the Projects page); \ui{NN Builder} $\rightarrow$ \ui{Check for Updates\ldots} checks at once.
+replaced. The switch is in \ui{Settings} (and on the Projects page); \ui{Help} $\rightarrow$ \ui{Check for Updates\ldots} checks at once.
 
 \subsection{The top bar}
 From left to right: the name, the \ui{Project} button (the current project, or \emph{No project}; it opens the Projects page), a
@@ -141,8 +141,7 @@ From left to right: the name, the \ui{Project} button (the current project, or \
 \toprule
 \textbf{Menu} & \textbf{Item (shortcut)} & \textbf{What it does}\\
 \midrule\endhead
-NN Builder & Check for Updates\ldots & asks GitHub for a newer release\\
- & Settings\ldots\ (\kbd{Cmd+,}) & opens the Settings page\\
+NN Builder & Settings\ldots\ (\kbd{Cmd+,}) & opens the Settings page\\
 File & New Project\ldots\ (\kbd{Cmd+N}) & Projects page, cursor in the name field\\
  & Open Project\ldots\ (\kbd{Cmd+O}) & choose a project folder\\
  & Save Project\ldots\ (\kbd{Cmd+S}) & keeps an unsaved demo as a real project\\
@@ -157,6 +156,8 @@ Edit & Undo (\kbd{Cmd+Z}), Redo (\kbd{Shift+Cmd+Z}) & undo/redo changes to the d
 View & Night Mode (\kbd{Shift+Cmd+N}) & switches the neon night theme\\
 Connection & Open Connection (\kbd{Shift+Cmd+K}) & the Connection page\\
  & Install Tools\ldots & installs the \file{kaggle} and \file{boto3} helpers\\
+Help & Documentation (\kbd{Cmd+?}) & opens this manual (a PDF inside the application)\\
+ & Check for Updates\ldots & asks GitHub for a newer release\\
 \bottomrule
 \end{longtable}
 
@@ -766,6 +767,28 @@ whose weights and optimizer state fit can usually train with a reasonable batch;
 parameter) do not shrink. After the first epoch the run card shows the memory really used (the peak of the GPU allocator), the precision,
 and whether batches were split; it also warns when the GPU waited for data more than 30\% of an epoch (loading and augmenting images is
 then the bottleneck: the data workers already use one CPU core each, up to 8).
+
+\subsection{How large a design the application handles}
+The application never holds weights, so the number of parameters does not matter to it; the number of \emph{blocks} does. Measured on a
+Mac (designs written as text: ViT-style encoders, 224$\times$224 input):
+
+\begin{center}\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Design & parameters & blocks & window memory & analysis per edit\\
+\midrule
+none open & -- & -- & 56 MB & --\\
+ViT-g/14 (40 layers, width 1\,408) & 1.0 B & 287 & 164 MB & 1--2 ms\\
+width 8\,192, 32 layers & 25.8 B & 231 & 151 MB & 1 ms\\
+width 12\,288, 55 layers & 99.7 B & 392 & 192 MB & 1 ms\\
+width 4\,608, 100 layers & 25.5 B & 707 & 287 MB & 3 ms\\
+width 2\,048, 500 layers & 25.2 B & 3\,507 & 965 MB & 21 ms\\
+\bottomrule
+\end{tabular}
+\end{center}
+The canvas needs about 0.3 MB per block drawn. Above 500 blocks the canvas says so and offers \ui{Collapse repeated blocks (×N)}, which
+draws each repeated group once; the Text tab edits a design of any size without drawing it. Conv2D filters and attention heads go up to
+65\,536 and 512; a setting outside its range is an error on its block (it is never silently changed).
 
 %=====================================================================================================================================
 \section{The Results tab}

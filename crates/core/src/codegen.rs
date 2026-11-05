@@ -302,7 +302,7 @@ fn modules(n: &Node, a: &Analysis, classes: usize) -> Vec<String> {
                 format!("nn.Upsample(scale_factor={s}, mode=\"nearest\")")
             });
         }
-        "groupnorm" => m.push(format!("nn.GroupNorm({}, {})", shapes::int(p, "groups", 8, 1, 1024), inp[0])),
+        "groupnorm" => m.push(format!("nn.GroupNorm({}, {})", shapes::int(p, "groups", 8, 1, crate::shapes::MAX_FILTERS), inp[0])),
         "batchnorm" => m.push(if inp.len() == 3 { format!("nn.BatchNorm2d({})", inp[0]) } else { format!("nn.BatchNorm1d({})", inp[0]) }),
         "layernorm" => m.push(if inp.len() == 3 { format!("nn.GroupNorm(1, {})   # LayerNorm over (channels, height, width)", inp[0]) } else { format!("nn.LayerNorm({})", inp.last().unwrap()) }),
         "to_tokens" => m.push(format!("ToTokens({:?})", shapes::text(p, "mode", &["patches", "rows"], "patches"))),
@@ -312,7 +312,7 @@ fn modules(n: &Node, a: &Analysis, classes: usize) -> Vec<String> {
         }
         "attention" => {
             let drop = p.get("dropout").and_then(|v| v.as_f64()).unwrap_or(0.0).clamp(0.0, 0.9);
-            m.push(format!("SelfAttention(dim={}, heads={}, dropout={})", inp[1], int(p, "heads", 4, 1, 64), (drop * 100.0).round() / 100.0));
+            m.push(format!("SelfAttention(dim={}, heads={}, dropout={})", inp[1], int(p, "heads", 4, 1, crate::shapes::MAX_HEADS), (drop * 100.0).round() / 100.0));
         }
         "token_pool" => m.push(format!("TokenPool({:?})", shapes::text(p, "mode", &["cls", "mean"], "cls"))),
         "dropout" => {
@@ -381,12 +381,16 @@ fn model_code_opts(g: &Graph, a: &Analysis, save_memory: bool) -> Result<String>
     expected.insert("input".into(), json!(a.input));
     let mut result_var = String::new();
     let pos: std::collections::HashMap<&str, usize> = order.iter().enumerate().map(|(i, id)| (*id, i)).collect();
-    let line_inputs: Vec<Vec<usize>> = order.iter().map(|id| g.inputs_of(id).iter().filter_map(|s| pos.get(s).copied()).collect()).collect();
+    let ins_of = g.input_map();
+    let none: Vec<&str> = vec![];
+    let node_of: std::collections::HashMap<&str, &crate::model::Node> = g.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+    let result_of: std::collections::HashMap<&str, &crate::shapes::NodeResult> = a.nodes.iter().map(|r| (r.id.as_str(), r)).collect();
+    let line_inputs: Vec<Vec<usize>> = order.iter().map(|id| ins_of.get(id).unwrap_or(&none).iter().filter_map(|s| pos.get(s).copied()).collect()).collect();
     let mut result_pos = order.len();
     for (i, id) in order.iter().enumerate() {
-        let n = g.node(id).unwrap();
-        let r = a.get(id).unwrap();
-        let ins: Vec<String> = g.inputs_of(id).iter().filter_map(|s| var.get(s).cloned()).collect();
+        let n = node_of[id];
+        let r = result_of[id];
+        let ins: Vec<String> = ins_of.get(id).unwrap_or(&none).iter().filter_map(|s| var.get(s).cloned()).collect();
         let v = &var[id];
         let label = format!("{i}. {}", r.title);
         match n.kind.as_str() {

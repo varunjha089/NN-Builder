@@ -349,6 +349,16 @@ async fn export_code(st: State<'_, App>) -> R<String> {
     Ok(f.display().to_string())
 }
 
+/// open a file with the system's default app (the PDF viewer for the manual)
+fn open_file(p: &std::path::Path) {
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(p).spawn();
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("explorer").arg(p).spawn();
+    #[cfg(target_os = "linux")]
+    let _ = std::process::Command::new("xdg-open").arg(p).spawn();
+}
+
 fn reveal(p: &std::path::Path) {
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("open").arg("-R").arg(p).spawn();
@@ -812,7 +822,6 @@ fn build_menu(h: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let app_menu = SubmenuBuilder::new(h, "NN Builder")
         .about(None)
         .separator()
-        .item(&item(h, "check-update", "Check for Updates…", None)?)
         .item(&item(h, "settings", "Settings…", Some("CmdOrCtrl+,"))?)
         .separator()
         .services()
@@ -861,10 +870,14 @@ fn build_menu(h: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let conn = SubmenuBuilder::new(h, "Connection")
         .item(&item(h, "connection", "Open Connection", Some("CmdOrCtrl+Shift+K"))?)
         .item(&item(h, "tools", "Install Tools (kaggle, boto3)…", None)?)
-        .item(&item(h, "check-update-2", "Check for Updates…", None)?)
         .build()?;
     let window = SubmenuBuilder::new(h, "Window").minimize().maximize().separator().close_window().build()?;
-    MenuBuilder::new(h).items(&[&app_menu, &file, &edit, &view, &conn, &window]).build()
+    let help = SubmenuBuilder::new(h, "Help")
+        .item(&item(h, "documentation", "Documentation (User Manual)", Some("CmdOrCtrl+?"))?)
+        .separator()
+        .item(&item(h, "check-update", "Check for Updates…", None)?)
+        .build()?;
+    MenuBuilder::new(h).items(&[&app_menu, &file, &edit, &view, &conn, &window, &help]).build()
 }
 
 fn toast(h: &tauri::AppHandle, msg: impl Into<String>) {
@@ -875,7 +888,16 @@ fn toast(h: &tauri::AppHandle, msg: impl Into<String>) {
 fn on_menu(h: &tauri::AppHandle, id: &str) {
     let st = h.state::<App>();
     match id {
-        "check-update" | "check-update-2" => {
+        "documentation" => {
+            // the user manual shipped inside the app (bundle resource); in a development build, the copy in the repository
+            let bundled = h.path().resolve("nn_builder_manual.pdf", tauri::path::BaseDirectory::Resource).ok().filter(|p| p.is_file());
+            let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../doc/nn_builder_manual.pdf");
+            match bundled.or_else(|| dev.is_file().then_some(dev)) {
+                Some(pdf) => open_file(&pdf),
+                None => toast(h, "The user manual is not in this build: see doc/nn_builder_manual.pdf in the repository."),
+            }
+        }
+        "check-update" => {
             let _ = h.emit("check-update", ());
         }
         "settings" => {

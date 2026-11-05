@@ -106,6 +106,14 @@ impl Graph {
     pub fn inputs_of(&self, id: &str) -> Vec<&str> {
         self.edges.iter().filter(|e| e.target == id).map(|e| e.source.as_str()).collect()
     }
+    /// the inputs of every block at once (in edge order), for code that looks at many blocks (inputs_of searches all edges each time)
+    pub fn input_map(&self) -> std::collections::HashMap<&str, Vec<&str>> {
+        let mut m: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
+        for e in &self.edges {
+            m.entry(e.target.as_str()).or_default().push(e.source.as_str());
+        }
+        m
+    }
     pub fn outputs_of(&self, id: &str) -> Vec<&str> {
         self.edges.iter().filter(|e| e.source == id).map(|e| e.target.as_str()).collect()
     }

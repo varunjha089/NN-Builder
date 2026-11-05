@@ -356,3 +356,22 @@ fn save_memory_parts() {
     let a = analyze(&g, &dataset_for(nnb_core::templates::get("resnet18").unwrap()));
     assert!(!model_code(&g, &a).unwrap().contains("_part0"));
 }
+
+#[test]
+fn large_widths_and_out_of_range_values() {
+    // 8192 filters and 64 heads are kept as written (a 25-billion-parameter width), not cut to a smaller network
+    let g = chain(vec![("input", json!({})), ("conv2d", json!({"filters": 8192, "kernel": [16, 16], "stride": [16, 16], "padding": "valid"})),
+        ("to_tokens", json!({})), ("attention", json!({"heads": 64})), ("token_pool", json!({"mode": "mean"})), ("output", json!({}))]);
+    let ds = Dataset { source: "huggingface".into(), hf_repo: "x/y".into(), image_size: [64, 64], channels: 3, classes: vec!["a".into(), "b".into()], ..Default::default() };
+    let a = analyze(&g, &ds);
+    assert!(a.ok, "{:?}", a.nodes.iter().map(|n| &n.messages).collect::<Vec<_>>());
+    assert_eq!(a.nodes.iter().find(|n| n.kind == "conv2d").unwrap().out, Some(vec![8192, 4, 4]));
+    // a value beyond the limit is an error on its block, not silently changed
+    let g = chain(vec![("input", json!({})), ("conv2d", json!({"filters": 100000})), ("global_pool", json!({})), ("output", json!({}))]);
+    let a = analyze(&g, &ds);
+    assert!(!a.ok);
+    let c = a.nodes.iter().find(|n| n.kind == "conv2d").unwrap();
+    assert!(c.status == "error" && c.messages[0].contains("filters is 100000 but must be from 1 to 65536"), "{:?}", c.messages);
+    let g = chain(vec![("input", json!({})), ("conv2d", json!({"kernel": [40, 40]})), ("global_pool", json!({})), ("output", json!({}))]);
+    assert!(analyze(&g, &ds).nodes.iter().any(|n| n.messages.iter().any(|m| m.contains("kernel is 40"))));
+}

@@ -78,6 +78,12 @@ crates/core/src/
                            wrap_rows lays long text designs out in rows of 24; File → Import/Export Design… reads/writes .nnb too;
                            doc/examples/everything.nnb = every language feature and block kind, checked in tests/text.rs
                            and run in PyTorch by CI via dump_cases) is described in PROGRAMMING_LANGUAGE.md (section 9: as built, what is left) (FUTURE_PLAN.md: Sentinel-1/2).
+                           Large designs (measured 2026-11-05, examples/big_designs.rs builds 1B-100B ViTs from text and times them):
+                           cost follows blocks, not parameters; the window needs ~0.3 MB per block drawn (3,507 blocks ≈ 1 GB),
+                           the canvas suggests the ×N view above 500 blocks. shapes::analyze and dsl/codegen use id maps (no
+                           per-block search: 3,507 blocks analysed in ~21 ms); Design.tsx reuses unchanged React Flow nodes. Limits:
+                           shapes::limits() per kind (filters 65,536, heads 512); a value outside is an error, never clamped silently.
+                           Help menu: Documentation opens the bundled manual PDF (tauri.conf.json bundle.resources).
                            Kaggle runs: data in /tmp/nnb_data (not /kaggle/working, the notebook output), checkpoint removed at the
                            end, kaggle_output deleted after metrics/results/model/log are copied; the run card shows the last check.
   dataset.rs               Dataset (builtin | huggingface | kaggle; task classify | segment; resize (built-in); hf_mask_col, kaggle_mask_dir;
@@ -112,13 +118,14 @@ python/harness.py          the training part of every train.py (spot: SIGUSR1 = 
 python/helpers/aws_ec2.py  boto3 start/stop/describe (+ lifecycle, state reason, spot request; refuses to start an interrupted spot instance) (run with the tools venv; credentials in the environment for that call only)
 python/verify_shapes.py    PyTorch comparison (CI)
 app/src-tauri/src/main.rs  Tauri commands (thin: they call nnb-core), keychain (service "NN Builder": kaggle, huggingface, aws), Hugging Face
-                           datasets-server/whoami calls (ureq), the menu bar (build_menu / on_menu): App (About, Check for Updates…, Settings… ⌘,), File (New
+                           datasets-server/whoami calls (ureq), the menu bar (build_menu / on_menu): App (About, Settings… ⌘,), File (New
                            Project ⌘N, Open Project… ⌘O with a folder dialog, Save Project… ⌘S (the draft), Close Project (no project open: the Projects page;
                            an unsaved draft is discarded); Projects page: Delete per project (asks in the row, then project_delete moves
                            the folder to the Trash with the trash crate, never a hard delete, and store::forget takes it off the list;
                            a missing folder is only removed from the list), New from Demo ▸, Import/Export Design… (model.json, dialogs from
                            tauri-plugin-dialog), Export train.py ⌘E, Show Project in Finder ⇧⌘R), Edit (Undo ⌘Z / Redo ⇧⌘Z of the design,
-                           Cut/Copy/Paste/Select All, Arrange ⌘L), View (Night Mode ⇧⌘N), Connection, Window. Dialog actions run in Rust and emit
+                           Cut/Copy/Paste/Select All, Arrange ⌘L), View (Night Mode ⇧⌘N), Connection, Window, Help (Documentation ⌘? opens the manual PDF,
+                           bundled as a resource from doc/ via tauri.conf.json; Check for Updates…). Dialog actions run in Rust and emit
                            "project-changed" / "toast"; the rest is emitted as "menu" (id) to the window. Undo/Redo: App.tsx keeps snapshots
                            (Design calls remember(prev) before each change; changes within 0.6 s are one step; in a text field the menu
                            items undo the typing instead)
@@ -179,7 +186,7 @@ doc/nn_builder_manual.tex  the user manual (LaTeX, plain thebibliography, no bib
   macOS unzips (ditto) next to the running bundle and swaps by rename; Windows runs the installer at exit; AppImage replaced; .deb via xdg-open.
 - Commands `update_check(manual)` (automatic at start only when `auto_update` is on and `last_update_check` is over a day old; both in
   settings.json), `update_install` (a background job ending in "UPDATE_READY"), `update_restart` (Tauri restart, or installer + exit).
-  Window: the banner under the top bar; Connection menu → Check for Updates…; the switch on the Projects page.
+  Window: the banner under the top bar; Help menu → Check for Updates…; the switch on the Projects page.
 - If the packaged file names change, change `pick_asset`, its test and `.github/workflows/build.yml` together.
 
 ## Releasing a version

@@ -370,5 +370,5 @@ function AutoUpdate() {
   useEffect(() => { api.updateSettings().then((u) => setOn(u.auto)).catch(() => {}); }, []);
   if (on === null) return null;
   return <p className="row small"><label className="chk"><input type="checkbox" checked={on} onChange={(e) => { setOn(e.target.checked); api.setAutoUpdate(e.target.checked); }} />
-    Check for updates automatically (once a day, from the GitHub releases)</label><span className="muted">· or Connection menu → Check for Updates…</span></p>;
+    Check for updates automatically (once a day, from the GitHub releases)</label><span className="muted">· or Help menu → Check for Updates…</span></p>;
 }

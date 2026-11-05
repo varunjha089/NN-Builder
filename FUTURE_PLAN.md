@@ -31,6 +31,9 @@ What is still open, in the suggested order. Done work is in git and CLAUDE.md; t
 
 ## 4. Workflow and window
 
+- Very large designs (thousands of blocks): the canvas costs ~0.3 MB per block. Ideas: a lighter block drawing (no glow, no edge labels)
+  above ~1,000 blocks; editing inside the ×N view (it is read-only today).
+
 - A run queue (several runs one after another); a macOS notification when a run ends; notes on each run.
 - Click a confusion-matrix cell to see those images.
 - Kaggle's 20 GB output limit: warn before a run would exceed it.

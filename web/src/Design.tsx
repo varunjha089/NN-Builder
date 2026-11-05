@@ -24,7 +24,7 @@ const GROUPS: [string, string[]][] = [
   ["Branches", ["add", "concat", "multiply"]],
 ];
 
-type LayerData = { kind: string; title: string; params: Params; result?: NodeResult; summary: string; label?: string };
+type LayerData = { kind: string; title: string; params: Params; result?: NodeResult; summary: string; label?: string; sig?: string };
 
 const n2 = (v: unknown, d = 3): [number, number] => (Array.isArray(v) ? [Number(v[0]), Number(v[1])] : [Number(v ?? d), Number(v ?? d)]);
 const k2 = (v: [number, number]) => (v[0] === v[1] ? `${v[0]}` : `${v[0]}×${v[1]}`);
@@ -150,8 +150,9 @@ export function Design({ st, graph, setGraph, analysis, persist, focus, toast, r
   const [rfNodes, setRfNodes] = useState<Node<LayerData>[]>([]);
   // "×N" view: identical consecutive groups (e.g. 40 encoder blocks) drawn as one node; a read-only view, laid out compactly
   const [collapsed, setCollapsed] = useState(false);
-  const folded = useMemo(() => (collapsed ? collapseRepeats(graph, analysis) : null), [collapsed, graph, analysis]);
-  const canFold = useMemo(() => !!collapseRepeats(graph, analysis), [graph, analysis]);
+  const foldable = useMemo(() => collapseRepeats(graph, analysis), [graph, analysis]);
+  const folded = collapsed ? foldable : null;
+  const canFold = !!foldable;
   // another design without repeats (or an edit that removed them) ends the ×N view, so the canvas is editable again
   useEffect(() => { if (!canFold) setCollapsed(false); }, [canFold]);
   useEffect(() => {
@@ -165,20 +166,29 @@ export function Design({ st, graph, setGraph, analysis, persist, focus, toast, r
       })));
       return;
     }
-    setRfNodes((prev) => graph.nodes.map((n) => {
-      const old = prev.find((o) => o.id === n.id);
-      return {
-        ...(old ?? {}), id: n.id, type: "layer", position: old?.dragging ? old.position : { x: n.x, y: n.y }, selected: n.id === selected,
-        deletable: n.kind !== "input",
-        data: { kind: n.kind, title: titles[n.kind] ?? n.kind, params: n.params, result: results[n.id], summary: summary(n.kind, n.params), label: n.label },
-      };
-    }));
+    // a block whose look did not change keeps the same node object, so that React Flow and the memoised block skip it (a design of
+    // thousands of blocks then redraws only what an edit touched)
+    setRfNodes((prev) => {
+      const byId = new Map(prev.map((o) => [o.id, o]));
+      return graph.nodes.map((n) => {
+        const old = byId.get(n.id), r = results[n.id];
+        const sig = `${n.kind}|${JSON.stringify(n.params)}|${n.label ?? ""}|${r ? `${r.status}|${r.out}|${r.params}|${r.messages.join("~")}` : ""}`;
+        const pos = old?.dragging ? old.position : { x: n.x, y: n.y };
+        if (old && (old.data as LayerData & { sig?: string }).sig === sig && old.selected === (n.id === selected)
+          && old.position.x === pos.x && old.position.y === pos.y) return old;
+        return {
+          ...(old ?? {}), id: n.id, type: "layer", position: pos, selected: n.id === selected, deletable: n.kind !== "input",
+          data: { kind: n.kind, title: titles[n.kind] ?? n.kind, params: n.params, result: r, summary: summary(n.kind, n.params), label: n.label, sig },
+        };
+      });
+    });
   }, [graph, results, selected, titles, folded]);
-  const edges: Edge[] = (folded ?? graph).edges.map((e) => ({
-    id: e.id, source: e.source, target: e.target, label: analysis?.edges[e.id] ? fmt(analysis.edges[e.id]) : undefined,
+  const shownEdges = (folded ?? graph).edges, edgeShapes = analysis?.edges;
+  const edges: Edge[] = useMemo(() => shownEdges.map((e) => ({
+    id: e.id, source: e.source, target: e.target, label: edgeShapes?.[e.id] ? fmt(edgeShapes[e.id]) : undefined,
     labelStyle: { fontSize: 10, fill: "var(--edge-label)" }, labelBgStyle: { fill: "var(--bg)" },
     markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: night ? "#00e5ff" : undefined },
-  }));
+  })), [shownEdges, edgeShapes, night]);
 
   const onNodesChange = useCallback((changes: NodeChange<Node<LayerData>>[]) => {
     setRfNodes((nds) => applyNodeChanges(changes, nds));
@@ -353,6 +363,11 @@ export function Design({ st, graph, setGraph, analysis, persist, focus, toast, r
         ))}
       </div>
       <div className="canvas">
+        {/* measured: the canvas needs about 0.3 MB per block drawn (1,000 blocks ≈ 300 MB, 3,500 ≈ 1 GB); the parameter count does not matter */}
+        {!collapsed && graph.nodes.length > 500 && <div className="msg warn big-hint">Large design: {graph.nodes.length.toLocaleString()} blocks drawn
+          (about {Math.round(graph.nodes.length * 0.3)} MB for the canvas). {canFold ? <>
+          <button className="small" onClick={() => setCollapsed(true)}>Collapse repeated blocks (×N)</button> draws each repeated group once and
+          is much lighter;</> : null} the Text tab edits it without drawing.</div>}
         {rfNodes.length > 0 && <ReactFlow nodes={rfNodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect}
           onPaneClick={() => setSelected(null)} fitView fitViewOptions={{ padding: 0.2, maxZoom: 1 }} minZoom={0.05}
           deleteKeyCode={collapsed ? null : ["Backspace", "Delete"]} nodesConnectable={!collapsed}
@@ -643,7 +658,7 @@ function Inspector({ node, result, analysis, graph, st, setParam, setParams, can
       <h3 style={{ color: color(node.kind), "--c": color(node.kind) } as CSSProperties}>{result?.title ?? node.kind}</h3>
       <div className="fields">
         {node.kind === "conv2d" && <>
-          <Num label="Filters (output channels)" value={p.filters} onChange={(v) => setParam("filters", v)} />
+          <Num label="Filters (output channels)" value={p.filters} max={65536} onChange={(v) => setParam("filters", v)} />
           <Pair label="Kernel" value={p.kernel} max={32} onChange={(v) => setParam("kernel", v)} />
           <Pair label="Stride" value={p.stride} max={32} def={1} onChange={(v) => setParam("stride", v)} />
           <Sel label="Padding" value={padVal} options={pads} onChange={padSet} />
@@ -660,7 +675,7 @@ function Inspector({ node, result, analysis, graph, st, setParam, setParams, can
           <Sel label="Activation" value={p.activation} options={acts} onChange={(v) => setParam("activation", v)} />
         </>}
         {node.kind === "convtranspose2d" && <>
-          <Num label="Filters" value={p.filters} onChange={(v) => setParam("filters", v)} />
+          <Num label="Filters" value={p.filters} max={65536} onChange={(v) => setParam("filters", v)} />
           <Pair label="Kernel" value={p.kernel} def={2} onChange={(v) => setParam("kernel", v)} />
           <Pair label="Stride" value={p.stride} max={32} def={2} onChange={(v) => setParam("stride", v)} />
           <Num label="Padding" value={p.padding} min={0} max={5} onChange={(v) => setParam("padding", v)} />
@@ -680,7 +695,7 @@ function Inspector({ node, result, analysis, graph, st, setParam, setParams, can
           <Sel label="Mode" value={p.mode} options={[["nearest", "nearest"], ["bilinear", "bilinear"]]} onChange={(v) => setParam("mode", v)} />
         </>}
         {node.kind === "dropout" && <Num label="Rate" value={p.rate} min={0} max={0.95} step={0.05} onChange={(v) => setParam("rate", v)} />}
-        {node.kind === "groupnorm" && <><Num label="Groups" value={p.groups} min={1} max={1024} onChange={(v) => setParam("groups", v)} />
+        {node.kind === "groupnorm" && <><Num label="Groups" value={p.groups} min={1} max={65536} onChange={(v) => setParam("groups", v)} />
           <p className="muted">Normalises each image over groups of channels (Wu &amp; He 2018): unlike BatchNorm it does not depend on the batch,
             so it works with small batches. The channels must divide evenly by the number of groups (32 is common; 1 group = LayerNorm over the image).</p></>}
         {node.kind === "dense" && <>
@@ -693,7 +708,7 @@ function Inspector({ node, result, analysis, graph, st, setParam, setParams, can
         </>}
         {node.kind === "cls_pos" && <label className="chk"><input type="checkbox" checked={p.cls !== false} onChange={(e) => setParam("cls", e.target.checked)} />add a learnable class token in front</label>}
         {node.kind === "attention" && <>
-          <Num label="Heads" value={p.heads} max={64} onChange={(v) => setParam("heads", v)} />
+          <Num label="Heads" value={p.heads} max={512} onChange={(v) => setParam("heads", v)} />
           <Num label="Dropout" value={p.dropout} min={0} max={0.9} step={0.05} onChange={(v) => setParam("dropout", v)} />
           <p className="muted">Every token looks at every other token (multi-head self-attention). The token dimension must divide evenly by the number of heads. Parameters: 4·d² + 4·d.</p>
         </>}

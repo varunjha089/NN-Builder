@@ -61,7 +61,7 @@ Version 0.3.0 · MIT licence · Rust (Tauri 2) + React; the generated training c
 
 ## Updates
 
-The app checks the GitHub releases once a day (switch on the Projects page; or Connection menu → Check for Updates…). When a newer version
+The app checks the GitHub releases once a day (switch on the Projects page; or Help menu → Check for Updates…). When a newer version
 exists, a bar offers "Install and restart": the download is checked against the release's SHA-256, then the app replaces itself and restarts.
 Your projects, settings and keychain entries are not touched.
 
