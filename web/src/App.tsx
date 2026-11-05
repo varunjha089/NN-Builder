@@ -256,6 +256,8 @@ function CodeTab({ toast }: { toast: (m: string) => void }) {
 function ProjectTab({ st, toast, opened, reload }: { st: AppState; toast: (m: string) => void; opened: () => void; reload: () => void }) {
   const [name, setName] = useState("");
   const [path, setPath] = useState("");
+  // the project whose Delete was pressed once (asked again in its row before anything is moved)
+  const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const [demos, setDemos] = useState<Template[]>([]);
   useEffect(() => { api.templates().then(setDemos).catch(() => {}); }, []);
   const [demosOpen, setDemosOpen] = useState(() => { try { return localStorage.getItem("nnb-demos-open") !== "0"; } catch { return true; } });
@@ -278,7 +280,14 @@ function ProjectTab({ st, toast, opened, reload }: { st: AppState; toast: (m: st
           <h3>Open</h3>
           {st.projects.length ? <table className="grid"><tbody>
             {st.projects.map((p) => <tr key={p.path}><td><strong>{p.name}</strong><div className="muted small">{p.path}</div></td>
-              <td className="num">{p.exists ? <button onClick={() => api.projectOpen(p.path).then(opened).catch((e) => toast(errText(e)))}>Open</button> : <span className="muted">missing</span>}</td></tr>)}
+              <td className="num nowrap">{confirmDel === p.path ? <>
+                <span className="small st-warn">{p.exists ? "Move to the Trash?" : "Remove from the list?"} </span>
+                <button className="small danger" onClick={() => { setConfirmDel(null); api.projectDelete(p.path).then((m) => { toast(m); reload(); }).catch((e) => toast(errText(e))); }}>
+                  {p.exists ? "Delete" : "Remove"}</button>{" "}
+                <button className="small" onClick={() => setConfirmDel(null)}>Cancel</button></> : <>
+                {p.exists ? <button onClick={() => api.projectOpen(p.path).then(opened).catch((e) => toast(errText(e)))}>Open</button> : <span className="muted">missing</span>}{" "}
+                <button className="small" title={p.exists ? "Delete this project: its folder (design, runs, results) goes to the Trash" : "Take it off this list"}
+                  onClick={() => setConfirmDel(p.path)}>{p.exists ? "Delete" : "Remove"}</button></>}</td></tr>)}
           </tbody></table> : <p className="muted">No saved projects yet. Create one, or open a demo below and save it (⌘S).</p>}
           <p className="row"><input className="grow" value={path} onChange={(e) => setPath(e.target.value)} placeholder="folder of a project (contains project.json)"
             onKeyDown={(e) => { if (e.key === "Enter") openPath(); }} />

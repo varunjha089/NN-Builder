@@ -235,3 +235,6 @@ table.layers td:nth-child(n+2), table.layers th:nth-child(n+2) { white-space: no
 .text-tab .text-help td { padding: 3px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .text-tab .text-help td:first-child { white-space: nowrap; }
 button.link { background: none; border: 0; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; }
+
+button.danger { border-color: var(--err); color: var(--err); }
+.nowrap { white-space: nowrap; }

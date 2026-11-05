@@ -231,6 +231,18 @@ pub fn open(path: &Path) -> Result<Project> {
     Ok(Project { dir })
 }
 
+/// take a project off the projects list (and off "last project"); its folder is not touched
+pub fn forget(p: &Path) -> Result<()> {
+    let p = p.to_string_lossy().to_string();
+    let mut list: Vec<String> = settings()["projects"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+    list.retain(|x| *x != p);
+    save_setting("projects", json!(list))?;
+    if settings()["last_project"].as_str() == Some(&*p) {
+        save_setting("last_project", Value::Null)?;
+    }
+    Ok(())
+}
+
 pub fn listing() -> Vec<Value> {
     settings()["projects"].as_array().cloned().unwrap_or_default().iter().filter_map(|v| v.as_str()).map(|p| {
         let pp = Path::new(p);

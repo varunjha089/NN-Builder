@@ -114,7 +114,9 @@ python/verify_shapes.py    PyTorch comparison (CI)
 app/src-tauri/src/main.rs  Tauri commands (thin: they call nnb-core), keychain (service "NN Builder": kaggle, huggingface, aws), Hugging Face
                            datasets-server/whoami calls (ureq), the menu bar (build_menu / on_menu): App (About, Check for Updates…, Settings… ⌘,), File (New
                            Project ⌘N, Open Project… ⌘O with a folder dialog, Save Project… ⌘S (the draft), Close Project (no project open: the Projects page;
-                           an unsaved draft is discarded), New from Demo ▸, Import/Export Design… (model.json, dialogs from
+                           an unsaved draft is discarded); Projects page: Delete per project (asks in the row, then project_delete moves
+                           the folder to the Trash with the trash crate, never a hard delete, and store::forget takes it off the list;
+                           a missing folder is only removed from the list), New from Demo ▸, Import/Export Design… (model.json, dialogs from
                            tauri-plugin-dialog), Export train.py ⌘E, Show Project in Finder ⇧⌘R), Edit (Undo ⌘Z / Redo ⇧⌘Z of the design,
                            Cut/Copy/Paste/Select All, Arrange ⌘L), View (Night Mode ⇧⌘N), Connection, Window. Dialog actions run in Rust and emit
                            "project-changed" / "toast"; the rest is emitted as "menu" (id) to the window. Undo/Redo: App.tsx keeps snapshots

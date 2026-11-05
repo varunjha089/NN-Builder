@@ -75,6 +75,7 @@ export const api = {
   projectNew: (name: string) => invoke<void>("project_new", { name }),
   projectSaveAs: (name: string) => invoke<string>("project_save_as", { name }),
   projectOpen: (path: string) => invoke<void>("project_open", { path }),
+  projectDelete: (path: string) => invoke<string>("project_delete", { path }),
   setProjectsDir: (path: string) => invoke<void>("set_projects_dir", { path }),
   load: () => invoke<ProjectData>("project_load"),
   saveGraph: (graph: Graph) => invoke<{ analysis: Analysis; graph: Graph }>("save_graph", { graph }),

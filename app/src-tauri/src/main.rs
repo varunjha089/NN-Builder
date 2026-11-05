@@ -143,6 +143,37 @@ async fn project_open(st: State<'_, App>, path: String) -> R<()> {
     Ok(())
 }
 
+/// delete a project from the list: its folder (with its runs and results) goes to the Trash, from where it can be put back; a project
+/// whose folder is missing is only taken off the list. Only folders that are NN Builder projects (project.json) are moved.
+#[tauri::command]
+async fn project_delete(app: tauri::AppHandle, st: State<'_, App>, path: String) -> R<String> {
+    let dir = PathBuf::from(path.trim());
+    if !store::listing().iter().any(|p| p["path"].as_str() == Some(path.trim())) {
+        return Err("This folder is not in the projects list.".into());
+    }
+    let open = st.project.lock().unwrap().as_ref().is_some_and(|p| p.dir == dir);
+    let msg = if dir.join("project.json").is_file() {
+        let name = store::open(&dir).map(|p| p.name()).unwrap_or_else(|_| dir.display().to_string());
+        #[allow(unused_mut)]
+        let mut ctx = trash::TrashContext::default();
+        #[cfg(target_os = "macos")]
+        {
+            use trash::macos::{DeleteMethod, TrashContextExtMacos};
+            ctx.set_delete_method(DeleteMethod::NsFileManager);
+        }
+        ctx.delete(&dir).map_err(|x| format!("Could not move {} to the Trash: {x}", dir.display()))?;
+        format!("Moved {name} to the Trash (put it back from there if needed).")
+    } else {
+        format!("Removed {} from the list (its folder was missing).", dir.display())
+    };
+    store::forget(&dir).map_err(e)?;
+    if open {
+        *st.project.lock().unwrap() = None;
+        let _ = app.emit("project-changed", ());
+    }
+    Ok(msg)
+}
+
 #[tauri::command]
 async fn set_projects_dir(path: String) -> R<()> {
     store::save_setting("projects_dir", json!(path.trim())).map_err(e)
@@ -956,7 +987,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            app_state, templates_list, template_apply, project_from_template, project_save_as, project_new, project_open, set_projects_dir, project_load, save_graph, design_from_text, design_format, save_dataset, save_train, code, export_code,
+            app_state, templates_list, template_apply, project_from_template, project_save_as, project_new, project_open, set_projects_dir, project_delete, project_load, save_graph, design_from_text, design_format, save_dataset, save_train, code, export_code,
             set_kaggle, set_hf, set_aws, clear_secret, test_kaggle, test_hf, test_aws, tools_install,
             machine_save, machine_delete, machine_test, machine_connect, machine_prepare, hf_info, hf_preview, kaggle_files,
             update_settings, set_auto_update, update_check, update_install, update_restart, targets, run_start, run_start_seeds, runs_summary, runs_export, run_resume_on, runs_list, run_status, run_stop, run_fetch, run_results, run_reveal, job_status, open_url
