@@ -21,7 +21,7 @@ export type LocalScan = { files: number; bytes: number; complete: boolean; tifs:
   dirs: string[]; top: string[]; csvs: string[]; tif: { file: string; width: number; height: number; bands: number; bits: number; float: boolean; names: string[] } | null };
 
 export interface Dataset {
-  source: "builtin" | "huggingface" | "kaggle" | "local"; task: "classify" | "multilabel" | "segment"; resize: boolean; builtin: string; hf_mask_col: string; kaggle_mask_dir: string;
+  source: "builtin" | "huggingface" | "kaggle" | "local"; task: "classify" | "multilabel" | "segment" | "regress"; resize: boolean; builtin: string; hf_mask_col: string; kaggle_mask_dir: string;
   hf_repo: string; hf_config: string; hf_train_split: string; hf_test_split: string; hf_image_col: string; hf_label_col: string;
   kaggle_slug: string; kaggle_train_dir: string; kaggle_test_dir: string;
   image_size: [number, number]; channels: number; classes: string[];
@@ -40,7 +40,7 @@ export interface TrainSettings {
   val_fraction: number; early_stop: boolean; patience: number; monitor: "val_loss" | "val_acc" | "val_miou";
   weight_decay: number; schedule: "constant" | "cosine" | "plateau"; warmup_epochs: number; label_smoothing: number; grad_clip: number;
   pretrained: "" | "resnet18" | "vgg16" | "vit_b_16"; freeze: "none" | "backbone"; export: boolean; save_memory: boolean; auto_split: boolean;
-  class_weights?: "" | "inverse" | "sqrt"; tune_thresholds?: boolean; loss?: "" | "focal" | "dice" | "dice_ce"; focal_gamma?: number;
+  class_weights?: "" | "inverse" | "sqrt"; tune_thresholds?: boolean; loss?: "" | "focal" | "dice" | "dice_ce" | "mse" | "l1" | "huber"; focal_gamma?: number;
 }
 
 export interface Machine {
@@ -118,11 +118,11 @@ export const api = {
   hfInfo: (repo: string) => invoke<{ configs: { name: string; columns: { name: string; type: string; names: string[] | null }[]; splits: { name: string; n: number }[] }[] }>("hf_info", { repo }),
   kaggleFiles: (slug: string) => invoke<{ files: number; sample: string[]; folders: { folder: string; classes: string[]; counts?: number[] }[] }>("kaggle_files", { slug }),
   localScan: (dir: string) => invoke<LocalScan>("local_scan", { dir }),
-  localCsv: (dir: string, csv: string) => invoke<{ columns: string[]; rows: number; file_column: string; label_column: string | null; classes: string[]; counts: number[] }>("local_csv", { dir, csv }),
+  localCsv: (dir: string, csv: string) => invoke<{ columns: string[]; rows: number; file_column: string; label_column: string | null; classes: string[]; counts: number[]; numeric: { column: string; min: number; max: number; mean: number }[] }>("local_csv", { dir, csv }),
   pickFolder: (title: string) => invoke<string | null>("pick_folder", { title }),
   targets: () => invoke<{ name: string; kind: string; prepared?: boolean }[]>("targets"),
   runStart: (target: string, gpu: string, copyTokens: boolean, check = false) => invoke<void>("run_start", { target, gpu, copyTokens, check }),
-  runs: () => invoke<{ id: string; target: string; kind: string; created: string; dataset: string; status: string; test_acc: number | null; seed: number; group: string;
+  runs: () => invoke<{ id: string; target: string; kind: string; created: string; dataset: string; status: string; test_acc: number | null; seed: number; group: string; task?: string;
     check?: boolean; warnings?: number | null }[]>("runs_list"),
   runStatus: (id: string, since: number) => invoke<RunStatus>("run_status", { id, since }),
   runStop: (id: string) => invoke<string>("run_stop", { id }),

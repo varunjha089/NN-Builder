@@ -238,6 +238,13 @@ pub fn csv_classes(path: &Path) -> Result<Value> {
             }
         }
     }
+    // regression: the columns holding a number in every row (targets to choose from), with their range and mean
+    let numeric: Vec<Value> = (0..head.len()).filter(|&i| i != fcol && !rows.is_empty()).filter_map(|i| {
+        let v: Option<Vec<f64>> = rows.iter().map(|r| r.get(i).and_then(|s| s.trim().parse::<f64>().ok()).filter(|x| x.is_finite())).collect();
+        let v = v?;
+        let (lo, hi) = v.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &x| (a.min(x), b.max(x)));
+        Some(json!({"column": head[i], "min": lo, "max": hi, "mean": v.iter().sum::<f64>() / v.len() as f64}))
+    }).collect();
     Ok(json!({"columns": head, "rows": rows.len(), "file_column": head.get(fcol), "label_column": label_col,
-        "classes": counts.keys().collect::<Vec<_>>(), "counts": counts.values().collect::<Vec<_>>()}))
+        "classes": counts.keys().collect::<Vec<_>>(), "counts": counts.values().collect::<Vec<_>>(), "numeric": numeric}))
 }

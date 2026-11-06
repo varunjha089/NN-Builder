@@ -7,7 +7,7 @@ pub struct Dataset {
     /// "builtin" | "huggingface" | "kaggle" | "local" (the owner's own files, e.g. GeoTIFFs exported from Google Earth Engine)
     pub source: String,
     /// "classify" (one label per image) | "multilabel" (any number of classes per image: sigmoid + BCE) | "segment" (a class for every
-    /// pixel: images + masks)
+    /// pixel: images + masks) | "regress" (numbers per image from columns of the labels table; `classes` holds the target columns)
     #[serde(default = "classify")]
     pub task: String,
     /// built-in sets: resize to image_size / convert to channels (e.g. CIFAR-10 at 224×224 for AlexNet); other sources always resize
@@ -358,13 +358,21 @@ impl Dataset {
             }
             _ => p.push("Choose where the data comes from.".into()),
         }
-        if !matches!(self.task.as_str(), "classify" | "multilabel" | "segment") {
+        if !matches!(self.task.as_str(), "classify" | "multilabel" | "segment" | "regress") {
             p.push("Choose the task.".into())
         }
         if self.task == "multilabel" {
             match self.source.as_str() {
                 "builtin" => p.push("The built-in datasets have one label per image: choose a multi-label dataset.".into()),
                 "kaggle" | "local" if self.labels_csv.is_empty() => p.push("Give the CSV file with the labels of every image.".into()),
+                "kaggle" | "local" if !ok_id(&self.labels_csv) => p.push("The labels file may contain letters, digits and - _ . / only.".into()),
+                _ => {}
+            }
+        }
+        if self.task == "regress" {
+            match self.source.as_str() {
+                "builtin" => p.push("The built-in datasets have classes, not numbers: choose a regression dataset.".into()),
+                "kaggle" | "local" if self.labels_csv.is_empty() => p.push("Give the CSV file with the target numbers of every image.".into()),
                 "kaggle" | "local" if !ok_id(&self.labels_csv) => p.push("The labels file may contain letters, digits and - _ . / only.".into()),
                 _ => {}
             }
@@ -380,7 +388,11 @@ impl Dataset {
             }
         }
         if self.source != "builtin" || self.resize {
-            if self.class_names().len() < 2 {
+            if self.task == "regress" {
+                if self.classes.is_empty() {
+                    p.push("Choose the target columns (the numbers to predict): read them from the labels file, or type them.".into())
+                }
+            } else if self.class_names().len() < 2 {
                 p.push("Give the class names (at least two): read them from the dataset with 'Read info', or type them.".into())
             }
             if self.multiband() {
@@ -416,7 +428,7 @@ impl Dataset {
                     if keys.iter().enumerate().any(|(i, b)| keys[..i].contains(b)) {
                         p.push("The two band groups share a band name: rename one (e.g. VV in the second group only).".into())
                     }
-                    if !self.kaggle_test_dir.is_empty() && self.task != "multilabel" {
+                    if !self.kaggle_test_dir.is_empty() && self.task != "multilabel" && self.task != "regress" {
                         p.push("With two band groups, leave the test folder empty (10% of the images are the test data).".into())
                     }
                     if self.fuse_dir.is_empty() || !ok_id(&self.fuse_dir) {

@@ -168,6 +168,7 @@ fn window(n: usize, k: usize, s: usize, p: usize, d: usize) -> (usize, i64, usiz
 pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
     let input_shape = ds.input_shape();
     let classes = ds.class_names().len();
+    let need = if ds.task == "regress" { 1 } else { 2 }; // regression: the "classes" are the target columns
     let mut problems: Vec<String> = vec![];
     let ids: HashSet<&str> = g.nodes.iter().map(|n| n.id.as_str()).collect();
     let edges: Vec<_> = g.edges.iter().filter(|e| ids.contains(e.source.as_str()) && ids.contains(e.target.as_str()) && e.source != e.target).collect();
@@ -343,11 +344,11 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
             edge_shapes.insert(e.id.clone(), s);
         }
     }
-    let ok = problems.is_empty() && !nodes.iter().any(|n| n.status == "error" || n.status == "blocked") && classes >= 2;
-    if classes < 2 {
-        problems.push("The dataset has no classes yet (Dataset tab).".into());
+    let ok = problems.is_empty() && !nodes.iter().any(|n| n.status == "error" || n.status == "blocked") && classes >= need;
+    if classes < need {
+        problems.push(if need == 1 { "The dataset has no target columns yet (Dataset tab).".into() } else { "The dataset has no classes yet (Dataset tab).".into() });
     }
-    Analysis { input: input_shape, classes, nodes, edges: edge_shapes, total_params: total, total_macs, problems, ok: ok && classes >= 2 }
+    Analysis { input: input_shape, classes, nodes, edges: edge_shapes, total_params: total, total_macs, problems, ok: ok && classes >= need }
 }
 
 /// multiply-accumulates of one layer for one image, from its weights and its input / output size

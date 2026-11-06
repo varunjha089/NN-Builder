@@ -616,6 +616,39 @@ fn loss_choice() {
 }
 
 #[test]
+fn regression_task() {
+    let dir = std::env::temp_dir().join(format!("nnb-regress-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let csv = dir.join("targets.csv");
+    std::fs::write(&csv, "file,biomass,height,notes\na.tif,12.5,3,x\nb.tif,40,7.25,y\n").unwrap();
+    let r = nnb_core::localdata::csv_classes(&csv).unwrap();
+    let cols: Vec<&str> = r["numeric"].as_array().unwrap().iter().map(|n| n["column"].as_str().unwrap()).collect();
+    assert_eq!(cols, vec!["biomass", "height"], "the numeric columns are offered as targets");
+    assert_eq!(r["numeric"][0]["max"], json!(40.0));
+    std::fs::remove_dir_all(&dir).ok();
+    // one target is enough; the labels file is required; the built-in sets are refused
+    let ds = Dataset { source: "local".into(), task: "regress".into(), local_dir: "/data/plots".into(), labels_csv: "targets.csv".into(),
+        classes: vec!["biomass".into()], ..Default::default() };
+    assert!(ds.problems().is_empty(), "{:?}", ds.problems());
+    let none = Dataset { classes: vec![], ..ds.clone() };
+    assert!(none.problems().iter().any(|p| p.contains("target columns")), "{:?}", none.problems());
+    let nocsv = Dataset { labels_csv: String::new(), ..ds.clone() };
+    assert!(nocsv.problems().iter().any(|p| p.contains("target numbers")), "{:?}", nocsv.problems());
+    let g = chain(vec![("input", json!({})), ("conv2d", json!({"filters": 4})), ("global_pool", json!({})), ("output", json!({}))]);
+    let a = analyze(&g, &ds);
+    assert!(a.ok, "{:?}", a.problems);
+    assert_eq!(a.get("n3").unwrap().out, Some(vec![1]), "one number per target");
+    let huber = TrainSettings { loss: "huber".into(), ..Default::default() }.clean();
+    let code = train_script(&g, &ds, &a, &huber, "t").unwrap();
+    assert!(code.contains("\"task\": \"regress\"") && code.contains("\"loss\": \"huber\""));
+    let err = train_script(&g, &ds, &a, &TrainSettings { loss: "focal".into(), ..Default::default() }, "t").unwrap_err().to_string();
+    assert!(err.contains("MSE, L1 or Huber"), "{err}");
+    let cls = Dataset { source: "builtin".into(), ..Default::default() };
+    let err = train_script(&g, &cls, &analyze(&g, &cls), &huber, "t").unwrap_err().to_string();
+    assert!(err.contains("for regression"), "{err}");
+}
+
+#[test]
 fn cloud_locations() {
     use nnb_core::dataset::cloud_url_problem;
     for ok in ["gs://my-bucket/nnb_export", "gs://abc", "https://drive.google.com/drive/folders/1AbC", "rclone:gdrive:exports/s2", "file:///data/x"] {

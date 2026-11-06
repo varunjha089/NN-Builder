@@ -20,16 +20,24 @@ export function ResultsTab({ runId }: { runId: string | null }) {
   return (
     <div className="page">
       <h2>Results of run {runId}</h2>
-      {r.loss && <p className="muted small">Trained with {({ focal: "focal loss", dice: "Dice loss", dice_ce: "Dice + cross-entropy loss" } as Record<string, string>)[r.loss.kind] ?? r.loss.kind}
+      {r.loss && <p className="muted small">Trained with {({ focal: "focal loss", dice: "Dice loss", dice_ce: "Dice + cross-entropy loss", mse: "mean squared error", l1: "L1 (mean absolute error) loss",
+        huber: "Huber loss" } as Record<string, string>)[r.loss.kind] ?? r.loss.kind}
         {r.loss.kind === "focal" ? ` (γ ${r.loss.gamma})` : ""}.</p>}
       {r.class_weights && <p className="muted small">Trained with class weights{r.task === "multilabel" ? " (positive weight per class)" : ""}:
         {" "}{r.class_weights.map((w: number, i: number) => `${classes[i]} ${w}`).join(", ")}.</p>}
       {r.task === "multilabel" && <p className="muted small">Several classes per image: each class is a yes/no (score ≥ 50%). Micro F1 counts every
         (image, class) decision together, macro F1 averages the classes (rare classes count as much as common ones), mAP ranks the images
         by each class's score (independent of the 50% threshold), and exact match is the share of images with every class right.</p>}
+      {r.task === "regress" && <p className="muted small">R² is the share of the targets' variation the network explains (1 = perfect, 0 = no
+        better than always predicting the mean, below 0 = worse); MAE is the mean absolute error and RMSE the root of the mean squared error,
+        both in the target's own units. With several targets the cards show their averages.</p>}
       {r.task === "segment" && <p className="muted small">"Test accuracy" is the share of pixels classified correctly; mean IoU (overlap of predicted and true areas per class) is the usual segmentation measure.</p>}
       <div className="row cards">
-        <div className="card"><div className="muted">{r.task === "multilabel" ? "Micro F1" : "Test accuracy"}</div><div className="big">{(r.test_acc * 100).toFixed(2)}%</div></div>
+        {r.task === "regress" ? <>
+          <div className="card"><div className="muted">Test R²</div><div className="big">{Number(r.r2).toFixed(3)}</div></div>
+          <div className="card"><div className="muted">MAE</div><div className="big">{fmt(r.mae)}</div></div>
+          <div className="card"><div className="muted">RMSE</div><div className="big">{fmt(r.rmse)}</div></div></>
+        : <div className="card"><div className="muted">{r.task === "multilabel" ? "Micro F1" : "Test accuracy"}</div><div className="big">{(r.test_acc * 100).toFixed(2)}%</div></div>}
         {r.task === "multilabel" && <>
           <div className="card"><div className="muted">Macro F1</div><div className="big">{(r.macro_f1 * 100).toFixed(2)}%</div></div>
           <div className="card"><div className="muted">mAP</div><div className="big">{(r.map * 100).toFixed(2)}%</div></div>
@@ -60,6 +68,21 @@ export function ResultsTab({ runId }: { runId: string | null }) {
           <Img img={s.image} scale={Math.max(1, Math.round(96 / s.image[0].length))} /><Img img={s.truth} scale={Math.max(1, Math.round(96 / s.truth[0].length))} />
           <Img img={s.pred} scale={Math.max(1, Math.round(96 / s.pred[0].length))} /></div><div>{(s.pixel_acc * 100).toFixed(1)}% of pixels right</div></div>)}
       </div></>}
+      {r.task === "regress" && r.per_target && <>
+        <table className="grid"><tbody>
+          <tr><th>Target</th><th className="num">mean</th><th className="num">R²</th><th className="num">MAE</th><th className="num">RMSE</th></tr>
+          {r.per_target.map((t: any) => <tr key={t.target}><td>{t.target}</td><td className="num">{fmt(t.mean)}</td><td className="num">{t.r2.toFixed(3)}</td>
+            <td className="num">{fmt(t.mae)}</td><td className="num">{fmt(t.rmse)}</td></tr>)}</tbody></table>
+        <h3>Predicted against true (test images{r.scatter?.truth?.[0]?.length >= 1000 ? ", 1000 of them" : ""}; on the diagonal = right)</h3>
+        <div className="thumbs">{r.per_target.map((t: any, c: number) => <Scatter key={t.target} name={t.target} truth={r.scatter.truth[c]} pred={r.scatter.pred[c]} />)}</div>
+        {r.samples?.length > 0 && <><h3>Sample predictions</h3><div className="thumbs">
+          {r.samples.map((s: any, i: number) => <div key={i} className="thumb" style={{ width: 120 }}>
+            <Img img={s.image} scale={Math.max(1, Math.round(64 / s.image[0].length))} />
+            {s.target.map((v: number, k: number) => <div key={k} className="small">{classes.length > 1 ? `${String(classes[k]).slice(0, 10)}: ` : ""}{fmt(s.value[k])}
+              <span className="muted"> (true {fmt(v)})</span></div>)}</div>)}</div></>}
+        <p className="muted small">model.pt outputs standardised numbers: value = output × std + mean, with each target's mean and std in
+          target_stats.json next to it.</p>
+      </>}
       {r.task === "multilabel" && r.per_class && <table className="grid"><tbody>
         <tr><th>Class</th><th className="num">Images</th><th className="num">Precision</th><th className="num">Recall</th><th className="num">F1</th><th className="num">AP</th>{r.thresholds && <th className="num">threshold</th>}</tr>
         {r.per_class.map((c: any, i: number) => <tr key={i}><td>{classes[i]}</td><td className="num">{c.support}</td><td className="num">{(c.precision * 100).toFixed(1)}%</td>
@@ -74,7 +97,7 @@ export function ResultsTab({ runId }: { runId: string | null }) {
             {all.map((k) => <div key={k} className="small">{s.labels.includes(k) ? (s.preds.includes(k) ? "✓" : "○") : "✗"} {String(classes[k] ?? k).slice(0, 14)} {(s.probs[k] * 100).toFixed(0)}%</div>)}
             {all.length === 0 && <div className="small muted">no class</div>}</div>;
         })}</div></>}
-      {r.task !== "segment" && r.task !== "multilabel" && r.samples?.length > 0 && <><div className="row"><h3 style={{ margin: 0 }}>Sample predictions</h3>
+      {r.task !== "segment" && r.task !== "multilabel" && r.task !== "regress" && r.samples?.length > 0 && <><div className="row"><h3 style={{ margin: 0 }}>Sample predictions</h3>
         {r.cam_layer && <label className="chk small"><input type="checkbox" checked={cam} onChange={(e) => setCam(e.target.checked)} />
           show Grad-CAM (where the network looked, from layer “{r.cam_layer}”)</label>}</div><div className="thumbs">
         {r.samples.map((s: any, i: number) => <div key={i} className={`thumb ${s.pred !== s.label ? "wrong" : ""}`} title={`true: ${classes[s.label]}`}>
@@ -96,6 +119,31 @@ export function ResultsTab({ runId }: { runId: string | null }) {
       </>}
     </div>
   );
+}
+
+/** a number with about 4 significant digits */
+function fmt(v: number | null | undefined) {
+  if (v == null || !Number.isFinite(v)) return "–";
+  return Math.abs(v) >= 1e5 || (v !== 0 && Math.abs(v) < 1e-3) ? v.toExponential(2) : Number(v.toPrecision(4)).toString();
+}
+
+/** regression: predicted against true value of one target, with the diagonal (a perfect prediction) */
+function Scatter({ name, truth, pred }: { name: string; truth: number[]; pred: number[] }) {
+  const S = 220, P = 30;
+  const all = [...truth, ...pred];
+  let lo = Math.min(...all), hi = Math.max(...all);
+  if (!all.length) return null;
+  if (hi - lo < 1e-12) { lo -= 0.5; hi += 0.5; }
+  const X = (v: number) => P + ((v - lo) / (hi - lo)) * (S - P - 8), Y = (v: number) => S - P - ((v - lo) / (hi - lo)) * (S - P - 8);
+  return <svg width={S} height={S} role="img" aria-label={`${name}: predicted against true`} style={{ background: "var(--panel)", border: "1px solid var(--line)" }}>
+    <line x1={X(lo)} y1={Y(lo)} x2={X(hi)} y2={Y(hi)} stroke="var(--muted)" strokeDasharray="4 3" />
+    {truth.map((t, i) => <circle key={i} cx={X(t)} cy={Y(pred[i])} r={2} fill="var(--accent)" fillOpacity={0.45} />)}
+    <text x={P} y={12} fontSize={11} fill="var(--ink)">{name}</text>
+    <text x={S - 8} y={S - 8} fontSize={10} fill="var(--muted)" textAnchor="end">true →</text>
+    <text x={4} y={P} fontSize={10} fill="var(--muted)">↑ predicted</text>
+    <text x={P} y={S - 8} fontSize={10} fill="var(--muted)">{fmt(lo)}</text>
+    <text x={S - 8} y={S - 20} fontSize={10} fill="var(--muted)" textAnchor="end">{fmt(hi)}</text>
+  </svg>;
 }
 
 /** precision (of the images predicted as a class, how many are it), recall (of the images of a class, how many were found) and F1 per
@@ -162,11 +210,16 @@ function DataReport({ runId, r }: { runId: string; r: any }) {
     <div className="row cards">
       {Object.entries(rep.sizes ?? {}).map(([k, v]) => <div key={k} className="card"><div className="muted">{k}</div><div className="big">{Number(v).toLocaleString()}</div></div>)}
     </div>
-    <h3>Training {rep.count_unit ?? "images"} per class{rep.counts_exact === false ? " (from a sample)" : ""}</h3>
+    {rep.targets ? <><h3>Targets of the training images</h3>
+      <table className="grid"><tbody>
+        <tr><th>Target</th><th className="num">min</th><th className="num">max</th><th className="num">mean</th><th className="num">spread</th></tr>
+        {rep.targets.map((t: any) => <tr key={t.target}><td>{t.target}</td><td className="num">{num(t.min)}</td><td className="num">{num(t.max)}</td>
+          <td className="num">{num(t.mean)}</td><td className="num">{num(t.std)}</td></tr>)}</tbody></table></>
+    : <><h3>Training {rep.count_unit ?? "images"} per class{rep.counts_exact === false ? " (from a sample)" : ""}</h3>
     <table className="grid"><tbody>
       {counts.map((n, i) => <tr key={i}><td>{classes[i]}</td><td className="num">{n.toLocaleString()}</td>
         <td><span style={{ display: "inline-block", height: 8, width: `${(160 * n) / most}px`, background: n ? "var(--accent)" : "var(--err, #c53030)" }} /></td></tr>)}
-    </tbody></table>
+    </tbody></table></>}
     {rep.bands?.length > 0 && <><h3>Bands (raw values in the files, from a sample of training images)</h3>
       <table className="grid"><tbody>
         <tr><th>Band</th><th className="num">min</th><th className="num">max</th><th className="num">mean</th><th className="num">spread</th><th className="num">empty</th><th className="num">zero</th></tr>
@@ -175,7 +228,8 @@ function DataReport({ runId, r }: { runId: string; r: any }) {
       </tbody></table></>}
     {r.samples?.length > 0 && <><h3>Test images as the network gets them{r.data_report?.bands?.length ? " (shown as composites)" : ""}</h3><div className="thumbs">
       {r.samples.map((s: any, i: number) => <div key={i} className="thumb"><Img img={s.image} scale={Math.max(1, Math.round(64 / s.image[0].length))} />
-        <div className="small">{Array.isArray(s.label) ? s.label.map((k: number) => classes[k]).join(", ") || "no class" : s.label == null ? "" : classes[s.label]}</div></div>)}
+        <div className="small">{r.task === "regress" ? s.label.map((v: number, k: number) => `${classes.length > 1 ? `${classes[k]} ` : ""}${num(v)}`).join(", ")
+          : Array.isArray(s.label) ? s.label.map((k: number) => classes[k]).join(", ") || "no class" : s.label == null ? "" : classes[s.label]}</div></div>)}
     </div></>}
   </div>;
 }

@@ -1059,8 +1059,10 @@ pub fn listing(pr: &Project) -> Vec<Value> {
         let acc = ev.iter().rev().find_map(|e| e["test_acc"].as_f64());
         // Check data: how many things looked wrong
         let warnings = ev.iter().rev().find(|e| e["event"] == "done").and_then(|e| e["warnings"].as_u64());
+        // regression runs report R² in test_acc's place
+        let task = ev.iter().find(|e| e["event"] == "start").and_then(|e| e["task"].as_str()).unwrap_or("classify").to_string();
         out.push(serde_json::json!({"id": i.id, "target": i.target, "kind": i.kind, "created": i.created, "dataset": i.dataset, "status": i.status,
-            "test_acc": acc, "seed": i.seed, "group": i.group, "check": i.check, "warnings": warnings}));
+            "test_acc": acc, "seed": i.seed, "group": i.group, "check": i.check, "warnings": warnings, "task": task}));
     }
     out
 }

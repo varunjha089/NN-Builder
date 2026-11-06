@@ -44,6 +44,10 @@ fn main() {
         ("imbalanced", Dataset { source: "local".into(), local_dir: format!("{dir}/own/imb"), local_on_machine: true, image_size: [16, 16],
             kaggle_train_dir: "train".into(), kaggle_test_dir: "test".into(),
             sensor: "other".into(), band_order: s(&["b1", "b2"]), bands: s(&["b1", "b2"]), classes: s(&["common", "rare"]), ..Default::default() }),
+        // regression: two numbers per image from columns of a labels CSV (one row has no number), trained with Huber loss
+        ("regress", Dataset { source: "local".into(), task: "regress".into(), local_dir: format!("{dir}/own/reg"), local_on_machine: true,
+            labels_csv: "targets.csv".into(), image_size: [16, 16], sensor: "other".into(), band_order: s(&["b1", "b2"]), bands: s(&["b1", "b2"]),
+            classes: s(&["biomass", "height"]), ..Default::default() }),
         // BigEarthNet v2's layout: a folder of single-band GeoTIFFs per patch (10 m and 20 m sizes), metadata.parquet with label lists, a
         // split column and s1_name pairing the Sentinel-1 patch folders (fusion); a class name with commas
         ("ben", Dataset { source: "local".into(), task: "multilabel".into(), local_dir: format!("{dir}/own/ben"), local_on_machine: true,
@@ -85,8 +89,10 @@ fn main() {
         assert_eq!(a.input, vec![ds.bands.len() + ds.bands2.len(), ds.image_size[0], ds.image_size[1]]);
         let t = TrainSettings { check_only: name == "check",
             class_weights: match name { "imbalanced" => "inverse".into(), "multilabel" => "sqrt".into(), _ => String::new() },
-            loss: match name { "imbalanced" | "multilabel" => "focal".into(), "segfiles" => "dice_ce".into(), "scene" => "dice".into(), _ => String::new() },
-            tune_thresholds: name == "multilabel", val_fraction: if name == "multilabel" { 0.15 } else { 0.0 }, epochs: match ds.task.as_str() { "segment" => 10, "multilabel" => 8, _ => 3 }, batch_size: 16, amp: false, aug_hflip: true, aug_rotate: 10.0, ..Default::default() };
+            loss: match name { "imbalanced" | "multilabel" => "focal".into(), "segfiles" => "dice_ce".into(), "scene" => "dice".into(), "regress" => "huber".into(), _ => String::new() },
+            tune_thresholds: name == "multilabel", val_fraction: match name { "multilabel" => 0.15, "regress" => 0.1, _ => 0.0 },
+            early_stop: name == "regress", patience: 6, monitor: if name == "regress" { "val_acc".into() } else { "val_loss".into() },
+            epochs: match ds.task.as_str() { "segment" => 10, "multilabel" => 8, "regress" => 15, _ => 3 }, batch_size: 16, amp: false, aug_hflip: true, aug_rotate: 10.0, ..Default::default() };
         let d = format!("{dir}/{name}");
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(format!("{d}/train.py"), train_script(g, &ds, &a, &t, name).unwrap()).unwrap();

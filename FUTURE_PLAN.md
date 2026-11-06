@@ -76,7 +76,8 @@ escape hatch, 2-D only, supervised only, one GPU. The steps below, in this order
 
 2. **Losses:** Dice, focal, Dice + CE, MSE / L1 / Huber (regression, a "regress" task), chosen in the Train tab; Dice / focal first,
    for unbalanced Sentinel segmentation. Harness `loss_of` gains the cases; class weights keep working. *Dice, Dice + CE and focal done
-   (2026-11-06; CI-tested, not yet on a real run). Left: MSE / L1 / Huber with a "regress" task.*
+   (2026-11-06); MSE / L1 / Huber with a "regress" task (numbers per image from table columns) done the same day; both CI-tested, not
+   yet on a real run. Left: per-pixel regression (canopy height / biomass maps: a number per pixel from a raster).*
 3. **Custom PyTorch block (escape hatch):** a block holding a few lines of PyTorch (`__init__` and `forward` bodies) plus a declared
    output shape (formula in the input shape); shapes trusts the declaration, codegen pastes the code into the model class, the
    one-batch check on the GPU machine compares the real shape with the declared one. Also a custom loss (a function of logits and

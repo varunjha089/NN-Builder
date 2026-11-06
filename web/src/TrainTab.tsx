@@ -143,7 +143,7 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
             <label>label smoothing<input type="number" min={0} max={0.5} step={0.05} value={train.label_smoothing} onChange={(e) => set({ label_smoothing: Number(e.target.value) })} /></label>
             <label>clip gradients at<input type="number" min={0} max={100} step={0.5} value={train.grad_clip} onChange={(e) => set({ grad_clip: Number(e.target.value) })} />(0 = off)</label>
           </div>
-          <div className="row">
+          {datasetTask !== "regress" && <div className="row">
             <label title="Rare classes count more in the loss, so the network does not just learn the common ones">Unbalanced classes
               <select value={train.class_weights ?? ""} onChange={(e) => set({ class_weights: e.target.value as TrainSettings["class_weights"] })}>
                 <option value="">no class weights</option><option value="inverse">weight by inverse frequency (balanced)</option>
@@ -151,12 +151,16 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
             <label className="chk" title="Multi-label: each class gets the threshold with the best F1 on the validation data, instead of 50%">
               <input type="checkbox" checked={!!train.tune_thresholds} onChange={(e) => set({ tune_thresholds: e.target.checked, ...(e.target.checked && !train.val_fraction ? { val_fraction: 0.1 } : {}) })} />
               multi-label: a threshold per class, chosen on the validation data</label>
-          </div>
+          </div>}
           <div className="row">
             <label title="What the network is trained to make small">Loss
               <select value={train.loss ?? ""} onChange={(e) => set({ loss: e.target.value as TrainSettings["loss"] })}>
-                <option value="">{datasetTask === "multilabel" ? "binary cross-entropy" : "cross-entropy"}</option>
-                <option value="focal">focal (hard examples count more)</option>
+                {datasetTask === "regress" ? <>
+                  <option value="">mean squared error (MSE)</option>
+                  <option value="l1">mean absolute error (L1)</option>
+                  <option value="huber">Huber (MSE for small errors, L1 for large)</option></> : <>
+                  <option value="">{datasetTask === "multilabel" ? "binary cross-entropy" : "cross-entropy"}</option>
+                  <option value="focal">focal (hard examples count more)</option></>}
                 {(datasetTask === "segment" || datasetTask === "multilabel") && <>
                   <option value="dice">Dice (overlap per class)</option>
                   <option value="dice_ce">Dice + cross-entropy</option></>}
@@ -166,6 +170,13 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
           </div>
           {train.loss?.startsWith("dice") && datasetTask !== "segment" && datasetTask !== "multilabel" &&
             <p className="msg error small">Dice loss needs segmentation or multi-label; with one class per image use cross-entropy or focal.</p>}
+          {datasetTask === "regress" && ["focal", "dice", "dice_ce"].includes(train.loss ?? "") &&
+            <p className="msg error small">Regression is trained with MSE, L1 or Huber loss: choose one above.</p>}
+          {datasetTask !== "regress" && ["mse", "l1", "huber"].includes(train.loss ?? "") &&
+            <p className="msg error small">MSE, L1 and Huber are for regression; choose cross-entropy, focal or Dice for classes.</p>}
+          {datasetTask === "regress" && <p className="muted small">The network learns each target standardised (mean 0, spread 1 on the training
+            data); the scores are in the targets' own units. MSE punishes large errors most; L1 is less swayed by a few wild targets (outliers);
+            Huber is MSE for errors under one standard deviation of the target and L1 above it.</p>}
           {train.loss === "focal" && <p className="muted small">Focal loss multiplies each image's (pixel's) cross-entropy by (1 − p)^γ, where p is the
             probability given to the right class: images the network already gets right count little, so the rare and hard ones count more.
             γ 0 is plain cross-entropy; 2 is usual. It works together with class weights.</p>}
@@ -187,7 +198,7 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
             {train.early_stop && <>
               <label>stop after<input type="number" min={1} max={100} value={train.patience} onChange={(e) => set({ patience: Number(e.target.value) })} />epochs without improvement</label>
               <label>in<select value={train.monitor} onChange={(e) => set({ monitor: e.target.value as TrainSettings["monitor"] })}>
-                <option value="val_loss">validation loss</option><option value="val_acc">validation accuracy (multi-label: micro F1)</option>
+                <option value="val_loss">validation loss</option><option value="val_acc">{datasetTask === "regress" ? "validation R²" : "validation accuracy (multi-label: micro F1)"}</option>
                 {datasetTask === "segment" && <option value="val_miou">validation mIoU</option>}</select></label>
             </>}
           </div>
@@ -298,12 +309,14 @@ and check one batch through the network, without training: a few minutes instead
           { name: "batch loss", color: "#c7d2e0", thin: true, pts: bt.map((e) => [e.epoch - 1 + e.step / e.steps, e.loss]) },
           { name: "train", color: "#2f6fde", pts: ep.map((e) => [e.epoch, e.train_loss]) },
           { name: "validation", color: "#e76f51", pts: ep.map((e) => [e.epoch, e.val_loss]) }]} />
-        <Chart title={ep.some((e) => e.val_miou != null) ? "Pixel accuracy and mean IoU" : ep.some((e) => e.val_map != null)
+        {ep.some((e) => e.val_mae != null) ? <Chart title="Validation R² (1 = perfect, 0 = no better than the mean)" series={[
+          { name: "validation R²", color: "#e76f51", pts: ep.map((e) => [e.epoch, e.val_acc]) }]} />
+        : <Chart title={ep.some((e) => e.val_miou != null) ? "Pixel accuracy and mean IoU" : ep.some((e) => e.val_map != null)
           ? "Multi-label: label accuracy (train), micro F1 and mAP (validation)" : "Accuracy"} percent series={[
           { name: "train", color: "#2f6fde", pts: ep.map((e) => [e.epoch, e.train_acc]) },
           { name: ep.some((e) => e.val_map != null) ? "validation micro F1" : "validation", color: "#e76f51", pts: ep.map((e) => [e.epoch, e.val_acc]) },
           { name: "validation mAP", color: "#8e44ad", pts: ep.filter((e) => e.val_map != null).map((e) => [e.epoch, e.val_map]) },
-          { name: "validation mIoU", color: "#2a9d8f", pts: ep.filter((e) => e.val_miou != null).map((e) => [e.epoch, e.val_miou]) }]} />
+          { name: "validation mIoU", color: "#2a9d8f", pts: ep.filter((e) => e.val_miou != null).map((e) => [e.epoch, e.val_miou]) }]} />}
         <details><summary>Log</summary><pre className="log">{status.log.join("\n")}</pre></details>
       </div>}
 
@@ -319,7 +332,7 @@ and check one batch through the network, without training: a few minutes instead
           <td>{r.id}{r.group && <span className="muted small" title="started together with other seeds"> · group</span>}{r.check && <span className="muted small"> · data check</span>}</td><td>{r.target}</td>
           <td>{r.dataset}</td><td className="num">{r.seed}</td><td>{r.status}</td><td className="num">{r.check
             ? (r.warnings == null ? "" : r.warnings ? <span className="st-warn">{r.warnings} to look at</span> : <span className="st-ok">looks right</span>)
-            : r.test_acc != null ? `${(r.test_acc * 100).toFixed(2)}%` : ""}</td></tr>)}
+            : r.test_acc == null ? "" : r.task === "regress" ? `R² ${r.test_acc.toFixed(3)}` : `${(r.test_acc * 100).toFixed(2)}%`}</td></tr>)}
         {!runs.length && <tr><td className="muted">No runs yet.</td></tr>}
       </tbody></table>
       {runs.some((r) => r.group) && <p className="row small"><span className="muted">Select a group of seeds:</span>

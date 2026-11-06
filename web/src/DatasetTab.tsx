@@ -23,7 +23,8 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
       const lab = labels.find((x) => x.name === ds.hf_label_col) ?? labels.find((x) => x.name === "label")
         ?? [...labels].sort((a, b) => (b.names?.length ?? 0) - (a.names?.length ?? 0))[0];
       const splits = c.splits.map((s) => s.name);
-      up({ hf_config: info.configs.length > 1 ? c.name : "", hf_image_col: img, hf_label_col: lab?.name ?? ds.hf_label_col, classes: lab?.names ?? ds.classes,
+      up({ hf_config: info.configs.length > 1 ? c.name : "", hf_image_col: img, hf_label_col: lab?.name ?? ds.hf_label_col,
+        classes: ds.task === "regress" ? ds.classes.filter((t) => c.columns.some((x) => x.name === t)) : lab?.names ?? ds.classes,
         hf_train_split: splits.includes("train") ? "train" : splits[0] ?? "train", hf_test_split: splits.includes("test") ? "test" : splits.includes("validation") ? "validation" : "" });
     } catch (e) { toast(errText(e)); } finally { setBusy(false); }
   };
@@ -49,6 +50,8 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
           Multi-label (any number of classes per image, e.g. BigEarthNet)</label>
         <label className="radio"><input type="radio" checked={ds.task === "segment"} onChange={() => up({ task: "segment", ...(ds.source === "builtin" ? { source: "huggingface" } : {}) })} />
           Segmentation (a class for every pixel: images + masks)</label>
+        <label className="radio"><input type="radio" checked={ds.task === "regress"} onChange={() => up({ task: "regress", ...(ds.source === "builtin" ? { source: "local" } : {}) })} />
+          Regression (numbers per image, e.g. biomass or canopy height)</label>
       </div>
       <div className="row">
         <strong>Source:</strong>
@@ -78,7 +81,11 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
             {conf?.columns.map((c) => <option key={c.name} value={c.name}>{c.name} ({c.type})</option>)}</select></label>
           {ds.task === "segment" && <label>Mask column<select value={ds.hf_mask_col} onChange={(e) => up({ hf_mask_col: e.target.value })}>
             {conf?.columns.map((c) => <option key={c.name} value={c.name}>{c.name} ({c.type})</option>)}</select></label>}
-          {ds.task !== "segment" && <label>Label column<select value={ds.hf_label_col} onChange={(e) => { const c = conf?.columns.find((x) => x.name === e.target.value); up({ hf_label_col: e.target.value, ...(c?.names ? { classes: c.names } : {}) }); }}>
+          {ds.task === "regress" && <div className="wide"><span>Target columns (the numbers to predict)</span>
+            <div className="bandgrid">{conf?.columns.filter((c) => c.type !== "Image" && c.type !== "ClassLabel" && c.type !== "ClassLabelList").map((c) =>
+              <label key={c.name} className="chk"><input type="checkbox" checked={ds.classes.includes(c.name)}
+                onChange={() => up({ classes: ds.classes.includes(c.name) ? ds.classes.filter((x) => x !== c.name) : [...ds.classes, c.name] })} />{c.name} ({c.type})</label>)}</div></div>}
+          {ds.task !== "segment" && ds.task !== "regress" && <label>Label column<select value={ds.hf_label_col} onChange={(e) => { const c = conf?.columns.find((x) => x.name === e.target.value); up({ hf_label_col: e.target.value, ...(c?.names ? { classes: c.names } : {}) }); }}>
             {conf?.columns.map((c) => <option key={c.name} value={c.name}>{c.name} ({c.type})</option>)}</select></label>}
         </div>}
         {hf && conf && !conf.columns.some((c) => c.type === "Image") && <div className="msg error">This dataset has no image column
@@ -99,7 +106,7 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
           <button onClick={readKaggle} disabled={busy || !ds.kaggle_slug || !st.secrets.kaggle || !st.tools_ready}>Read files</button></div>
         {(!st.secrets.kaggle || !st.tools_ready) && <p className="muted small">Reading the file list needs the tools and your Kaggle token (Connection tab).</p>}
         {kg && <p className="muted small">{kg.files.toLocaleString()} files listed{kg.folders.length ? `; folders with one subfolder per class: ${kg.folders.map((f) => f.folder || "(top)").join(", ")}` : ""}.</p>}
-        {ds.task === "multilabel" ? <LabelsCsv ds={ds} up={up} /> : ds.task === "segment" ? <div className="form">
+        {ds.task === "multilabel" || ds.task === "regress" ? <LabelsCsv ds={ds} up={up} /> : ds.task === "segment" ? <div className="form">
           <label>Images folder<input value={ds.kaggle_train_dir} onChange={(e) => up({ kaggle_train_dir: e.target.value.trim() })} placeholder="e.g. Image" /></label>
           <label>Masks folder (same file names)<input value={ds.kaggle_mask_dir} onChange={(e) => up({ kaggle_mask_dir: e.target.value.trim() })} placeholder="e.g. Mask" /></label>
           {kg && <p className="muted small wide">Folders seen: {[...new Set(kg.sample.map((f) => f.split("/").slice(0, -1).join("/")))].slice(0, 8).join(", ")}</p>}
@@ -121,7 +128,7 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
         <label>Image width<input type="number" min={8} max={1024} value={ds.image_size[1]} onChange={(e) => up({ image_size: [ds.image_size[0], Number(e.target.value)] })} /></label>
         {ds.bands?.length ? <span className="muted small">Channels: {ds.bands.length + (ds.bands2?.length ?? 0)} (the bands chosen above)</span>
           : <label>Channels<select value={ds.channels} onChange={(e) => up({ channels: Number(e.target.value) })}><option value={1}>1 (grey)</option><option value={3}>3 (colour)</option></select></label>}
-        {ds.source !== "builtin" && <label className="wide">{ds.task === "multilabel" ? "Class names, one per line (from the labels CSV with Read labels, or typed)" : ds.task === "segment" ? "Classes, one per line (mask pixel value 0 = first line; with two classes any non-zero pixel is the second)" : "Class names, one per line, in label order"} ({ds.classes.length})
+        {ds.source !== "builtin" && <label className="wide">{ds.task === "regress" ? "Target columns, one per line (numeric columns of the labels table; the Output gives one number per target)" : ds.task === "multilabel" ? "Class names, one per line (from the labels CSV with Read labels, or typed)" : ds.task === "segment" ? "Classes, one per line (mask pixel value 0 = first line; with two classes any non-zero pixel is the second)" : "Class names, one per line, in label order"} ({ds.classes.length})
           <ClassBox classes={ds.classes} onChange={(classes) => up({ classes })} /></label>}
       </div>}
       {problems.map((p) => <div key={p} className="msg warn">{p}</div>)}
@@ -294,7 +301,7 @@ function LocalBox({ ds, up, toast }: { ds: Dataset; up: (p: Partial<Dataset>) =>
       <label className="radio"><input type="radio" checked={!scene} onChange={() => up({ layout: "" })} />images + masks (same file names)</label>
       <label className="radio"><input type="radio" checked={scene} onChange={() => up({ layout: "scene" })} />large images + a label image on the same grid (Earth Engine export), cut into tiles</label>
     </p>}
-    {ds.task === "multilabel" ? <LabelsCsv ds={ds} up={up} scan={scan} toast={toast} /> : ds.task !== "segment" ? <div className="form">
+    {ds.task === "multilabel" || ds.task === "regress" ? <LabelsCsv ds={ds} up={up} scan={scan} toast={toast} /> : ds.task !== "segment" ? <div className="form">
       <label>Training folder (one subfolder per class)
         {scan?.folders.length ? <><select value={ds.kaggle_train_dir} onChange={(e) => { const f = scan.folders.find((x) => x.folder === e.target.value); up({ kaggle_train_dir: e.target.value, classes: f?.classes ?? ds.classes }); }}>
           {scan.folders.map((f) => <option key={f.folder} value={f.folder}>{f.folder || "(the folder itself)"} — {f.classes.length} classes</option>)}</select>
@@ -449,9 +456,18 @@ const BIGEARTHNET19 = ["Urban fabric", "Industrial or commercial units", "Arable
 /** multi-label: the CSV with each image's classes (a file column and a labels column, or one 0/1 column per class) */
 function LabelsCsv({ ds, up, scan, toast }: { ds: Dataset; up: (p: Partial<Dataset>) => void; scan?: LocalScan | null; toast?: (m: string) => void }) {
   const [info, setInfo] = useState<string>("");
+  const [numeric, setNumeric] = useState<{ column: string; min: number; max: number; mean: number }[] | null>(null);
+  const regress = ds.task === "regress";
   const read = async () => {
     try {
       const r = await api.localCsv(ds.local_dir ?? "", ds.labels_csv ?? "");
+      if (regress) {
+        setNumeric(r.numeric);
+        const keep = ds.classes.filter((c) => r.numeric.some((n) => n.column === c));
+        up({ classes: keep.length ? keep : r.numeric.slice(0, 1).map((n) => n.column) });
+        setInfo(`${r.rows.toLocaleString()} rows; files in “${r.file_column}”; ${r.numeric.length} numeric column${r.numeric.length === 1 ? "" : "s"}`);
+        return;
+      }
       up({ classes: r.classes });
       setInfo(`${r.rows.toLocaleString()} rows; files in “${r.file_column}”, ${r.label_column ? `classes in “${r.label_column}”` : "one 0/1 column per class"}: `
         + r.classes.map((c, i) => `${c} ${r.counts[i]}`).join(", "));
@@ -462,17 +478,26 @@ function LabelsCsv({ ds, up, scan, toast }: { ds: Dataset; up: (p: Partial<Datas
       {scan?.csvs?.length ? <select value={ds.labels_csv ?? ""} onChange={(e) => up({ labels_csv: e.target.value })}>
         <option value="">choose…</option>{scan.csvs.map((c) => <option key={c} value={c}>{c}</option>)}</select>
         : <input value={ds.labels_csv ?? ""} onChange={(e) => up({ labels_csv: e.target.value.trim() })} placeholder="e.g. labels.csv" />}</label>
-    <p className="row small wide"><button className="small" onClick={() => up({ classes: BIGEARTHNET19, labels_csv: ds.labels_csv || "metadata.parquet" })}>
+    {!regress && <p className="row small wide"><button className="small" onClick={() => up({ classes: BIGEARTHNET19, labels_csv: ds.labels_csv || "metadata.parquet" })}>
       BigEarthNet (19 classes, metadata.parquet)</button>
       <span className="muted">BigEarthNet v2: the patch folders (one GeoTIFF per band) are found below the images folder; its split column is used; with
-        Sentinel-1 as the second band group, the s1_name column pairs the patches.</span></p>
+        Sentinel-1 as the second band group, the s1_name column pairs the patches.</span></p>}
     <label>Images folder (optional)<input value={ds.kaggle_train_dir} onChange={(e) => up({ kaggle_train_dir: e.target.value.trim() })} placeholder="empty = next to the CSV" /></label>
     {ds.source === "local" && !ds.local_on_machine && <p className="row small wide"><button className="small" disabled={!ds.labels_csv || !ds.local_dir} onClick={read}>Read labels</button>
       <span className="muted">{info}</span></p>}
-    <p className="muted small wide">One row per image: a file column (file, image, name, path or id; with or without the extension, relative to the CSV's folder or the
+    {regress && numeric && <div className="wide"><span>Target columns (the numbers to predict)</span>
+      <div className="bandgrid">{numeric.map((n) => <label key={n.column} className="chk" title={`mean ${n.mean.toPrecision(4)}`}>
+        <input type="checkbox" checked={ds.classes.includes(n.column)}
+          onChange={() => up({ classes: ds.classes.includes(n.column) ? ds.classes.filter((x) => x !== n.column) : [...ds.classes, n.column] })} />
+        {n.column} <span className="muted small">{n.min.toPrecision(3)} … {n.max.toPrecision(3)}</span></label>)}</div></div>}
+    {regress ? <p className="muted small wide">One row per image: a file column (file, image, name, path or id; with or without the extension, relative to
+      the CSV's folder or the images folder) and one numeric column per target (e.g. biomass in t/ha, canopy height in m). Rows with an
+      empty or non-numeric target are left out. The network's Output gives one number per target; it is trained on the standardised targets
+      (MSE, L1 or Huber loss, Train tab) and scored in the targets' units: R², MAE and RMSE.</p>
+    : <p className="muted small wide">One row per image: a file column (file, image, name, path or id; with or without the extension, relative to the CSV's folder or the
       images folder) and a labels column with the classes separated by ; , | or spaces, or one 0/1 column per class. The network's Output
       gives one score per class; each is a yes/no (sigmoid ≥ 0.5), trained with binary cross-entropy. Scores: micro and macro F1, mean
-      average precision (mAP) and exact match.</p>
+      average precision (mAP) and exact match.</p>}
   </div>;
 }
 

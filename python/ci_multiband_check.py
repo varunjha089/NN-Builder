@@ -270,7 +270,7 @@ def loss_math():
     torch.manual_seed(0)
 
     def env(task, loss, gamma=2.0, w=None):
-        ns = {"torch": torch, "nn": nn, "MULTILABEL": task == "multilabel", "SEG": task == "segment", "LOSS": loss, "GAMMA": gamma,
+        ns = {"torch": torch, "nn": nn, "MULTILABEL": task == "multilabel", "SEG": task == "segment", "REGRESS": False, "LOSS": loss, "GAMMA": gamma,
               "LOSS_WEIGHT": w}
         exec(part, ns)
         return ns["loss_of"]
@@ -297,7 +297,56 @@ def loss_math():
     assert torch.allclose(env("multilabel", "focal", 0.0)(ml, t), F.binary_cross_entropy_with_logits(ml, t.float()), atol=1e-6)
     assert env("multilabel", "dice")(t.float() * 100 - 50, t) < 1e-2
     assert env("segment", "dice", w=w)(seg, m) != env("segment", "dice")(seg, m), "class weights reach Dice"
+    reg = {"torch": torch, "nn": nn, "MULTILABEL": False, "SEG": False, "REGRESS": True, "LOSS_WEIGHT": None, "GAMMA": 2.0}
+    p, t = torch.randn(10, 2), torch.randn(10, 2) * 5 + 20
+    for loss, ref in (("", F.mse_loss), ("mse", F.mse_loss), ("l1", F.l1_loss), ("huber", F.huber_loss)):
+        ns = dict(reg, LOSS=loss)
+        exec(part, ns)
+        ns["TARGET_MEAN"], ns["TARGET_STD"] = torch.tensor([20.0, 20.0]), torch.tensor([5.0, 5.0])
+        assert torch.allclose(ns["loss_of"](p, t), ref(p, (t - 20) / 5), atol=1e-6), loss
+        assert torch.allclose(ns["to_units"](ns["standardise"](t)), t, atol=1e-5)
     print("losses: focal (γ 0 = CE / BCE, weights), Dice (perfect = 0), Dice + CE, unlabelled pixels left out")
+
+
+def make_regress(root):
+    """300 two-band images; biomass = 40 + 25·mean(b2), height = 3 + 6·mean(b1) (plus a little noise); targets.csv lists them, and one
+    row has no number (left out)"""
+    rng = np.random.default_rng(12)
+    os.makedirs(os.path.join(root, "img"), exist_ok=True)
+    rows = ["file,biomass,height,notes"]
+    for i in range(300):
+        level = rng.uniform(-1, 1, size=2)
+        a = (rng.normal(0, 0.3, size=(2, 16, 16)) + level[:, None, None]).astype(np.float32)
+        np.save(os.path.join(root, "img", f"p{i}.npy"), a)
+        m = a.reshape(2, -1).mean(1)
+        rows.append(f"img/p{i},{40 + 25 * m[1] + rng.normal(0, 0.5):.4f},{3 + 6 * m[0] + rng.normal(0, 0.1):.4f},plot {i}")
+    rows.append("img/p0,,1.0,no biomass")
+    open(os.path.join(root, "targets.csv"), "w").write("\n".join(rows) + "\n")
+
+
+def regress(root):
+    """the numbers are learnt (R² of each target), scored in their own units, the targets' mean / spread saved for model.pt"""
+    root = os.path.abspath(root)
+    make_regress(os.path.join(root, "own", "reg"))
+    ev = run(os.path.join(root, "regress"), os.path.join(root, "data"), "regress")
+    assert next(e for e in ev if e["event"] == "start")["recipe"]["loss"] == "huber"
+    assert any(e["event"] == "warning" and "non-numeric target" in e["message"] for e in ev), "the row without a number is reported"
+    tg = next(e for e in ev if e["event"] == "targets")
+    assert tg["targets"] == ["biomass", "height"] and 30 < tg["mean"][0] < 50 and tg["n"] > 200, tg
+    ep = [e for e in ev if e["event"] == "epoch"]
+    assert ep and all("val_mae" in e and "train_acc" not in e for e in ep), ep[:1]
+    done = next(e for e in ev if e["event"] == "done")
+    res = json.load(open(os.path.join(root, "regress", "results.json")))
+    assert res["task"] == "regress" and res["confusion"] is None and res["loss"] == {"kind": "huber"}, res.keys()
+    r2 = [t["r2"] for t in res["per_target"]]
+    assert min(r2) >= 0.7 and abs(done["test_acc"] - res["r2"]) < 1e-4, res["per_target"]
+    assert res["mae"] > 0 and res["rmse"] >= res["mae"] and done["test_mae"] > 0, res
+    assert len(res["scatter"]["truth"]) == 2 and len(res["scatter"]["truth"][0]) == len(res["scatter"]["pred"][0]) > 0
+    st = json.load(open(os.path.join(root, "regress", "target_stats.json")))
+    assert st["targets"] == ["biomass", "height"] and len(st["mean"]) == 2 and min(st["std"]) > 0, st
+    s0 = res["samples"][0]
+    assert len(s0["target"]) == 2 and len(s0["value"]) == 2 and "label" not in s0, s0.keys()
+    print(f"regress: R² {[round(v, 3) for v in r2]}, MAE {[round(t['mae'], 3) for t in res['per_target']]}, best epoch {done.get('best_epoch')}")
 
 
 def make_imbalanced(root):
@@ -442,6 +491,7 @@ if __name__ == "__main__":
     own_files(sys.argv[1])
     check_data(sys.argv[1])
     imbalanced(sys.argv[1])
+    regress(sys.argv[1])
     cloud(sys.argv[1])
     ben(sys.argv[1])
     pretrained_ms(sys.argv[1])

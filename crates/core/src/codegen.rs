@@ -92,7 +92,8 @@ pub struct TrainSettings {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub class_weights: String,
     /// the loss: "" (cross-entropy; multi-label: binary cross-entropy) | "focal" (each term times (1 - p_true)^γ: hard examples count
-    /// more) | "dice" (1 - soft Dice per class; segmentation and multi-label) | "dice_ce" (Dice + cross-entropy)
+    /// more) | "dice" (1 - soft Dice per class; segmentation and multi-label) | "dice_ce" (Dice + cross-entropy); regression: "mse"
+    /// (the same as "") | "l1" | "huber" (squared below 1 standard deviation of the target, linear above)
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub loss: String,
     /// focal loss: γ (0 = plain cross-entropy; 2 is usual)
@@ -121,8 +122,8 @@ fn default_gamma() -> f64 {
     2.0
 }
 
-/// the losses the Train tab offers ("" = cross-entropy)
-pub const LOSSES: [&str; 4] = ["", "focal", "dice", "dice_ce"];
+/// the losses the Train tab offers ("" = cross-entropy; regression: MSE)
+pub const LOSSES: [&str; 7] = ["", "focal", "dice", "dice_ce", "mse", "l1", "huber"];
 
 fn default_schedule() -> String {
     "constant".into()
@@ -531,6 +532,13 @@ pub fn train_script(g: &Graph, ds: &Dataset, a: &Analysis, t: &TrainSettings, ti
     }
     if t.loss.starts_with("dice") && ds.task != "segment" && ds.task != "multilabel" {
         bail!("Dice loss needs segmentation or multi-label (one class per image: use cross-entropy or focal).");
+    }
+    let numeric = matches!(t.loss.as_str(), "mse" | "l1" | "huber");
+    if ds.task == "regress" && !numeric && !t.loss.is_empty() {
+        bail!("Regression is trained with MSE, L1 or Huber loss (Train tab: Loss).");
+    }
+    if ds.task != "regress" && numeric {
+        bail!("MSE, L1 and Huber losses are for regression (Dataset tab: task); classes are trained with cross-entropy, focal or Dice.");
     }
     let model = model_code_opts(g, a, t.save_memory)?;
     let mut ds_json = serde_json::to_value(ds)?;

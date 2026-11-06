@@ -660,6 +660,25 @@ classes averaged, so rare classes count as much as common ones), mean average pr
 images, independent of the threshold) and exact match (every class of an image right). Results lists precision, recall, F1 and AP per
 class, and the sample pictures mark each class as right, wrong or missed.
 
+\subsection{Numbers per image (regression)}
+\label{sec:regression}
+To predict a quantity instead of a class (above-ground biomass, canopy height, crop yield, soil moisture of a plot), choose \ui{Task:
+Regression}. The numbers come from a CSV file next to the images (own files or Kaggle): one row per image, the same file column as for
+multi-label, and one numeric column per target. \ui{Read labels} lists the columns that hold a number in every row, with their range;
+tick the targets (one or several). From Hugging Face, tick the numeric columns of the table. Rows whose target is empty or not a number
+are left out with a warning; a \texttt{split} column is used as given.
+
+The Output block gives one number per target (no softmax). Before training the run measures every target's mean and spread on the
+training images, and the network learns the targets standardised (mean 0, spread 1), so targets of very different sizes train equally
+well. \ui{Loss} in the Train tab: \emph{mean squared error} (MSE, the default; large errors count most), \emph{L1} (mean absolute error;
+less swayed by a few wild values) or \emph{Huber} (squared for errors below one standard deviation of the target, linear above). The
+scores are in the targets' own units: R$^2$ (the share of the targets' variation the network explains: 1 is perfect, 0 is no better than
+always predicting the mean; shown where accuracy usually is, and what early stopping on ``validation R$^2$'' watches), MAE (mean absolute
+error) and RMSE (root mean squared error), per target and averaged. Results shows a predicted-against-true scatter plot per target and
+sample images with both numbers. \file{model.pt} outputs the standardised numbers; \file{target\_stats.json} next to it holds each
+target's mean and standard deviation (value $=$ output $\times$ std $+$ mean). Flips and rotations are fine for quantities that do not
+depend on direction. A number for every pixel (a canopy height map) is not supported yet.
+
 \subsection{Sentinel-1 and Sentinel-2 together (fusion)}
 \label{sec:fusion}
 Radar sees through clouds and shows water and structure; optical bands show vegetation and colour. Under \ui{Second band group (fusion)}

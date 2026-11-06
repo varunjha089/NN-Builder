@@ -143,6 +143,15 @@ crates/core/src/
                            HF: a ClassLabelList column, hf_info reports Sequence/List of ClassLabel so); harness label_rows/LabelFiles,
                            loss_of (BCE with logits), multilabel_scores (micro/macro F1, mAP, exact, per_class); evaluate returns micro F1
                            as accuracy, the scores dict in the confusion slot, mAP in the mIoU slot; val_map per epoch; Results/Train tabs.
+                           Regression: task "regress" (numbers per image), Dataset.classes = the target columns (shapes needs ≥ 1),
+                           labels_csv required for kaggle/local; localdata::csv_classes "numeric" (columns numeric in every row, min/
+                           max/mean); losses "" = mse | l1 | huber (train_script refuses class losses for regress and vice versa).
+                           Harness REGRESS: label_rows reads float targets (non-numeric rows left out), hf_targets for HF, target_stats()
+                           -> TARGET_MEAN/_STD ("targets" event), loss_of standardises, evaluate -> regression_scores (r2 in acc slot,
+                           scores in confusion slot, MAE in mIoU slot; val_mae, no train_acc), monitor val_miou falls back to val_loss;
+                           results r2/mae/rmse/per_target/scatter/target_stats + target_stats.json; data_report "targets". runs listing
+                           "task". UI: Dataset task radio, LabelsCsv target checkboxes, HF target columns; Train tab losses + R² chart;
+                           ResultsTab cards, per-target table, Scatter, samples. CI: ci_multiband_check regress (Huber, early stop R²).
                            Fusion: bands2, band_order2, sensor2, s1_db2, fuse_dir (second group, same relative file names, stacked after
                            group 1); group_channels(); Input param "group" (0 all, 1, 2): shapes allows two Inputs only when fused (one
                            per group), codegen slices x[:, :c1] / x[:, c1:], DSL `input 1` / `input 2`; harness GROUPS, read_groups,
