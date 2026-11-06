@@ -167,6 +167,15 @@ crates/core/src/
                            (AP every-point, mAP@0.5 and @0.5:0.95); evaluate -> map50 in acc slot, map in mIoU slot; samples with boxes.
                            UI: Dataset task radio + DetectFolders, Results cards / per-class AP / BoxImage, Train chart. CI:
                            ci_multiband_check detection (targets <-> boxes exact, perfect mAP 1, detector on squares and discs).
+                           Several GPUs: TrainSettings.gpus (1 default, N, 0 = all; clean() ≤ 64; "gpus" in TRAIN). Harness: RANK / WORLD
+                           from NNB_RANK / NNB_WORLD; __main__ -> wanted_workers() (NNB_TEST_PROCESSES = CI's CPU processes) -> run_parallel():
+                           Popen of train.py per rank (MASTER_ADDR/PORT), the parent writes py_pid.txt and forwards SIGTERM/INT/HUP/USR1/USR2,
+                           exits with rank 0's code. main(): init_process_group (nccl / gloo, 3 h timeout), rank 0 loads data and weights
+                           first (barrier), ShardBatches (each rank every WORLD-th image of the one-GPU batch), SyncBatchNorm + DDP after the
+                           one-batch check (rank 0), sync_flags (STOP / INTERRUPT / checkpoint due, MAX all-reduce) every step and at the
+                           epoch end, sums all-reduced, rank 0 evaluates / checkpoints and broadcasts early stop + plateau lr; emit() and
+                           checkpoint() silent on other ranks, which return after training. OOM with DDP: a message (no auto split).
+                           Train tab "GPUs". CI: ci_multiband_check parallel (2 gloo processes: one set of events; SIGUSR1 -> 75 -> resume).
                            Sentinel step finished: scene_split ("" random | strip = eastern tenth, one tile column gap | files =
                            scene_test_image/_label) in harness scene_split(); BigEarthNet layout: read_patch_folder (one GeoTIFF per band,
                            <patch>_<band>.tif, bands resized to the largest), label tables via read_table (CSV/TSV/Parquet, pyarrow on

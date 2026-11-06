@@ -192,6 +192,18 @@ fn main() {
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(format!("{d}/train.py"), train_script(&g, &ds, &a, &t, "detect").unwrap()).unwrap();
     }
+    // several GPUs (CI: two CPU processes with gloo, NNB_TEST_PROCESSES=2): a whole run, and one interrupted by a spot notice and resumed
+    {
+        let ds = Dataset { source: "kaggle".into(), kaggle_slug: "ci/sentinel2".into(), image_size: [32, 32], sensor: "s2".into(),
+            band_order: s(SENTINEL2_BANDS), bands: s(&["B02", "B03", "B04", "B08", "B11", "B12"]), classes: s(&["forest", "water"]), ..Default::default() };
+        let a = analyze(&g, &ds);
+        for (name, epochs) in [("ddp", 4), ("ddp_resume", 8)] {
+            let t = TrainSettings { epochs, batch_size: 16, amp: false, gpus: 2, aug_hflip: true, ..Default::default() }.clean();
+            let d = format!("{dir}/{name}");
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(format!("{d}/train.py"), train_script(&g, &ds, &a, &t, name).unwrap()).unwrap();
+        }
+    }
     for (name, ds) in cases {
         assert!(ds.problems().is_empty(), "{name}: {:?}", ds.problems());
         let g = if ds.task == "segment" { &seg } else if name == "fusion" { &mid } else if name == "fusion_sizes" { &mid_sizes } else { &g };

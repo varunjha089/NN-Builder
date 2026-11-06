@@ -239,6 +239,15 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
         <label className="chk wide"><input type="checkbox" checked={train.export} onChange={(e) => set({ export: e.target.checked })} />
           Also save the trained model as TorchScript (model.ts) and ONNX (model.onnx), to use it without this code</label>
         <label className="chk wide"><input type="checkbox" checked={train.amp} onChange={(e) => set({ amp: e.target.checked })} />Mixed precision on the GPU (faster on a T4)</label>
+        <div className="wide row">
+          <label title="With more than one, train.py starts one worker per GPU (PyTorch DistributedDataParallel)">GPUs
+            <select value={String(train.gpus ?? 1)} onChange={(e) => set({ gpus: Number(e.target.value) })}>
+              <option value="1">one</option><option value="0">all the machine has</option>
+              {[2, 4, 8].map((n) => <option key={n} value={n}>{n}</option>)}</select></label>
+          {(train.gpus ?? 1) !== 1 && <span className="muted small">Each GPU takes its share of every batch of {train.batch_size} (the batch size stays the total, so
+            the results match one GPU's); BatchNorm counts all GPUs' images; checkpoints, stop and spot interruptions work as with one. Fewer GPUs
+            than asked: all there are. Kaggle notebooks usually have one GPU (two with the T4×2 accelerator, which the Kaggle API cannot choose).</span>}
+        </div>
         {kind === "aws" && <label className="chk wide"><input type="checkbox" checked={train.stop_instance} onChange={(e) => set({ stop_instance: e.target.checked })} />Stop the EC2 instance when the run ends (saves money)</label>}
         {kind !== "kaggle" && needsToken && <label className="chk wide"><input type="checkbox" checked={copyTokens} onChange={(e) => setCopyTokens(e.target.checked)} />
           Copy my {datasetSource === "kaggle" ? "Kaggle" : "Hugging Face"} token to the machine (a file only you can read; needed for Kaggle data, and for gated Hugging Face data)</label>}

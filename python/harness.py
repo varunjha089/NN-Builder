@@ -112,7 +112,15 @@ STATS = {"mnist": ((0.1307,), (0.3081,)), "fashion_mnist": ((0.2860,), (0.3530,)
 IMAGE_EXT = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff")
 
 
+# several GPUs (Train tab: GPUs): train.py starts one worker per GPU itself (run_parallel); each worker runs main() with its rank. Only
+# rank 0 writes events, checkpoints and results; the others train their share of every batch and follow rank 0's decisions
+RANK = int(os.environ.get("NNB_RANK") or 0)
+WORLD = int(os.environ.get("NNB_WORLD") or 1)
+
+
 def emit(event, **data):
+    if RANK:
+        return
     data = {"event": event, "time": round(time.time(), 3), **data}
     line = json.dumps(data)
     with open(os.path.join(OUT, "metrics.jsonl"), "a", encoding="utf-8") as f:
@@ -180,6 +188,37 @@ class EpochOrder(torch.utils.data.Sampler):
 
     def __len__(self):
         return max(0, self.n - self.start)
+
+
+class ShardBatches(torch.utils.data.Sampler):
+    """several GPUs: the same epoch order as EpochOrder, cut into the run's batches; this worker takes every WORLD-th image of each batch
+    (at least one), so the workers together train exactly the one-GPU batches, and a resumed run continues at the same batch"""
+
+    def __init__(self, n, seed, epoch, bs, skip_batches=0):
+        self.n, self.seed, self.epoch, self.bs, self.skip = n, seed, epoch, bs, skip_batches
+
+    def __iter__(self):
+        g = torch.Generator()
+        g.manual_seed(self.seed * 100003 + self.epoch)
+        order = torch.randperm(self.n, generator=g).tolist()
+        for b in range(self.skip, (self.n + self.bs - 1) // self.bs):
+            batch = order[b * self.bs:(b + 1) * self.bs]
+            yield batch[RANK::WORLD] or batch[:1]
+
+    def __len__(self):
+        return max(0, (self.n + self.bs - 1) // self.bs - self.skip)
+
+
+def sync_flags(*flags):
+    """several GPUs: every worker learns whether any worker has a flag up (stop, interruption, checkpoint due), so all act at the same step"""
+    if WORLD == 1:
+        return [bool(f) for f in flags]
+    t = torch.tensor([float(bool(f)) for f in flags], device=DEVICE)
+    torch.distributed.all_reduce(t, op=torch.distributed.ReduceOp.MAX)
+    return [bool(v) for v in t.tolist()]
+
+
+DEVICE = None   # set by main(): the worker's device (collectives need tensors on it)
 
 
 def resized():
@@ -2351,20 +2390,32 @@ def check_only(model, train, val, test, first_batch, device):
 
 def main():
     from torch.utils.data import DataLoader
-    global CKPT_NOW
+    global CKPT_NOW, STOP, INTERRUPT
     for s in (signal.SIGTERM, signal.SIGINT, getattr(signal, "SIGHUP", None)):
         if s is not None:
             signal.signal(s, on_stop)
     for s, f in ((getattr(signal, "SIGUSR1", None), on_interrupt), (getattr(signal, "SIGUSR2", None), on_checkpoint)):
         if s is not None:
             signal.signal(s, f)
-    if not ON_KAGGLE:
+    if not ON_KAGGLE and WORLD == 1:   # (with several GPUs the parent process wrote its own: it forwards the signals)
         with open(os.path.join(OUT, "py_pid.txt"), "w") as f:
             f.write(str(os.getpid()))
+    global DEVICE
     cfg = TRAIN
     torch.manual_seed(cfg["seed"])
     random.seed(cfg["seed"])
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if WORLD > 1:
+        import datetime
+        if device.type == "cuda":
+            device = torch.device("cuda", RANK)
+            torch.cuda.set_device(device)
+        # a long timeout: the other workers wait while rank 0 evaluates
+        torch.distributed.init_process_group("nccl" if device.type == "cuda" else "gloo", rank=RANK, world_size=WORLD,
+                                             timeout=datetime.timedelta(hours=3))
+        if RANK:
+            torch.distributed.barrier()   # rank 0 downloads the data and weights first; the others then find them in the cache
+    DEVICE = device
     if device.type != "cuda":
         emit("info", message="no CUDA GPU found: training on the CPU (slow)")
     model = Net().to(device)
@@ -2378,13 +2429,18 @@ def main():
             emit("info", message=f"training only {sum(p.numel() for p in model.parameters() if p.requires_grad):,} parameters (the backbone is frozen)")
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     train, val, test = load_data(cfg)
+    if WORLD > 1 and RANK == 0:
+        torch.distributed.barrier()
     # data loading: one worker per CPU core (at most 8) on a GPU machine, each preparing batches ahead
     nw = cfg.get("num_workers", "auto")
-    workers = (min(8, os.cpu_count() or 2) if nw == "auto" else int(nw)) if device.type == "cuda" else 0
+    workers = (max(1, min(8, (os.cpu_count() or 2) // WORLD)) if nw == "auto" else int(nw)) if device.type == "cuda" else 0
     ahead = {"prefetch_factor": 4} if workers else {}
     bs = cfg["batch_size"]
 
     def loader(epoch, skip_batches=0):
+        if WORLD > 1:
+            return DataLoader(train, batch_sampler=ShardBatches(len(train), cfg["seed"], epoch, bs, skip_batches), num_workers=workers,
+                              pin_memory=device.type == "cuda", **ahead)
         return DataLoader(train, batch_size=bs, sampler=EpochOrder(len(train), cfg["seed"], epoch, skip_batches * bs), num_workers=workers,
                           pin_memory=device.type == "cuda", **ahead)
 
@@ -2495,6 +2551,9 @@ def main():
                 "steps": steps, "sums": pos["sums"], "rng": rng, "resumes": resumes, "es": es, "plat": plat, "parts": split["parts"], "version": 5}
 
     def checkpoint(reason):
+        if RANK:   # several GPUs: rank 0 keeps the checkpoint (the weights are the same on every worker)
+            dirty["v"] = False
+            return
         if save_checkpoint(ck_path, state()):
             dirty["v"] = False
             emit("checkpoint", epoch=pos["epoch"] + (1 if pos["step"] else 0), step=pos["step"], steps=steps, reason=reason)
@@ -2505,8 +2564,8 @@ def main():
         emit("interrupted", epoch=pos["epoch"] + 1, step=pos["step"], steps=steps)
         sys.exit(RESUME_EXIT)
 
-    gpu = torch.cuda.get_device_name(0) if device.type == "cuda" else "cpu"
-    emit("start", device=str(device), gpu=gpu, torch=torch.__version__, python=sys.version.split()[0], params=n_params, task=TASK,
+    gpu = torch.cuda.get_device_name(device) if device.type == "cuda" else "cpu"
+    emit("start", device=str(device), gpu=gpu, gpus=WORLD, torch=torch.__version__, python=sys.version.split()[0], params=n_params, task=TASK,
          train_size=len(train), val_size=len(val) if val is not None else 0, test_size=len(test), epochs=cfg["epochs"],
          early_stop=early, patience=patience if early else None, monitor=monitor if early else None,
          recipe={"optimizer": cfg["optimizer"], "lr": base_lr, "weight_decay": wd, "schedule": schedule, "warmup_epochs": cfg.get("warmup_epochs", 0),
@@ -2523,8 +2582,15 @@ def main():
         class_weights(train, cfg["class_weights"])
     if MULTITASK:
         head_stats(train)
-    if pos["epoch"] == 0 and pos["step"] == 0:
+    if pos["epoch"] == 0 and pos["step"] == 0 and RANK == 0:
         one_batch_check(model, loader(1), device)
+    net = model
+    if WORLD > 1:
+        # one model per GPU, gradients averaged after every backward pass; BatchNorm statistics over all the GPUs' images
+        if device.type == "cuda":
+            model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
+        net = torch.nn.parallel.DistributedDataParallel(model, device_ids=[RANK] if device.type == "cuda" else None)
+        emit("info", message=f"training on {WORLD} {'GPUs' if device.type == 'cuda' else 'processes'}: each takes 1/{WORLD} of every batch of {bs}")
     every = max(1, steps // 20)
     # the run's own setting, else the default for a spot instance (set by run.sh)
     ck_every = float(cfg.get("checkpoint_minutes") or os.environ.get("NNB_CHECKPOINT_MINUTES") or 0) * 60
@@ -2555,7 +2621,7 @@ def main():
                             if TEST_OOM_ABOVE and len(ys) > TEST_OOM_ABOVE:
                                 raise OOM("CUDA out of memory (simulated for the test)")
                             with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp):
-                                outs = model(xs)
+                                outs = net(xs)
                                 out = main_out(outs)
                                 loss = loss_of(outs, ys_all, smoothing) * (len(ys) / len(y))
                                 if SEG and not bool((ys >= 0).any()):
@@ -2566,6 +2632,9 @@ def main():
                                 batch_correct += int(((out > 0) == (ys > 0.5)).sum()) if MULTILABEL else int((out.argmax(1) == ys).sum())
                         break
                     except Exception as e:
+                        if WORLD > 1 and is_oom(e):
+                            raise SystemExit("MEMORY: a GPU ran out of memory. With several GPUs the batch is not split automatically: use a "
+                                             "smaller batch (each GPU takes its share), \"save memory\", or a smaller design.")
                         if not (auto_split and is_oom(e)) or split["parts"] >= len(y):
                             if is_oom(e):
                                 raise SystemExit("MEMORY: even one image at a time does not fit on this GPU. Use a smaller design or input, "
@@ -2592,10 +2661,13 @@ def main():
                 dirty["v"] = True
                 if step % every == 0 or step == steps:
                     emit("batch", epoch=epoch, step=step, steps=steps, loss=round(batch_loss, 5))
+                due = step < steps and (CKPT_NOW or (ck_every and time.time() - last_ck >= ck_every))
+                if WORLD > 1:
+                    STOP, INTERRUPT, due = sync_flags(STOP, INTERRUPT, due)
                 if INTERRUPT:
                     sums["seconds"] += time.time() - t0
                     interrupted()
-                if step < steps and (CKPT_NOW or (ck_every and time.time() - last_ck >= ck_every)):
+                if due:
                     sums["seconds"] += time.time() - t0
                     t0 = time.time()
                     checkpoint("rebalance recommendation" if CKPT_NOW else "timer")
@@ -2605,59 +2677,81 @@ def main():
                     break
                 mark = time.time()
             data_wait = waited / max(time.time() - began, 1e-9)
-            if device.type == "cuda" and not split["reported"]:
-                # the real peak of this run (the Train tab's figure is an estimate), once, after the first epoch it trained
-                split["reported"] = True
-                emit("memory", peak_gb=round(torch.cuda.max_memory_allocated() / 1e9, 2), reserved_gb=round(torch.cuda.max_memory_reserved() / 1e9, 2),
-                     total_gb=round(torch.cuda.get_device_properties(0).total_memory / 1e9, 1), batch=bs, parts=split["parts"],
-                     precision=precision, save_memory=bool(getattr(model, "save_memory", False)))
-            val_loss, val_acc, _, miou, _, val_top5 = evaluate_safe(val_data)
-            ev = dict(epoch=epoch, train_loss=round(sums["loss_sum"] / max(sums["n"], 1), 5), train_acc=round(sums["correct"] / max(sums["units"], 1), 5),
-                      val_loss=round(val_loss, 5), val_acc=round(val_acc, 5), seconds=round(sums["seconds"] + time.time() - t0, 2), partial=stopped,
-                      lr=float(f"{opt.param_groups[0]['lr']:.3g}"), data_wait=round(data_wait, 3))
-            if SEG:
-                ev["val_miou"] = round(miou, 5)
-            if MULTILABEL:
-                ev["val_map"] = round(miou, 5)
-            if REGRESS:
-                ev["val_mae"] = round(miou, 6)
-                del ev["train_acc"]   # no running R² while training
-            if DETECT:
-                ev["val_map"] = round(miou, 5)   # mAP@0.5:0.95 (val_acc is mAP@0.5)
-                del ev["train_acc"]
-            if val_top5 is not None:
-                ev["val_top5"] = round(val_top5, 5)
-            if HEAD_SCORES:
-                ev["heads"] = [{"name": h["name"], "metric": h["metric"], "score": round(h["score"], 5)} for h in HEAD_SCORES]
-            emit("epoch", **ev)
-            # best epoch so far (lower validation loss, or higher validation accuracy / mIoU); its weights are kept in best_model.pt
-            value = {"val_loss": val_loss, "val_acc": val_acc, "val_miou": miou}.get(monitor, val_loss)
-            better = es["best"] is None or (value < es["best"] - 1e-4 if monitor == "val_loss" else value > es["best"] + 1e-4)
-            if better and not stopped:
-                es.update(best=value, best_epoch=epoch, bad=0)
-                if early:
-                    save_checkpoint(best_path, model.state_dict())
-                    emit("best", epoch=epoch, monitor=monitor, value=round(value, 5))
-            elif not stopped:
-                es["bad"] += 1
-            if schedule == "plateau" and not stopped:
-                if plat["best"] is None or val_loss < plat["best"] - 1e-4:
-                    plat.update(best=val_loss, bad=0)
-                else:
-                    plat["bad"] += 1
-                    if plat["bad"] >= plateau_patience and plat["mult"] > 1e-3:
-                        plat.update(mult=plat["mult"] * 0.5, bad=0)
-                        emit("lr_drop", epoch=epoch, lr=float(f"{base_lr * plat['mult']:.3g}"))
-            pos.update(epoch=epoch, step=0, sums=dict(zero))
-            checkpoint("epoch")
-            last_ck = time.time()
-            if early and es["bad"] >= patience and epoch < cfg["epochs"]:
-                emit("early_stop", epoch=epoch, best_epoch=es["best_epoch"], monitor=monitor, best=round(es["best"], 5), patience=patience)
+            if WORLD > 1:
+                # the epoch's running sums over every worker's share
+                t = torch.tensor([sums["loss_sum"], sums["n"], sums["correct"], sums["units"]], dtype=torch.float64, device=device)
+                torch.distributed.all_reduce(t)
+                sums.update(loss_sum=float(t[0]), n=int(t[1]), correct=int(t[2]), units=int(t[3]))
+            brk = False
+            if RANK == 0:
+                if device.type == "cuda" and not split["reported"]:
+                    # the real peak of this run (the Train tab's figure is an estimate), once, after the first epoch it trained
+                    split["reported"] = True
+                    emit("memory", peak_gb=round(torch.cuda.max_memory_allocated() / 1e9, 2), reserved_gb=round(torch.cuda.max_memory_reserved() / 1e9, 2),
+                         total_gb=round(torch.cuda.get_device_properties(0).total_memory / 1e9, 1), batch=bs, parts=split["parts"],
+                         precision=precision, save_memory=bool(getattr(model, "save_memory", False)))
+                val_loss, val_acc, _, miou, _, val_top5 = evaluate_safe(val_data)
+                ev = dict(epoch=epoch, train_loss=round(sums["loss_sum"] / max(sums["n"], 1), 5), train_acc=round(sums["correct"] / max(sums["units"], 1), 5),
+                          val_loss=round(val_loss, 5), val_acc=round(val_acc, 5), seconds=round(sums["seconds"] + time.time() - t0, 2), partial=stopped,
+                          lr=float(f"{opt.param_groups[0]['lr']:.3g}"), data_wait=round(data_wait, 3))
+                if SEG:
+                    ev["val_miou"] = round(miou, 5)
+                if MULTILABEL:
+                    ev["val_map"] = round(miou, 5)
+                if REGRESS:
+                    ev["val_mae"] = round(miou, 6)
+                    del ev["train_acc"]   # no running R² while training
+                if DETECT:
+                    ev["val_map"] = round(miou, 5)   # mAP@0.5:0.95 (val_acc is mAP@0.5)
+                    del ev["train_acc"]
+                if val_top5 is not None:
+                    ev["val_top5"] = round(val_top5, 5)
+                if HEAD_SCORES:
+                    ev["heads"] = [{"name": h["name"], "metric": h["metric"], "score": round(h["score"], 5)} for h in HEAD_SCORES]
+                emit("epoch", **ev)
+                # best epoch so far (lower validation loss, or higher validation accuracy / mIoU); its weights are kept in best_model.pt
+                value = {"val_loss": val_loss, "val_acc": val_acc, "val_miou": miou}.get(monitor, val_loss)
+                better = es["best"] is None or (value < es["best"] - 1e-4 if monitor == "val_loss" else value > es["best"] + 1e-4)
+                if better and not stopped:
+                    es.update(best=value, best_epoch=epoch, bad=0)
+                    if early:
+                        save_checkpoint(best_path, model.state_dict())
+                        emit("best", epoch=epoch, monitor=monitor, value=round(value, 5))
+                elif not stopped:
+                    es["bad"] += 1
+                if schedule == "plateau" and not stopped:
+                    if plat["best"] is None or val_loss < plat["best"] - 1e-4:
+                        plat.update(best=val_loss, bad=0)
+                    else:
+                        plat["bad"] += 1
+                        if plat["bad"] >= plateau_patience and plat["mult"] > 1e-3:
+                            plat.update(mult=plat["mult"] * 0.5, bad=0)
+                            emit("lr_drop", epoch=epoch, lr=float(f"{base_lr * plat['mult']:.3g}"))
+                pos.update(epoch=epoch, step=0, sums=dict(zero))
+                checkpoint("epoch")
+                last_ck = time.time()
+                brk = early and es["bad"] >= patience and epoch < cfg["epochs"]
+                if brk:
+                    emit("early_stop", epoch=epoch, best_epoch=es["best_epoch"], monitor=monitor, best=round(es["best"], 5), patience=patience)
+            else:
+                pos.update(epoch=epoch, step=0, sums=dict(zero))
+            if WORLD > 1:
+                # rank 0's decisions: stop early, and the learning rate after a plateau
+                t = torch.tensor([float(brk), plat["mult"]], dtype=torch.float64, device=device)
+                torch.distributed.broadcast(t, 0)
+                brk, plat["mult"] = bool(t[0]), float(t[1])
+            if brk:
                 break
+            if WORLD > 1:   # (a signal may have reached one worker after the last step's check)
+                STOP, INTERRUPT = sync_flags(STOP, INTERRUPT)
+                stopped = stopped or STOP
             if stopped or INTERRUPT:
                 break
         if INTERRUPT:
             interrupted()
+        if RANK:
+            torch.distributed.destroy_process_group()
+            return   # the other workers are done: rank 0 tests the model and writes the results
         if early and os.path.exists(best_path):
             # the final model is the best epoch's, not the last one's
             model.load_state_dict(torch.load(best_path, map_location=device))
@@ -2716,7 +2810,54 @@ def main():
                 pass
 
 
+def wanted_workers():
+    """how many GPUs to train on: the Train tab's GPUs (0 = all, 1 = one), at most the machine's; a data check uses one"""
+    test = int(os.environ.get("NNB_TEST_PROCESSES") or 0)   # CI only: CPU processes (gloo) in place of GPUs
+    if test:
+        return test
+    if TRAIN.get("check_only") or not torch.cuda.is_available():
+        return 1
+    want, have = int(TRAIN.get("gpus", 1) or 0), torch.cuda.device_count()
+    return have if want == 0 else max(1, min(want, have))
+
+
+def run_parallel(n):
+    """start one worker per GPU (this script again, with its rank), forward the signals the run gets (stop, spot interruption,
+    checkpoint now) to all of them, and end with rank 0's exit code (0 done, 75 interrupted: resume, others: an error)"""
+    import socket
+    with socket.socket() as sk:
+        sk.bind(("127.0.0.1", 0))
+        port = sk.getsockname()[1]
+    if not ON_KAGGLE:
+        with open(os.path.join(OUT, "py_pid.txt"), "w") as f:
+            f.write(str(os.getpid()))
+    procs = [subprocess.Popen([sys.executable, os.path.abspath(__file__)], env={**os.environ, "NNB_RANK": str(r), "NNB_WORLD": str(n),
+             "MASTER_ADDR": "127.0.0.1", "MASTER_PORT": str(port)}) for r in range(n)]
+
+    def forward(signum, frame):
+        for p in procs:
+            if p.poll() is None:
+                p.send_signal(signum)
+    for sg in (signal.SIGTERM, signal.SIGINT, getattr(signal, "SIGHUP", None), getattr(signal, "SIGUSR1", None), getattr(signal, "SIGUSR2", None)):
+        if sg is not None:
+            signal.signal(sg, forward)
+    failed_at = None
+    while any(p.poll() is None for p in procs):
+        # a worker that ends with an error leaves the others waiting for it: give them a minute, then end them
+        if failed_at is None and any(p.poll() not in (None, 0, RESUME_EXIT) for p in procs):
+            failed_at = time.time()
+        if failed_at is not None and time.time() - failed_at > 60:
+            for p in procs:
+                if p.poll() is None:
+                    p.kill()
+        time.sleep(0.5)
+    codes = [p.returncode for p in procs]
+    sys.exit(codes[0] if codes[0] != 0 else next((c for c in codes if c), 0))
+
+
 if __name__ == "__main__":
+    if WORLD == 1 and wanted_workers() > 1:
+        run_parallel(wanted_workers())
     try:
         main()
     except SystemExit as e:

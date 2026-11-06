@@ -875,3 +875,13 @@ fn object_detection() {
     let cls = Dataset { task: "classify".into(), ..ds.clone() };
     assert!(msg("1 input\n2 conv 8 3x3\n3 detect\n", &cls).contains("object detection"));
 }
+
+#[test]
+fn several_gpus_setting() {
+    let old: TrainSettings = { let mut v = serde_json::to_value(TrainSettings::default()).unwrap(); v.as_object_mut().unwrap().remove("gpus"); serde_json::from_value(v).unwrap() };
+    assert_eq!(old.gpus, 1, "older train.json: one GPU");
+    assert_eq!(TrainSettings { gpus: 1000, ..Default::default() }.clean().gpus, 64);
+    let g = model::starter();
+    let code = train_script(&g, &mnist(), &analyze(&g, &mnist()), &TrainSettings { gpus: 0, ..Default::default() }.clean(), "all").unwrap();
+    assert!(code.contains("\"gpus\": 0") && code.contains("def run_parallel(n):") && code.contains("DistributedDataParallel"));
+}

@@ -112,7 +112,10 @@ escape hatch, 2-D only, supervised only, one GPU. The steps below, in this order
    focal + L1 loss, mAP@0.5 and @0.5:0.95, boxes drawn in Results. Left: oriented boxes (DOTA), COCO JSON, tiling large scenes with
    their boxes, cross-class NMS, a detection demo design, multi-scale heads (FPN).* The plan: an anchor-free head (FCOS / CenterNet style) with box losses and box mAP, box datasets (COCO / YOLO txt),
    boxes drawn in the mistakes gallery; needs steps 2 and 4.
-9. **Multi-GPU training:** DistributedDataParallel / FSDP on machines with several GPUs (college server, multi-GPU EC2), for the large
+9. **Multi-GPU training:** *Done 2026-11-06 (CI-tested with two CPU processes; never on real GPUs): DistributedDataParallel started
+   by train.py itself, signals forwarded, flags synced, rank 0 evaluates and checkpoints. Left: FSDP (weights split over the GPUs for
+   models too big for one), automatic batch split with several GPUs, several machines, choosing Kaggle's T4×2 (not possible through the
+   API).* The plan: DistributedDataParallel / FSDP on machines with several GPUs (college server, multi-GPU EC2), for the large
    ViTs and long time series.
 10. **Fine-tuning and dynamic structures:** LoRA / adapters on pretrained backbones, freezing by layer group; mixture-of-experts layers
     (top-k routing), early-exit heads.

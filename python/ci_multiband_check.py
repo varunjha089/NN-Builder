@@ -529,6 +529,56 @@ def detection(root):
           f"AP per class {[round(r['ap50'] or 0, 3) for r in res['per_class']]}")
 
 
+def parallel(root):
+    """several workers (CPU processes here, GPUs on a real machine): one set of events, both workers train, the result is as good as
+    one worker's; a spot notice to the parent process reaches every worker: checkpoint, exit 75, and the run resumes and finishes"""
+    import signal
+    import time
+    root = os.path.abspath(root)
+    data = os.path.join(root, "data")
+    env = {**os.environ, "NNB_DATA": data, "PYTHONUNBUFFERED": "1", "NNB_TEST_PROCESSES": "2"}
+    folder = os.path.join(root, "ddp")
+    with open(os.path.join(folder, "log.txt"), "w") as log:
+        code = subprocess.run([sys.executable, "train.py"], cwd=folder, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=900).returncode
+    assert code == 0, open(os.path.join(folder, "log.txt")).read()[-3000:]
+    ev = [json.loads(l) for l in open(os.path.join(folder, "metrics.jsonl")) if l.strip()]
+    starts = [e for e in ev if e["event"] == "start"]
+    assert len(starts) == 1 and starts[0]["gpus"] == 2, "only rank 0 writes events"
+    assert [e["epoch"] for e in ev if e["event"] == "epoch"] == [1, 2, 3, 4]
+    assert any(e["event"] == "info" and "2 processes" in e.get("message", "") for e in ev)
+    done = next(e for e in ev if e["event"] == "done")
+    assert done["test_acc"] >= 0.9, done
+    # interrupted after its first epoch, then started again (as run.sh / resume.sh do)
+    folder = os.path.join(root, "ddp_resume")
+    log = open(os.path.join(folder, "log.txt"), "w")
+    p = subprocess.Popen([sys.executable, "train.py"], cwd=folder, env=env, stdout=log, stderr=subprocess.STDOUT)
+    metrics = os.path.join(folder, "metrics.jsonl")
+    t0 = time.time()
+    while time.time() - t0 < 600 and p.poll() is None:
+        if os.path.exists(metrics) and any('"event": "epoch"' in l for l in open(metrics)):
+            break
+        time.sleep(0.2)
+    assert p.poll() is None, "the run ended before it could be interrupted"
+    pid = int(open(os.path.join(folder, "py_pid.txt")).read())
+    assert pid == p.pid, "py_pid.txt names the parent, which forwards the signals"
+    os.kill(pid, signal.SIGUSR1)
+    code = p.wait(timeout=600)
+    log.close()
+    assert code == 75, f"exit {code}: {open(os.path.join(folder, 'log.txt')).read()[-3000:]}"
+    ev = [json.loads(l) for l in open(metrics) if l.strip()]
+    assert any(e["event"] == "interrupted" for e in ev) and os.path.exists(os.path.join(folder, "checkpoint.pt"))
+    with open(os.path.join(folder, "log2.txt"), "w") as log:
+        code = subprocess.run([sys.executable, "train.py"], cwd=folder, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=900).returncode
+    assert code == 0, open(os.path.join(folder, "log2.txt")).read()[-3000:]
+    ev = [json.loads(l) for l in open(metrics) if l.strip()]
+    res = next(e for e in ev if e["event"] == "resume")
+    epochs = [e["epoch"] for e in ev if e["event"] == "epoch"]
+    assert epochs == sorted(set(epochs)) and epochs[-1] == 8, epochs
+    done2 = next(e for e in ev if e["event"] == "done")
+    print(f"parallel: 2 workers, one set of events, test accuracy {done['test_acc']}; spot notice -> exit 75 at epoch {res['epoch']} "
+          f"step {res['step']}, resumed, finished all 8 epochs (test accuracy {done2['test_acc']})")
+
+
 def custom_blocks(root):
     """the design's own PyTorch classes train like any block, the custom loss is used, and a wrong '# out:' line stops the run at the
     one-batch check with a message naming the block"""
@@ -739,6 +789,7 @@ if __name__ == "__main__":
     timeseries(sys.argv[1])
     transformer_math(sys.argv[1])
     detection(sys.argv[1])
+    parallel(sys.argv[1])
     cloud(sys.argv[1])
     ben(sys.argv[1])
     pretrained_ms(sys.argv[1])

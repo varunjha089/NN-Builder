@@ -508,6 +508,19 @@ attention instead of Concat), or one date's tokens attending to the others. Conc
 time series, dates with no data at all (every pixel empty) are filled from the dates before and after, so attention needs no mask for
 them; a token embedding for text is not part of NN Builder (it trains on images).
 
+\subsection{Several GPUs}
+\label{sec:multigpu}
+On a machine with several GPUs (a college server, a multi-GPU EC2 instance such as g4dn.12xlarge or g5.12xlarge, a Kaggle notebook with
+two T4s) the Train tab's \ui{GPUs} can be \emph{all the machine has} or a number. \file{train.py} then starts one worker per GPU itself
+(nothing else changes in how the run is started) and trains with PyTorch's DistributedDataParallel: every worker holds the whole network
+and takes its share of every batch, the gradients are averaged after each step, and BatchNorm counts the images of all GPUs. The batch
+size stays the total, so the training goes as on one GPU, in about $1/N$ of the time when the data loading keeps up. Worker~0 evaluates,
+writes the events, checkpoints and results; the stop button, the spot interruption notice and the timed checkpoints reach every worker
+(the run's process forwards them), all stop at the same step, and a resumed run continues at the same batch. With several GPUs a batch
+that does not fit is not split automatically (use a smaller batch or \ui{save memory}); a data check uses one GPU. The Kaggle API
+cannot choose the T4$\times$2 accelerator: a Kaggle run gets one GPU unless the notebook is set to two. A model too big for one GPU's
+memory (FSDP, splitting the weights over the GPUs) is not supported yet.
+
 \subsection{Transformers in NN Builder}
 A transformer works on a \emph{sequence of tokens}, shape $(N, D)$: $N$ tokens of $D$ values. To use one on images:
 \begin{enumerate}
