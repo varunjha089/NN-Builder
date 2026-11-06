@@ -1249,16 +1249,57 @@ LOSS_WEIGHT = None   # unbalanced classes: a weight per class (multi-label: pos_
 THRESH = None        # multi-label: a decision threshold per class chosen on the validation data (tune_thresholds), else 0.5
 
 
+LOSS = TRAIN.get("loss") or ""            # "" (cross-entropy / BCE) | "focal" | "dice" | "dice_ce" (Train tab)
+GAMMA = float(TRAIN.get("focal_gamma") or 2.0)
+
+
 def loss_of(out, y, smoothing=0.0):
     """cross-entropy (one class per image / pixel), or binary cross-entropy per class for multi-label (smoothing pulls the targets
-    towards 0.5); weighted by class when the Train tab asks for it"""
+    towards 0.5); weighted by class when the Train tab asks for it. Focal: each term times (1 - p_true)^γ, so the easy, already-right
+    images / pixels count little. Dice (segmentation, multi-label): 1 - the mean over classes of 2|P∩T| / (|P| + |T|) on the batch's
+    probabilities; dice_ce adds the plain cross-entropy (BCE) to it. Unlabelled pixels (-100) are left out of every one."""
     w = None if LOSS_WEIGHT is None else LOSS_WEIGHT.to(out.device)
+    out = out.float()
     if MULTILABEL:
         t = y.float()
         if smoothing:
             t = t * (1 - smoothing) + 0.5 * smoothing
-        return nn.functional.binary_cross_entropy_with_logits(out.float(), t, pos_weight=w)
-    return nn.functional.cross_entropy(out, y, weight=w, label_smoothing=smoothing)
+        if LOSS == "focal":
+            bce = nn.functional.binary_cross_entropy_with_logits(out, t, pos_weight=w, reduction="none")
+            p = torch.sigmoid(out)
+            pt = p * y.float() + (1 - p) * (1 - y.float())
+            return ((1 - pt) ** GAMMA * bce).mean()
+        bce = nn.functional.binary_cross_entropy_with_logits(out, t, pos_weight=w)
+        if LOSS in ("dice", "dice_ce"):
+            d = dice_loss(torch.sigmoid(out), y.float(), 0, w)
+            return d if LOSS == "dice" else d + bce
+        return bce
+    if LOSS == "focal":
+        ce = nn.functional.cross_entropy(out, y, weight=w, label_smoothing=smoothing, reduction="none")  # 0 where y = -100
+        keep = y >= 0
+        pt = out.log_softmax(1).gather(1, y.clamp_min(0).unsqueeze(1)).squeeze(1).exp()
+        norm = w[y.clamp_min(0)][keep].sum() if w is not None else keep.sum()
+        return ((1 - pt) ** GAMMA * ce)[keep].sum() / norm.clamp_min(1e-6)
+    ce = nn.functional.cross_entropy(out, y, weight=w, label_smoothing=smoothing)
+    if LOSS in ("dice", "dice_ce") and SEG:
+        keep = (y >= 0).unsqueeze(1)
+        t = nn.functional.one_hot(y.clamp_min(0), out.shape[1]).movedim(-1, 1).float()
+        d = dice_loss(out.softmax(1) * keep, t * keep, 1, w)
+        if not bool(keep.any()):
+            d = d * 0.0
+        return d if LOSS == "dice" else d + torch.nan_to_num(ce)
+    return ce
+
+
+def dice_loss(p, t, axis, w=None, eps=1.0):
+    """1 - the (class-weighted) mean soft Dice score; p, t: probabilities and 0/1 targets with the classes on `axis`, summed over the
+    batch and the pixels. eps keeps a class that is absent from the batch and not predicted near a score of 1"""
+    dims = [d for d in range(p.dim()) if d != axis]
+    inter, total = (p * t).sum(dims), (p + t).sum(dims)
+    score = (2 * inter + eps) / (total + eps)
+    if w is None:
+        return 1 - score.mean()
+    return 1 - (score * w).sum() / w.sum()
 
 
 def class_weights(train, how):
@@ -1821,7 +1862,8 @@ def main():
          train_size=len(train), val_size=len(val) if val is not None else 0, test_size=len(test), epochs=cfg["epochs"],
          early_stop=early, patience=patience if early else None, monitor=monitor if early else None,
          recipe={"optimizer": cfg["optimizer"], "lr": base_lr, "weight_decay": wd, "schedule": schedule, "warmup_epochs": cfg.get("warmup_epochs", 0),
-                 "label_smoothing": smoothing, "grad_clip": clip}, amp=amp, augmentation={k: v for k, v in AUG.items() if v},
+                 "label_smoothing": smoothing, "grad_clip": clip, "loss": LOSS or "cross_entropy", "focal_gamma": GAMMA if LOSS == "focal" else None},
+         amp=amp, augmentation={k: v for k, v in AUG.items() if v},
          precision=precision, channels_last=channels_last, workers=workers, save_memory=bool(getattr(model, "save_memory", False)),
          auto_split=auto_split)
     if cfg.get("check_only"):
@@ -1969,6 +2011,8 @@ def main():
         res.update(confusion)   # micro_f1 (= test_acc), macro_f1, map, exact, per_class
         if THRESH is not None:
             res["thresholds"] = [float(t) for t in THRESH]
+    if LOSS:
+        res["loss"] = {"kind": LOSS, "gamma": GAMMA} if LOSS == "focal" else {"kind": LOSS}
     if LOSS_WEIGHT is not None:
         res["class_weights"] = [round(float(v), 4) for v in LOSS_WEIGHT]
     if test_top5 is not None:

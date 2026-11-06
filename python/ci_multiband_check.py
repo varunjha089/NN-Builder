@@ -221,6 +221,7 @@ def own_files(root):
     done = next(e for e in ev if e["event"] == "done")
     assert done["test_acc"] >= 0.75 and done["miou"] >= 0.5, done
     res = json.load(open(os.path.join(root, "scene", "results.json")))
+    assert res["loss"] == {"kind": "dice"}, res.get("loss")
     assert len(res["samples"][0]["image"]) == 3, "composite pictures"
     print(f"scene: {tiles['message']}, pixel accuracy {done['test_acc']}, mean IoU {done['miou']}")
 
@@ -247,13 +248,56 @@ def own_files(root):
     assert len(th) == 3 and all(0.05 <= t <= 0.95 for t in th) and res["thresholds"] == th, th
     cw = next(e for e in ev if e["event"] == "class_weights")
     assert cw["kind"] == "pos_weight" and len(cw["weights"]) == 3, cw
+    assert res["loss"] == {"kind": "focal", "gamma": 2.0}, res.get("loss")
     print(f"multilabel: micro F1 {done['test_acc']}, macro F1 {done['test_macro_f1']}, mAP {done['test_map']}, exact {done['test_exact']}, "
           f"thresholds {th}, pos_weight {cw['weights']}")
 
     ev = run(os.path.join(root, "segfiles"), data, "segfiles")
     done = next(e for e in ev if e["event"] == "done")
     assert done["test_acc"] >= 0.8, done
+    assert next(e for e in ev if e["event"] == "start")["recipe"]["loss"] == "dice_ce"
     print(f"segfiles: images + masks, pixel accuracy {done['test_acc']}, mean IoU {done['miou']}")
+
+
+def loss_math():
+    """the harness's losses against their definitions on small tensors: focal with γ 0 is cross-entropy (BCE), focal never exceeds it,
+    Dice of a perfect prediction is 0, unlabelled pixels (-100) change nothing, class weights reach every loss"""
+    import torch
+    from torch import nn
+    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "harness.py")).read()
+    part = src[src.index("def loss_of("):src.index("def class_weights(")]
+    F = nn.functional
+    torch.manual_seed(0)
+
+    def env(task, loss, gamma=2.0, w=None):
+        ns = {"torch": torch, "nn": nn, "MULTILABEL": task == "multilabel", "SEG": task == "segment", "LOSS": loss, "GAMMA": gamma,
+              "LOSS_WEIGHT": w}
+        exec(part, ns)
+        return ns["loss_of"]
+
+    out, y = torch.randn(8, 3), torch.randint(0, 3, (8,))
+    w = torch.tensor([0.5, 1.0, 3.0])
+    assert torch.allclose(env("classify", "focal", 0.0)(out, y), F.cross_entropy(out, y), atol=1e-6)
+    assert torch.allclose(env("classify", "focal", 0.0, w)(out, y), F.cross_entropy(out, y, weight=w), atol=1e-6)
+    assert env("classify", "focal")(out, y) < F.cross_entropy(out, y)
+    seg, m = torch.randn(2, 3, 5, 5), torch.randint(0, 3, (2, 5, 5))
+    m2 = m.clone()
+    m2[:, 0] = -100
+    for loss in ("focal", "dice", "dice_ce"):
+        f = env("segment", loss)
+        a = f(seg, m2)
+        b = seg.clone()
+        b[:, :, 0] = torch.randn(2, 3, 5) * 10   # change the outputs only where no pixel is labelled
+        assert torch.allclose(a, f(b, m2), atol=1e-5), f"{loss}: unlabelled pixels changed the loss"
+        assert torch.isfinite(f(seg, torch.full_like(m, -100))), f"{loss}: a batch without labels"
+    perfect = F.one_hot(m, 3).movedim(-1, 1).float() * 50
+    assert env("segment", "dice")(perfect, m) < 1e-3
+    assert torch.allclose(env("segment", "dice_ce")(seg, m) - env("segment", "dice")(seg, m), F.cross_entropy(seg, m), atol=1e-5)
+    ml, t = torch.randn(6, 4), (torch.rand(6, 4) < 0.4).long()
+    assert torch.allclose(env("multilabel", "focal", 0.0)(ml, t), F.binary_cross_entropy_with_logits(ml, t.float()), atol=1e-6)
+    assert env("multilabel", "dice")(t.float() * 100 - 50, t) < 1e-2
+    assert env("segment", "dice", w=w)(seg, m) != env("segment", "dice")(seg, m), "class weights reach Dice"
+    print("losses: focal (γ 0 = CE / BCE, weights), Dice (perfect = 0), Dice + CE, unlabelled pixels left out")
 
 
 def make_imbalanced(root):
@@ -280,6 +324,7 @@ def imbalanced(root):
     res = json.load(open(os.path.join(root, "imbalanced", "results.json")))
     conf = res["confusion"]
     rare_recall = conf[1][1] / max(1, sum(conf[1]))
+    assert res["loss"]["kind"] == "focal", res.get("loss")
     assert rare_recall >= 0.5, f"the rare class was not learnt: {conf}"
     print(f"imbalanced: counts {c}, weights {w}, rare-class recall {rare_recall:.2f}, test accuracy {res['test_acc']:.3f}")
 
@@ -392,6 +437,7 @@ def check_data(root):
 
 
 if __name__ == "__main__":
+    loss_math()
     main(sys.argv[1])
     own_files(sys.argv[1])
     check_data(sys.argv[1])

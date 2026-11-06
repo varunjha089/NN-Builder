@@ -596,6 +596,26 @@ fn class_counts_weights_and_thresholds_settings() {
 }
 
 #[test]
+fn loss_choice() {
+    let t = TrainSettings { loss: "bogus".into(), focal_gamma: 9.0, ..Default::default() }.clean();
+    assert!(t.loss.is_empty() && t.focal_gamma == 5.0);
+    let mut old = serde_json::to_value(TrainSettings::default()).unwrap();
+    old.as_object_mut().unwrap().retain(|k, _| k != "loss" && k != "focal_gamma");
+    let t: TrainSettings = serde_json::from_value(old).unwrap();
+    assert!(t.loss.is_empty() && t.focal_gamma == 2.0, "old train.json: cross-entropy, γ 2");
+    let g = chain(vec![("input", json!({})), ("flatten", json!({})), ("output", json!({}))]);
+    let ds = Dataset { source: "builtin".into(), ..Default::default() };
+    let a = analyze(&g, &ds);
+    let focal = TrainSettings { loss: "focal".into(), focal_gamma: 1.5, ..Default::default() }.clean();
+    let code = train_script(&g, &ds, &a, &focal, "t").unwrap();
+    assert!(code.contains("\"loss\": \"focal\"") && code.contains("\"focal_gamma\": 1.5"), "the loss reaches train.py");
+    // Dice needs classes per pixel or several per image: refused on the Mac for one class per image
+    let dice = TrainSettings { loss: "dice_ce".into(), ..Default::default() }.clean();
+    let err = train_script(&g, &ds, &a, &dice, "t").unwrap_err().to_string();
+    assert!(err.contains("Dice loss needs segmentation or multi-label"), "{err}");
+}
+
+#[test]
 fn cloud_locations() {
     use nnb_core::dataset::cloud_url_problem;
     for ok in ["gs://my-bucket/nnb_export", "gs://abc", "https://drive.google.com/drive/folders/1AbC", "rclone:gdrive:exports/s2", "file:///data/x"] {

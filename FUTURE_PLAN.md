@@ -75,7 +75,8 @@ escape hatch, 2-D only, supervised only, one GPU. The steps below, in this order
 (why the order: section 0b):
 
 2. **Losses:** Dice, focal, Dice + CE, MSE / L1 / Huber (regression, a "regress" task), chosen in the Train tab; Dice / focal first,
-   for unbalanced Sentinel segmentation. Harness `loss_of` gains the cases; class weights keep working.
+   for unbalanced Sentinel segmentation. Harness `loss_of` gains the cases; class weights keep working. *Dice, Dice + CE and focal done
+   (2026-11-06; CI-tested, not yet on a real run). Left: MSE / L1 / Huber with a "regress" task.*
 3. **Custom PyTorch block (escape hatch):** a block holding a few lines of PyTorch (`__init__` and `forward` bodies) plus a declared
    output shape (formula in the input shape); shapes trusts the declaration, codegen pastes the code into the model class, the
    one-batch check on the GPU machine compares the real shape with the declared one. Also a custom loss (a function of logits and
@@ -114,7 +115,7 @@ editor better than a canvas. With step 3 their parts (a U-Net block with timeste
 
 - **MobileNet v2 / EfficientNet-B0 demos with ImageNet weights** (the plan named MobileNet; the current MobileNet demo is v1, which
   torchvision has no weights for).
-- Mixup / CutMix and RandAugment; a class-weighted loss for imbalanced data (the Dataset tab already reads the class balance).
+- Mixup / CutMix and RandAugment.
 - A hyperparameter sweep (grid over learning rate and batch size) on the seed-group machinery.
 - `torch.compile` as an option.
 

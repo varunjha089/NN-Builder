@@ -20,6 +20,8 @@ export function ResultsTab({ runId }: { runId: string | null }) {
   return (
     <div className="page">
       <h2>Results of run {runId}</h2>
+      {r.loss && <p className="muted small">Trained with {({ focal: "focal loss", dice: "Dice loss", dice_ce: "Dice + cross-entropy loss" } as Record<string, string>)[r.loss.kind] ?? r.loss.kind}
+        {r.loss.kind === "focal" ? ` (γ ${r.loss.gamma})` : ""}.</p>}
       {r.class_weights && <p className="muted small">Trained with class weights{r.task === "multilabel" ? " (positive weight per class)" : ""}:
         {" "}{r.class_weights.map((w: number, i: number) => `${classes[i]} ${w}`).join(", ")}.</p>}
       {r.task === "multilabel" && <p className="muted small">Several classes per image: each class is a yes/no (score ≥ 50%). Micro F1 counts every

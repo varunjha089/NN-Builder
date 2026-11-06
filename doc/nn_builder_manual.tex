@@ -911,7 +911,7 @@ GPU memory the training needs (16 bytes per parameter plus the layer outputs at 
 \label{sec:imbalance}
 Real land-cover data is rarely balanced (BigEarthNet's rarest labels are on under 1\,\% of the patches), and a network can then score
 well while ignoring the rare classes. The Dataset tab shows the images per class next to the class folders (Read folder / Read files),
-with a warning above a 3:1 ratio; \ui{Check data} counts them on the machine for every source. Two settings in the Train tab's recipe
+with a warning above a 3:1 ratio; \ui{Check data} counts them on the machine for every source. Three settings in the Train tab's recipe
 help:
 \begin{itemize}[nosep]
   \item \ui{Unbalanced classes}: \emph{weight by inverse frequency} gives class $c$ the weight $N/(K\,n_c)$ in the loss ($N$ training
@@ -921,6 +921,14 @@ help:
   \item \ui{multi-label: a threshold per class}: after training, each class gets the threshold (5\,\%--95\,\%) with the highest F1 on the
         validation data instead of 50\,\%; the test scores use them, Results lists them, and \file{thresholds.json} is saved next to the
         model. It needs validation data, so it sets the validation share to 10\,\% if it was 0.
+  \item \ui{Loss}: \emph{cross-entropy} (binary cross-entropy for multi-label) is the default. \emph{Focal} multiplies each image's
+        (pixel's) term by $(1-p)^\gamma$, where $p$ is the probability given to the right answer, so the images the network already
+        gets right count little and the rare, hard ones count more; $\gamma=0$ is plain cross-entropy, 2 is usual. For segmentation and
+        multi-label there is also \emph{Dice}: $1-\frac{1}{K}\sum_c \frac{2|P_c\cap T_c|}{|P_c|+|T_c|}$ on the batch's predicted
+        probabilities $P_c$ and true pixels (images) $T_c$ of class $c$, so a small class counts as much as a large one; \emph{Dice +
+        cross-entropy} adds the two and learns more steadily at the start. Unlabelled pixels are left out of every loss, and class
+        weights apply to all of them (Dice: a weighted mean over the classes). Dice for one class per image is refused before the run
+        starts. Results names the loss used.
 \end{itemize}
 Look at the per-class scores (precision, recall, F1) rather than the accuracy alone.
 

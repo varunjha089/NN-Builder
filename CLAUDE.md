@@ -103,6 +103,11 @@ crates/core/src/
                            (clean() forces val_fraction ≥ 0.1) -> tune_thresholds() per-class F1-best threshold on validation, THRESH used
                            by multilabel_scores and pictures, thresholds.json; cloud::folder_counts -> "counts" in kaggle_files / local
                            describe, DatasetTab FolderCounts. CI: imbalanced case (10:1) and multilabel thresholds + sqrt pos_weight.
+                           Losses: TrainSettings.loss ("" CE/BCE | focal | dice | dice_ce; codegen::LOSSES) and focal_gamma (default 2,
+                           clean() 0-5); train_script refuses dice for task classify; harness LOSS / GAMMA, loss_of + dice_loss (-100
+                           pixels masked, LOSS_WEIGHT weights every loss), recipe.loss in "start", results.json "loss"; Train tab Loss
+                           select, ResultsTab line. CI: ci_multiband_check loss_math (formulas on small tensors) and focal on
+                           imbalanced + multilabel, dice_ce on segfiles, dice on scene.
                            Sentinel step finished: scene_split ("" random | strip = eastern tenth, one tile column gap | files =
                            scene_test_image/_label) in harness scene_split(); BigEarthNet layout: read_patch_folder (one GeoTIFF per band,
                            <patch>_<band>.tif, bands resized to the largest), label tables via read_table (CSV/TSV/Parquet, pyarrow on

@@ -85,6 +85,7 @@ fn main() {
         assert_eq!(a.input, vec![ds.bands.len() + ds.bands2.len(), ds.image_size[0], ds.image_size[1]]);
         let t = TrainSettings { check_only: name == "check",
             class_weights: match name { "imbalanced" => "inverse".into(), "multilabel" => "sqrt".into(), _ => String::new() },
+            loss: match name { "imbalanced" | "multilabel" => "focal".into(), "segfiles" => "dice_ce".into(), "scene" => "dice".into(), _ => String::new() },
             tune_thresholds: name == "multilabel", val_fraction: if name == "multilabel" { 0.15 } else { 0.0 }, epochs: match ds.task.as_str() { "segment" => 10, "multilabel" => 8, _ => 3 }, batch_size: 16, amp: false, aug_hflip: true, aug_rotate: 10.0, ..Default::default() };
         let d = format!("{dir}/{name}");
         std::fs::create_dir_all(&d).unwrap();

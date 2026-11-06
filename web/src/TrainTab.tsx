@@ -152,6 +152,26 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
               <input type="checkbox" checked={!!train.tune_thresholds} onChange={(e) => set({ tune_thresholds: e.target.checked, ...(e.target.checked && !train.val_fraction ? { val_fraction: 0.1 } : {}) })} />
               multi-label: a threshold per class, chosen on the validation data</label>
           </div>
+          <div className="row">
+            <label title="What the network is trained to make small">Loss
+              <select value={train.loss ?? ""} onChange={(e) => set({ loss: e.target.value as TrainSettings["loss"] })}>
+                <option value="">{datasetTask === "multilabel" ? "binary cross-entropy" : "cross-entropy"}</option>
+                <option value="focal">focal (hard examples count more)</option>
+                {(datasetTask === "segment" || datasetTask === "multilabel") && <>
+                  <option value="dice">Dice (overlap per class)</option>
+                  <option value="dice_ce">Dice + cross-entropy</option></>}
+              </select></label>
+            {train.loss === "focal" && <label>focal γ<input type="number" min={0} max={5} step={0.5} value={train.focal_gamma ?? 2}
+              onChange={(e) => set({ focal_gamma: Number(e.target.value) })} /></label>}
+          </div>
+          {train.loss?.startsWith("dice") && datasetTask !== "segment" && datasetTask !== "multilabel" &&
+            <p className="msg error small">Dice loss needs segmentation or multi-label; with one class per image use cross-entropy or focal.</p>}
+          {train.loss === "focal" && <p className="muted small">Focal loss multiplies each image's (pixel's) cross-entropy by (1 − p)^γ, where p is the
+            probability given to the right class: images the network already gets right count little, so the rare and hard ones count more.
+            γ 0 is plain cross-entropy; 2 is usual. It works together with class weights.</p>}
+          {train.loss?.startsWith("dice") && <p className="muted small">Dice loss is 1 − the overlap 2|P∩T| / (|P| + |T|) of each class's predicted and
+            true {datasetTask === "segment" ? "pixels" : "images"} in the batch, averaged over the classes, so a small class counts as much as a large
+            one. Dice + cross-entropy is the steadier choice (Dice alone can learn slowly at the start).</p>}
           {train.class_weights && <p className="muted small">The weights come from the training images per class, counted on the training machine
             (shown in the run's log). Multi-label: each class's positives weigh negatives ÷ positives{train.class_weights === "sqrt" ? " (square root)" : ""}.</p>}
           {train.weight_decay > 0 && train.optimizer === "adam" && <p className="muted small">With Adam, weight decay is mixed into the adaptive
