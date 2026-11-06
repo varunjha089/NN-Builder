@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 pub struct Dataset {
     /// "builtin" | "huggingface" | "kaggle" | "local" (the owner's own files, e.g. GeoTIFFs exported from Google Earth Engine)
     pub source: String,
-    /// "classify" (one label per image) | "segment" (a class for every pixel: images + masks)
+    /// "classify" (one label per image) | "multilabel" (any number of classes per image: sigmoid + BCE) | "segment" (a class for every
+    /// pixel: images + masks)
     #[serde(default = "classify")]
     pub task: String,
     /// built-in sets: resize to image_size / convert to channels (e.g. CIFAR-10 at 224×224 for AlexNet); other sources always resize
@@ -79,6 +80,24 @@ pub struct Dataset {
     pub scene_image: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub scene_label: String,
+    /// multilabel (kaggle / local): the CSV with the labels, relative to the dataset: a file column (path relative to the CSV's folder or
+    /// the training folder, with or without extension) and either a column of class names separated by ; , | or spaces, or one 0/1
+    /// column per class. Hugging Face: the label column is a list of class labels.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub labels_csv: String,
+    /// fusion (e.g. Sentinel-1 + Sentinel-2): a second band group, read from `fuse_dir` (a folder with the same relative file names,
+    /// any extension; scenes: the second image folder) and stacked after the first group's bands. Input blocks with group 1 / 2 take
+    /// one group each (mid fusion); an Input with group 0 takes both (early fusion).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bands2: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub band_order2: Vec<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub sensor2: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub s1_db2: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub fuse_dir: String,
 }
 
 /// Sentinel-2 L1C bands in the order EuroSAT-MS stores them (B8A last); `SENTINEL2_10_20` are the 10 m and 20 m bands
@@ -174,6 +193,12 @@ impl Default for Dataset {
             layout: String::new(),
             scene_image: String::new(),
             scene_label: String::new(),
+            labels_csv: String::new(),
+            bands2: vec![],
+            band_order2: vec![],
+            sensor2: String::new(),
+            s1_db2: false,
+            fuse_dir: String::new(),
         }
     }
 }
@@ -187,7 +212,7 @@ impl Dataset {
     pub fn input_shape(&self) -> Vec<usize> {
         match (self.source.as_str(), self.builtin_info()) {
             ("builtin", Some(b)) if !self.resize => b.shape.to_vec(),
-            _ if !self.bands.is_empty() => vec![self.bands.len(), self.image_size[0], self.image_size[1]],
+            _ if !self.bands.is_empty() => vec![self.bands.len() + self.bands2.len(), self.image_size[0], self.image_size[1]],
             _ => vec![self.channels, self.image_size[0], self.image_size[1]],
         }
     }
@@ -195,6 +220,21 @@ impl Dataset {
     /// multispectral / radar images (bands chosen), not ordinary pictures
     pub fn multiband(&self) -> bool {
         !self.bands.is_empty()
+    }
+
+    /// two band groups (e.g. Sentinel-2 + Sentinel-1)
+    pub fn fused(&self) -> bool {
+        self.multiband() && !self.bands2.is_empty()
+    }
+
+    /// the channels an Input block of this group receives: 0 = all, 1 = the first band group, 2 = the second (None: no such group)
+    pub fn group_channels(&self, group: u64) -> Option<usize> {
+        match group {
+            0 => Some(self.input_shape()[0]),
+            1 if self.fused() => Some(self.bands.len()),
+            2 if self.fused() => Some(self.bands2.len()),
+            _ => None,
+        }
     }
 
     /// local: the name the files have on the training machine (<data>/local/<key>) and on Kaggle (<owner>/<key>, a private dataset):
@@ -268,6 +308,17 @@ impl Dataset {
             }
             _ => p.push("Choose where the data comes from.".into()),
         }
+        if !matches!(self.task.as_str(), "classify" | "multilabel" | "segment") {
+            p.push("Choose the task.".into())
+        }
+        if self.task == "multilabel" {
+            match self.source.as_str() {
+                "builtin" => p.push("The built-in datasets have one label per image: choose a multi-label dataset.".into()),
+                "kaggle" | "local" if self.labels_csv.is_empty() => p.push("Give the CSV file with the labels of every image.".into()),
+                "kaggle" | "local" if !ok_id(&self.labels_csv) => p.push("The labels file may contain letters, digits and - _ . / only.".into()),
+                _ => {}
+            }
+        }
         if self.task == "segment" {
             match self.source.as_str() {
                 "builtin" => p.push("The built-in datasets are for classification: choose a segmentation dataset from Hugging Face or Kaggle.".into()),
@@ -299,6 +350,28 @@ impl Dataset {
                 }
                 if self.bands.iter().enumerate().any(|(i, b)| self.bands[..i].iter().any(|x| band_key(x) == band_key(b))) {
                     p.push("A band is chosen twice.".into())
+                }
+                if !self.bands2.is_empty() {
+                    let order2: Vec<String> = self.band_order2.iter().map(|b| band_key(b)).collect();
+                    if let Some(b) = self.bands2.iter().find(|b| !order2.contains(&band_key(b))) {
+                        p.push(format!("The band {b} is not in the bands of the second files ({}).", self.band_order2.join(" ")))
+                    }
+                    if !self.band_order2.iter().all(ok_name) {
+                        p.push("Band names may contain letters, digits, - and _ only.".into())
+                    }
+                    if self.bands.len() + self.bands2.len() > MAX_BANDS {
+                        p.push(format!("At most {MAX_BANDS} bands in both groups together."))
+                    }
+                    let keys: Vec<String> = self.bands.iter().chain(&self.bands2).map(|b| band_key(b)).collect();
+                    if keys.iter().enumerate().any(|(i, b)| keys[..i].contains(b)) {
+                        p.push("The two band groups share a band name: rename one (e.g. VV in the second group only).".into())
+                    }
+                    if !self.kaggle_test_dir.is_empty() && self.task != "multilabel" {
+                        p.push("With two band groups, leave the test folder empty (10% of the images are the test data).".into())
+                    }
+                    if self.fuse_dir.is_empty() || !ok_id(&self.fuse_dir) {
+                        p.push("Give the folder with the second group's files (same file names as the first).".into())
+                    }
                 }
                 if !matches!(self.source.as_str(), "kaggle" | "local") {
                     p.push("Multispectral and radar images are read from GeoTIFF (.tif) or .npy files: your own files or a Kaggle dataset.".into())

@@ -23,9 +23,18 @@ OUT = os.getcwd() if ON_KAGGLE else os.path.dirname(os.path.abspath(__file__))
 DATA = os.environ.get("NNB_DATA") or ("/tmp/nnb_data" if ON_KAGGLE else os.path.join(os.path.expanduser("~"), ".nn_builder", "data"))
 TASK = DATASET.get("task", "classify")
 SEG = TASK == "segment"
-# multispectral / radar images (Sentinel-2, Sentinel-1, …): arrays of any number of bands from GeoTIFF or .npy files, not PIL pictures
-BANDS = list(DATASET.get("bands") or [])
+MULTILABEL = TASK == "multilabel"   # any number of classes per image: one sigmoid per class, binary cross-entropy, F1 and mAP
+# multispectral / radar images (Sentinel-2, Sentinel-1, …): arrays of any number of bands from GeoTIFF or .npy files, not PIL pictures.
+# Fusion: a second band group (e.g. Sentinel-1 next to Sentinel-2) from files with the same names in another folder, stacked after the
+# first group's bands; the network's Input blocks may take one group each (the generated forward slices the channels).
+GROUPS = [{"bands": list(DATASET.get("bands") or []), "order": list(DATASET.get("band_order") or DATASET.get("bands") or []),
+           "sensor": DATASET.get("sensor", ""), "db": bool(DATASET.get("s1_db"))}]
+if DATASET.get("bands2"):
+    GROUPS.append({"bands": list(DATASET["bands2"]), "order": list(DATASET.get("band_order2") or DATASET["bands2"]),
+                   "sensor": DATASET.get("sensor2", ""), "db": bool(DATASET.get("s1_db2"))})
+BANDS = [b for g in GROUPS for b in g["bands"]]
 MULTI = bool(BANDS)
+FUSE = []          # (folder of the first group's files, folder of the second group's), set by load_data
 BAND_STATS = None  # per-band (mean, std), measured on the training images (multiband_stats)
 AUG = TRAIN.get("aug", {})
 STOP = False
@@ -253,6 +262,11 @@ class HFImages(torch.utils.data.Dataset):
     def __getitem__(self, i):
         row = self.ds[i]
         label = row[DATASET["hf_label_col"]]
+        if MULTILABEL:
+            y = torch.zeros(len(CLASSES))
+            for v in (label if isinstance(label, (list, tuple)) else [label]):
+                y[self.names[v] if isinstance(v, str) else int(v)] = 1.0
+            return self.tfm(to_pil(row[DATASET["hf_image_col"]])), y
         if isinstance(label, str):
             label = self.names[label]
         return self.tfm(to_pil(row[DATASET["hf_image_col"]])), int(label)
@@ -389,11 +403,10 @@ def band_key(b):
     return "B0" + u[1:] if len(u) == 2 and u[0] == "B" and u[1].isdigit() else u
 
 
-BAND_IDX = None    # positions of the chosen bands in the files' band order
 DB_NOTE = [False]  # the "already in decibels" note is given once
 
 
-def read_array(path):
+def read_array(path, order=None):
     """a GeoTIFF / .npy file as a float32 array, bands first when the band axis can be told by the number of bands of the files"""
     import numpy as np
     if path.lower().endswith(".npy"):
@@ -408,7 +421,7 @@ def read_array(path):
     a = np.asarray(a, dtype=np.float32)
     if a.ndim == 2:
         a = a[None]
-    order = DATASET.get("band_order") or BANDS
+    order = order or GROUPS[0]["order"]
     # (H, W, bands) -> (bands, H, W): the band axis is the one that matches the number of bands of the files
     if a.ndim == 3 and a.shape[0] != len(order) and a.shape[-1] == len(order):
         a = a.transpose(2, 0, 1)
@@ -418,16 +431,16 @@ def read_array(path):
     return a
 
 
-def pick_bands(a):
-    """the chosen bands of a (bands, H, W) array, in the chosen order; Sentinel-1 in decibels when asked (values that are already
-    decibels, as Earth Engine's S1_GRD exports them, are recognised by their negative values and left alone)"""
+def pick_bands(a, g=None):
+    """the chosen bands of a (bands, H, W) array of band group g, in the chosen order; Sentinel-1 in decibels when asked (values that
+    are already decibels, as Earth Engine's S1_GRD exports them, are recognised by their negative values and left alone)"""
     import numpy as np
-    global BAND_IDX
-    if BAND_IDX is None:
-        keys = [band_key(b) for b in (DATASET.get("band_order") or BANDS)]
-        BAND_IDX = [keys.index(band_key(b)) for b in BANDS]
-    a = a[BAND_IDX]
-    if DATASET.get("sensor") == "s1" and DATASET.get("s1_db"):
+    g = g or GROUPS[0]
+    if "idx" not in g:
+        keys = [band_key(b) for b in g["order"]]
+        g["idx"] = [keys.index(band_key(b)) for b in g["bands"]]
+    a = a[g["idx"]]
+    if g["sensor"] == "s1" and g["db"]:
         if np.nanmin(a) < 0:
             if not DB_NOTE[0]:
                 DB_NOTE[0] = True
@@ -437,15 +450,38 @@ def pick_bands(a):
     return a
 
 
-def read_bands(path, resize=True):
-    """one image file as a float32 tensor (bands, H, W) with the chosen bands, in the chosen order; empty pixels (NaN, as Earth Engine
-    writes masked pixels of float images) stay NaN until normalised"""
+def fuse_path(path):
+    """the second band group's file for a first-group file: the same path relative to the first group's folder, in the second group's
+    folder, with any of the extensions .tif / .tiff / .npy"""
+    base1, base2 = FUSE
+    stem = os.path.splitext(os.path.relpath(path, base1))[0]
+    for ext in BAND_EXT + tuple(e.upper() for e in BAND_EXT):
+        if os.path.exists(os.path.join(base2, stem + ext)):
+            return os.path.join(base2, stem + ext)
+    raise SystemExit(f"DATA: {stem} has no file in the second band group's folder ({base2}); both groups need the same file names.")
+
+
+def read_groups(path, resize=True):
+    """every band group of one image as float32 tensors (first group from `path`, the second from its twin file)"""
     import numpy as np
-    t = torch.from_numpy(np.ascontiguousarray(pick_bands(read_array(path))))
-    h, w = DATASET["image_size"]
-    if resize and tuple(t.shape[1:]) != (h, w):
-        t = nn.functional.interpolate(t[None], size=(h, w), mode="bilinear", align_corners=False, antialias=True)[0]
-    return t
+    out = []
+    for k, g in enumerate(GROUPS):
+        p = path if k == 0 else fuse_path(path)
+        t = torch.from_numpy(np.ascontiguousarray(pick_bands(read_array(p, g["order"]), g)))
+        h, w = DATASET["image_size"]
+        if resize and tuple(t.shape[1:]) != (h, w):
+            t = nn.functional.interpolate(t[None], size=(h, w), mode="bilinear", align_corners=False, antialias=True)[0]
+        out.append(t)
+    if len({tuple(t.shape[1:]) for t in out}) > 1:
+        raise SystemExit(f"DATA: {os.path.basename(path)}: the band groups have different sizes {[tuple(t.shape[1:]) for t in out]}; "
+                         "export them on the same grid.")
+    return out
+
+
+def read_bands(path, resize=True):
+    """one image (both band groups when fused, stacked) as a float32 tensor (bands, H, W) with the chosen bands, in the chosen order;
+    empty pixels (NaN, as Earth Engine writes masked pixels of float images) stay NaN until normalised"""
+    return torch.cat(read_groups(path, resize), 0)
 
 
 def normalise(x):
@@ -570,6 +606,104 @@ class SceneTiles(torch.utils.data.Dataset):
         return x, y
 
 
+def set_fuse(root, first):
+    """fusion: remember the first group's folder and find the second group's (DATASET["fuse_dir"]) in the dataset"""
+    if len(GROUPS) > 1:
+        FUSE[:] = [first, kaggle_folder(root, DATASET["fuse_dir"])]
+
+
+# ---------------------------------------------------------------- multi-label: several classes per image, from a CSV
+FILE_COLS = ("file", "filename", "file_name", "image", "image_id", "img", "path", "name", "patch", "patch_id", "id")
+LABEL_COLS = ("labels", "label", "tags", "classes", "class", "categories", "landcover")
+
+
+def split_labels(cell, names):
+    """the classes in one CSV cell: names (or class numbers) separated by ; , | or spaces; a name with spaces is kept whole"""
+    import re
+    cell = cell.strip()
+    if not cell:
+        return []
+    parts = [x.strip() for x in re.split(r"[;,|]", cell)] if re.search(r"[;,|]", cell) else ([cell] if cell in names else cell.split())
+    out = []
+    for x in parts:
+        x = x.strip().strip("'\"[]")
+        if x in names:
+            out.append(names[x])
+        elif x.isdigit() and int(x) < len(CLASSES):
+            out.append(int(x))
+        elif x:
+            raise SystemExit(f"DATA: the label {x!r} is not one of the classes ({', '.join(CLASSES[:8])}{', …' if len(CLASSES) > 8 else ''}).")
+    return out
+
+
+def label_rows(root):
+    """(image file, multi-hot tensor) for every row of the labels CSV whose image exists; files are found relative to the CSV's folder,
+    then the training folder, with or without their extension"""
+    import csv
+    path = os.path.join(root, DATASET["labels_csv"])
+    if not os.path.isfile(path):
+        found = glob.glob(os.path.join(root, "**", DATASET["labels_csv"]), recursive=True)
+        if not found:
+            raise SystemExit(f"DATA: the labels file {DATASET['labels_csv']!r} is not in the dataset.")
+        path = found[0]
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        rows = list(csv.reader(f, delimiter="\t" if path.lower().endswith(".tsv") else ","))
+    head = [h.strip() for h in rows[0]]
+    low = [h.lower() for h in head]
+    names = {c: k for k, c in enumerate(CLASSES)}
+    fcol = next((i for i, h in enumerate(low) if h in FILE_COLS), 0)
+    onehot = [head.index(c) for c in CLASSES if c in head]
+    lcol = None if len(onehot) == len(CLASSES) else next((i for i, h in enumerate(low) if h in LABEL_COLS and i != fcol),
+                                                          next((i for i in range(len(head)) if i != fcol), None))
+    if lcol is None and len(onehot) != len(CLASSES):
+        raise SystemExit("DATA: the labels CSV needs a file column and a labels column (or one 0/1 column per class).")
+    bases = [os.path.dirname(path)] + ([kaggle_folder(root, DATASET["kaggle_train_dir"])] if DATASET.get("kaggle_train_dir") else []) + [root]
+    exts = ("",) + (BAND_EXT if MULTI else IMAGE_EXT)
+    items, missing = [], 0
+    for r in rows[1:]:
+        if not r or len(r) <= fcol or not r[fcol].strip():
+            continue
+        y = torch.zeros(len(CLASSES))
+        if lcol is None:
+            for k, c in enumerate(CLASSES):
+                y[k] = float(r[onehot[k]].strip() not in ("", "0", "0.0", "false", "False"))
+        else:
+            for k in split_labels(r[lcol] if lcol < len(r) else "", names):
+                y[k] = 1.0
+        f = r[fcol].strip()
+        p = next((os.path.join(b, f + e) for b in bases for e in exts if os.path.isfile(os.path.join(b, f + e))), None)
+        if p is None:
+            missing += 1
+            continue
+        items.append((p, y))
+    if missing:
+        emit("warning", message=f"{missing} rows of {os.path.basename(path)} name files that are not in the dataset (left out)")
+    if len(items) < 2:
+        raise SystemExit(f"DATA: {os.path.basename(path)}: no row names an image that is in the dataset (looked in {', '.join(bases)}).")
+    counts = sum(y for _, y in items)
+    emit("info", message=f"{len(items)} images with labels; per class: " + ", ".join(f"{c} {int(n)}" for c, n in zip(CLASSES, counts)))
+    return items
+
+
+class LabelFiles(torch.utils.data.Dataset):
+    """multi-label images: (file, multi-hot) pairs; pictures through the transforms, or multiband arrays"""
+    def __init__(self, items, train, tfm=None):
+        self.items, self.train, self.tfm = items, train, tfm
+
+    def __len__(self):
+        return len(self.items)
+
+    def __getitem__(self, i):
+        path, y = self.items[i]
+        if MULTI:
+            x = normalise(read_bands(path))
+            if self.train:
+                x, _ = flips(x)
+            return x, y
+        from PIL import Image
+        return self.tfm(Image.open(path)), y
+
+
 def scene_files(root, what):
     p = os.path.join(root, what)
     if os.path.isfile(p):
@@ -598,13 +732,13 @@ def scene_tiles(root):
     cache = os.path.join(DATA, "scenes", DATASET.get("local_key") or DATASET.get("kaggle_slug", "").replace("/", "__"))
     os.makedirs(cache, exist_ok=True)
     h, w = DATASET["image_size"]
-    tag = hashlib.sha1(json.dumps([BANDS, DATASET.get("band_order"), DATASET.get("s1_db"), len(CLASSES)]).encode()).hexdigest()[:8]
+    tag = hashlib.sha1(json.dumps([[{k: v for k, v in g.items() if k != "idx"} for g in GROUPS], DATASET.get("fuse_dir"), len(CLASSES)]).encode()).hexdigest()[:8]
     tiles = []
     for img, lab in pairs:
         stem = os.path.splitext(os.path.basename(img))[0]
         ip, lp = os.path.join(cache, f"{stem}-{tag}.npy"), os.path.join(cache, f"{stem}-{tag}-label.npy")
         if not (os.path.exists(ip) and os.path.exists(lp)):
-            a = pick_bands(read_array(img))
+            a = read_bands(img, resize=False).numpy()
             m = read_mask(lab).numpy()
             if m.shape != a.shape[1:]:
                 raise SystemExit(f"DATA: {os.path.basename(img)} is {a.shape[2]}×{a.shape[1]} pixels but its label image "
@@ -727,6 +861,8 @@ def load_data(cfg):
             raise SystemExit("DATA: ImageNet weights expect 3-channel pictures; train multispectral images from scratch for now.")
         root = data_root()
         if DATASET.get("layout") == "scene":
+            first = os.path.join(root, DATASET["scene_image"])
+            set_fuse(root, first if os.path.isdir(first) else os.path.dirname(first))
             tiles = scene_tiles(root)
             tr_i, te_i = split(len(tiles), cfg["seed"])
             tr, te = [tiles[i] for i in tr_i], [tiles[i] for i in te_i]
@@ -734,15 +870,30 @@ def load_data(cfg):
             multiband_stats(list(range(len(tr))), cfg["seed"], load=plain.raw)
             train, test, train_eval = SceneTiles(tr, True), SceneTiles(te, False), SceneTiles(tr, False)
         else:
+            set_fuse(root, kaggle_folder(root, DATASET["kaggle_train_dir"]))
             pairs = kaggle_pairs(root, BAND_EXT)
             tr_i, te_i = split(len(pairs), cfg["seed"])
             tr, te = [pairs[i] for i in tr_i], [pairs[i] for i in te_i]
             multiband_stats(tr, cfg["seed"])
             train, test, train_eval = BandPairs(tr, True), BandPairs(te, False), BandPairs(tr, False)
+    elif MULTILABEL:
+        if MULTI and TRAIN.get("pretrained"):
+            raise SystemExit("DATA: ImageNet weights expect 3-channel pictures; train multispectral images from scratch for now.")
+        root = data_root()
+        items = label_rows(root)
+        if MULTI:
+            set_fuse(root, os.path.dirname(os.path.join(root, DATASET["labels_csv"])) if not DATASET.get("kaggle_train_dir")
+                     else kaggle_folder(root, DATASET["kaggle_train_dir"]))
+        tr_i, te_i = split(len(items), cfg["seed"])
+        tr, te = [items[i] for i in tr_i], [items[i] for i in te_i]
+        if MULTI:
+            multiband_stats(tr, cfg["seed"])
+        train, test, train_eval = LabelFiles(tr, True, train_t), LabelFiles(te, False, test_t), LabelFiles(tr, False, test_t)
     elif MULTI:
         if TRAIN.get("pretrained"):
             raise SystemExit("DATA: ImageNet weights expect 3-channel pictures; train multispectral images from scratch for now.")
         root = data_root()
+        set_fuse(root, kaggle_folder(root, DATASET["kaggle_train_dir"]))
         files = band_files(kaggle_folder(root, DATASET["kaggle_train_dir"]))
         if DATASET["kaggle_test_dir"]:
             tr_files, te_files = files, band_files(kaggle_folder(root, DATASET["kaggle_test_dir"]))
@@ -780,6 +931,41 @@ def load_data(cfg):
     return train, val, test
 
 
+def loss_of(out, y, smoothing=0.0):
+    """cross-entropy (one class per image / pixel), or binary cross-entropy per class for multi-label (smoothing pulls the targets
+    towards 0.5)"""
+    if MULTILABEL:
+        t = y.float()
+        if smoothing:
+            t = t * (1 - smoothing) + 0.5 * smoothing
+        return nn.functional.binary_cross_entropy_with_logits(out.float(), t)
+    return nn.functional.cross_entropy(out, y, label_smoothing=smoothing)
+
+
+def multilabel_scores(prob, y):
+    """micro / macro F1 at 0.5, mean average precision, exact match, and per class precision / recall / F1 / AP / support"""
+    pred, y = prob >= 0.5, y > 0.5
+    tp, fp, fn = (pred & y).sum(0).float(), (pred & ~y).sum(0).float(), (~pred & y).sum(0).float()
+    f1 = 2 * tp / (2 * tp + fp + fn).clamp_min(1)
+    micro = float(2 * tp.sum() / (2 * tp.sum() + fp.sum() + fn.sum()).clamp_min(1))
+    used = (tp + fp + fn) > 0
+    aps = []
+    for k in range(y.shape[1]):
+        pos = int(y[:, k].sum())
+        if pos == 0:
+            aps.append(None)
+            continue
+        order = prob[:, k].argsort(descending=True)
+        hits = y[order, k].float()
+        prec = hits.cumsum(0) / torch.arange(1, len(hits) + 1)
+        aps.append(float((prec * hits).sum() / pos))
+    valid = [a for a in aps if a is not None]
+    per = [{"precision": round(float(tp[k] / (tp[k] + fp[k]).clamp_min(1)), 4), "recall": round(float(tp[k] / (tp[k] + fn[k]).clamp_min(1)), 4),
+            "f1": round(float(f1[k]), 4), "ap": None if aps[k] is None else round(aps[k], 4), "support": int(y[:, k].sum())} for k in range(y.shape[1])]
+    return {"micro_f1": micro, "macro_f1": float(f1[used].mean()) if bool(used.any()) else 0.0,
+            "map": sum(valid) / max(1, len(valid)), "exact": float((pred == y).all(1).float().mean()), "per_class": per}
+
+
 # ---------------------------------------------------------------- checks and results
 def one_batch_check(model, loader, device):
     """run one batch forward + backward and compare every layer's shape with what the app computed"""
@@ -793,7 +979,9 @@ def one_batch_check(model, loader, device):
     out = model(x)
     if SEG and list(y.shape[1:]) != list(out.shape[2:]):
         raise SystemExit(f"CHECK: the masks are {list(y.shape[1:])}, but the network outputs {list(out.shape[2:])}.")
-    nn.functional.cross_entropy(out, y).backward()
+    if MULTILABEL and list(y.shape) != list(out.shape):
+        raise SystemExit(f"CHECK: the labels are {list(y.shape[1:])} per image, but the network outputs {list(out.shape[1:])}.")
+    loss_of(out, y).backward()
     model.zero_grad(set_to_none=True)
     for h in hooks:
         h.remove()
@@ -812,13 +1000,20 @@ def evaluate(model, loader, device):
     model.eval()
     k = len(CLASSES)
     loss_sum, n_items, cm = 0.0, 0, torch.zeros(k * k, dtype=torch.long)
-    top5 = 0 if (not SEG and k > 5) else None
+    top5 = 0 if (not SEG and not MULTILABEL and k > 5) else None
+    probs, targets = [], []
     with torch.no_grad():
         for x, y in loader:
             if INTERRUPT:
                 raise Interrupted()
             x, y = x.to(device), y.to(device)
             out = model(x).float()
+            if MULTILABEL:
+                loss_sum += loss_of(out, y).item() * len(y)
+                n_items += len(y)
+                probs.append(torch.sigmoid(out).cpu())
+                targets.append(y.cpu())
+                continue
             if not SEG or bool((y >= 0).any()):  # a batch with no labelled pixel has no loss
                 loss_sum += nn.functional.cross_entropy(out, y).item() * len(y)
             n_items += len(y)
@@ -827,6 +1022,10 @@ def evaluate(model, loader, device):
             cm += torch.bincount((y[keep] * k + pred[keep]).flatten().cpu(), minlength=k * k)
             if top5 is not None:
                 top5 += int((out.topk(5, dim=1).indices == y.unsqueeze(1)).any(1).sum())
+    if MULTILABEL:
+        # (loss, micro F1 in the accuracy's place, the scores in the confusion matrix's place, mAP in mean IoU's place)
+        sc = multilabel_scores(torch.cat(probs), torch.cat(targets)) if probs else multilabel_scores(torch.zeros(0, k), torch.zeros(0, k))
+        return loss_sum / max(n_items, 1), sc["micro_f1"], sc, sc["map"], None, None
     cm = cm.view(k, k)
     acc = float(cm.diag().sum()) / max(1, int(cm.sum()))
     iou = [float(cm[i, i]) / max(1, int(cm[i].sum() + cm[:, i].sum() - cm[i, i])) for i in range(k)]
@@ -913,11 +1112,15 @@ def pictures(model, test, device):
             res["samples"].append({"image": small(img, 64), "truth": small((truth.float() / k).unsqueeze(0), 64),
                                    "pred": small((pred.float() / k).unsqueeze(0), 64),
                                    "pixel_acc": round(float((pred == truth).float().mean()), 3)})
+        elif MULTILABEL:
+            prob = torch.sigmoid(out[j]).cpu()
+            res["samples"].append({"image": small(img), "labels": [k for k in range(len(CLASSES)) if test[i][1][k] > 0.5],
+                                   "preds": [k for k in range(len(CLASSES)) if prob[k] >= 0.5], "probs": [round(float(v), 3) for v in prob]})
         else:
             prob = torch.softmax(out[j], 0).cpu()
             p = int(prob.argmax())
             res["samples"].append({"image": small(img), "label": int(test[i][1]), "pred": p, "prob": round(float(prob[p]), 3)})
-    if not SEG:
+    if not SEG and not MULTILABEL:
         try:
             cam = grad_cam(model, xs)
             if cam:
@@ -1160,12 +1363,12 @@ def main():
                                 raise OOM("CUDA out of memory (simulated for the test)")
                             with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp):
                                 out = model(xs)
-                                loss = nn.functional.cross_entropy(out, ys, label_smoothing=smoothing) * (len(ys) / len(y))
+                                loss = loss_of(out, ys, smoothing) * (len(ys) / len(y))
                                 if SEG and not bool((ys >= 0).any()):
                                     loss = out.float().sum() * 0.0  # no labelled pixel in this piece: nothing to learn (and no NaN)
                             scaler.scale(loss).backward()
                             batch_loss += loss.item()
-                            batch_correct += int((out.argmax(1) == ys).sum())
+                            batch_correct += int(((out > 0) == (ys > 0.5)).sum()) if MULTILABEL else int((out.argmax(1) == ys).sum())
                         break
                     except Exception as e:
                         if not (auto_split and is_oom(e)) or split["parts"] >= len(y):
@@ -1219,6 +1422,8 @@ def main():
                       lr=float(f"{opt.param_groups[0]['lr']:.3g}"), data_wait=round(data_wait, 3))
             if SEG:
                 ev["val_miou"] = round(miou, 5)
+            if MULTILABEL:
+                ev["val_map"] = round(miou, 5)
             if val_top5 is not None:
                 ev["val_top5"] = round(val_top5, 5)
             emit("epoch", **ev)
@@ -1257,7 +1462,9 @@ def main():
     except Interrupted:
         interrupted()
     torch.save(model.state_dict(), os.path.join(OUT, "model.pt"))
-    res = {"task": TASK, "test_acc": val_acc, "test_loss": val_loss, "classes": CLASSES, "confusion": confusion}
+    res = {"task": TASK, "test_acc": val_acc, "test_loss": val_loss, "classes": CLASSES, "confusion": None if MULTILABEL else confusion}
+    if MULTILABEL:
+        res.update(confusion)   # micro_f1 (= test_acc), macro_f1, map, exact, per_class
     if test_top5 is not None:
         res["test_top5"] = test_top5
     if SEG:
@@ -1268,6 +1475,8 @@ def main():
     with open(os.path.join(OUT, "results.json"), "w", encoding="utf-8") as f:
         json.dump(res, f)
     emit("stopped" if stopped else "done", test_acc=round(val_acc, 5), **({"miou": round(miou, 5)} if SEG else {}),
+         **({"test_map": round(confusion["map"], 5), "test_macro_f1": round(confusion["macro_f1"], 5), "test_exact": round(confusion["exact"], 5)}
+            if MULTILABEL else {}),
          **({"best_epoch": es["best_epoch"]} if early else {}), **({"test_top5": round(test_top5, 5)} if test_top5 is not None else {}))
     if ON_KAGGLE:
         # a Kaggle run is never resumed: the checkpoint would only make the output the app downloads bigger

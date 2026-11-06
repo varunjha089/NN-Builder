@@ -565,8 +565,8 @@ $3\times3$ convolution with 16 filters: $13\cdot9\cdot16+16 = 1\,888$). On the G
   \item shows the result pictures as composites: true colour (B04 B03 B02) for Sentinel-2, VV / VH / VV$-$VH for Sentinel-1, else the
         first three bands, each stretched between its 2nd and 98th percentile.
 \end{itemize}
-Not yet: ImageNet weights for more than three bands, Hugging Face datasets with band arrays, one label per band combination (multi-label,
-BigEarthNet), and Sentinel-1 and Sentinel-2 together in one network (fusion). These are the next steps in \file{FUTURE\_PLAN.md}.
+Not yet: ImageNet weights for more than three bands and Hugging Face datasets with band arrays (next steps in \file{FUTURE\_PLAN.md}).
+Several classes per image (Section~\ref{sec:multilabel}) and Sentinel-1 with Sentinel-2 (Section~\ref{sec:fusion}) are below.
 GitHub Actions trains on generated Sentinel-2 (mixed \file{.tif} and \file{.npy}) and Sentinel-1 folders on every change and checks the
 bands, the statistics and the accuracy; it also trains on every layout of the next section.
 
@@ -598,6 +598,39 @@ B1 \dots\ B12)} sets that band order; the surface-reflectance collection has no 
 of the band statistics and filled with the band's mean; label values that are not a class (no data, 255, negative) are left out of the
 loss and of the scores; and Sentinel-1 from \texttt{COPERNICUS/S1\_GRD} is already in dB: such files are recognised by their negative
 values and not converted again, even with \ui{convert to decibels} ticked.
+
+\subsection{Several classes per image (multi-label)}
+\label{sec:multilabel}
+In benchmarks such as BigEarthNet a patch can be forest \emph{and} water \emph{and} farmland at once. Choose \ui{Task: Multi-label}.
+The labels come from a CSV file (own files or Kaggle): one row per image, a file column (\texttt{file}, \texttt{image}, \texttt{name},
+\texttt{path}, \texttt{patch\_id} \dots; with or without the extension, relative to the CSV's folder or the images folder) and either a
+labels column with the classes separated by \texttt{;} \texttt{,} \texttt{|} or spaces, or one 0/1 column per class. \ui{Read labels}
+reads the class names and how many images have each. From Hugging Face, choose a column that is a list of class labels. Rows that name
+a missing file are left out (with a warning).
+
+The network ends in the ordinary Output block, one score per class, but every class is its own yes/no: the score goes through a sigmoid,
+a class is predicted when it is at least 50\,\%, and the loss is binary cross-entropy summed over the classes (label smoothing pulls the
+targets towards 0.5). The run reports micro F1 (every image--class decision together; shown where accuracy usually is), macro F1 (the
+classes averaged, so rare classes count as much as common ones), mean average precision (mAP: how well each class's scores rank its
+images, independent of the threshold) and exact match (every class of an image right). Results lists precision, recall, F1 and AP per
+class, and the sample pictures mark each class as right, wrong or missed.
+
+\subsection{Sentinel-1 and Sentinel-2 together (fusion)}
+\label{sec:fusion}
+Radar sees through clouds and shows water and structure; optical bands show vegetation and colour. Under \ui{Second band group (fusion)}
+choose the second sensor, its folder and its bands. Its files mirror the first group's: the same subfolders and file names, any
+extension (\file{s2/forest/x.tif} and \file{s1/forest/x.npy}); a different pixel size is resized to the image size. The two groups are
+stacked into one image (the first group's bands, then the second's), each band normalised with its own statistics, and the second
+Sentinel-1 group converted to dB when asked. Then, in the Design tab:
+\begin{description}[nosep]
+  \item[Early fusion.] One Input takes all bands: nothing else to do.
+  \item[Mid fusion.] Select the Input, set \ui{Bands} to band group 1, and press \ui{Add an Input for band group 2}: each Input starts a
+        branch of its own (e.g.\ a few convolutions per sensor), and a Concat (or Add) joins them. In text: \texttt{input 1} and
+        \texttt{input 2}. The generated code takes each group's channels from the stacked image.
+\end{description}
+Fusion works for classification, multi-label (BigEarthNet: S1 and S2 per patch) and segmentation (images + masks, and scenes: the
+second group's scene files in its folder with the same names). With two groups the test data are 10\,\% of the images (no separate test
+folder).
 
 \paragraph{The export script.} Under \ui{Get Sentinel-1/2 data from Google Earth Engine} the Dataset tab writes a script that exports
 exactly what the tab expects: the ticked bands in their order, from the chosen dates, with clouds masked (Sentinel-2 SR: the scene

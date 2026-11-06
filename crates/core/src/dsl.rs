@@ -755,6 +755,7 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
                     ("pool2d", 1) => "size",
                     ("upsample", 1) => "scale",
                     ("attention", 1) => "heads",
+                    ("input", 1) => "group",
                     _ => return Err(format!("what is the number {}? write it as name=value (e.g. filters={})", fmt_num(*n), fmt_num(*n))),
                 };
                 p.insert(key.into(), to_json(key, v));
@@ -986,6 +987,7 @@ fn block_text(kind: &str, params: &Map<String, Value>) -> String {
         "to_tokens" => take("mode", if differs("mode") { fmt_value(&get("mode")) } else { String::new() }, &mut words),
         "token_pool" => take("mode", if differs("mode") { fmt_value(&get("mode")) } else { String::new() }, &mut words),
         "cls_pos" => take("cls", if get("cls") == json!(false) { "nocls".into() } else { String::new() }, &mut words),
+        "input" => take("group", if differs("group") { fmt_value(&get("group")) } else { String::new() }, &mut words),
         "attention" => {
             take("heads", format!("heads {}", fmt_value(&get("heads"))), &mut words);
             take("dropout", if differs("dropout") { format!("drop {}", fmt_value(&get("dropout"))) } else { String::new() }, &mut words);

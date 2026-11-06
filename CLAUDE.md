@@ -110,7 +110,16 @@ crates/core/src/
                            BandFolder, BandPairs (multiband images + masks), SceneTiles (scene -> cached .npy, memory-mapped tiles;
                            tiles need ≥ 50 % data and one labelled pixel), multiband_stats (NaN-aware), composite() (2 bands -> a, b, a-b).
                            DatasetTab LocalBox + GeeBox (generated GEE script: Code Editor scene + WorldCover, Python class patches).
-                           CI ci_multiband_check.py (examples/multiband_case.rs): Kaggle S2/S1 + gee, s1gee, scene, segfiles cases.
+                           Multi-label: task "multilabel", labels_csv (localdata::csv_classes + main.rs local_csv read the class names;
+                           HF: a ClassLabelList column, hf_info reports Sequence/List of ClassLabel so); harness label_rows/LabelFiles,
+                           loss_of (BCE with logits), multilabel_scores (micro/macro F1, mAP, exact, per_class); evaluate returns micro F1
+                           as accuracy, the scores dict in the confusion slot, mAP in the mIoU slot; val_map per epoch; Results/Train tabs.
+                           Fusion: bands2, band_order2, sensor2, s1_db2, fuse_dir (second group, same relative file names, stacked after
+                           group 1); group_channels(); Input param "group" (0 all, 1, 2): shapes allows two Inputs only when fused (one
+                           per group), codegen slices x[:, :c1] / x[:, c1:], DSL `input 1` / `input 2`; harness GROUPS, read_groups,
+                           fuse_path, set_fuse; Design inspector "Bands" + "Add an Input for band group 2"; DatasetTab SecondGroup.
+                           CI ci_multiband_check.py (examples/multiband_case.rs): Kaggle S2/S1 + gee, s1gee, scene, segfiles, fusion
+                           (mid), multilabel (early fusion) cases.
   dataset.rs               Dataset (builtin | huggingface | kaggle; task classify | segment; resize (built-in); hf_mask_col, kaggle_mask_dir;
                            image_size, channels, classes), BUILTINS, input_shape, problems()
   shapes.rs                analyze(graph, dataset) -> Analysis: computation order (Kahn), per-node in/out shapes, params, rf, padding/stride

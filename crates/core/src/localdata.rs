@@ -59,6 +59,7 @@ pub fn describe(dir: &Path) -> Result<Value> {
     dirs.sort();
     dirs.dedup();
     let tifs: Vec<&String> = fs.iter().map(|f| &f.0).filter(|f| { let l = f.to_ascii_lowercase(); l.ends_with(".tif") || l.ends_with(".tiff") }).collect();
+    let csvs: Vec<&String> = fs.iter().map(|f| &f.0).filter(|f| { let l = f.to_ascii_lowercase(); l.ends_with(".csv") || l.ends_with(".tsv") }).take(20).collect();
     let tif = tifs.first().and_then(|f| tiff_info(&dir.join(f)).ok().map(|i| json!({"file": f, "width": i.width, "height": i.height,
         "bands": i.bands, "bits": i.bits, "float": i.float, "names": i.names})));
     Ok(json!({
@@ -66,6 +67,7 @@ pub fn describe(dir: &Path) -> Result<Value> {
         "tifs": tifs.len(), "npys": fs.iter().filter(|f| f.0.to_ascii_lowercase().ends_with(".npy")).count(),
         "folders": folders.iter().map(|(p, c)| json!({"folder": p, "classes": c})).collect::<Vec<_>>(),
         "dirs": dirs.into_iter().take(40).collect::<Vec<_>>(),
+        "csvs": csvs,
         "top": fs.iter().filter(|f| !f.0.contains('/')).map(|f| &f.0).take(40).collect::<Vec<_>>(),
         "tif": tif,
     }))
@@ -173,4 +175,66 @@ fn band_names(xml: &str, bands: usize) -> Vec<String> {
     } else {
         vec![]
     }
+}
+
+/// one CSV line split into fields ("quoted, fields" and "" inside quotes)
+fn csv_fields(line: &str, sep: char) -> Vec<String> {
+    let (mut out, mut cur, mut quoted) = (vec![], String::new(), false);
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' if quoted && chars.peek() == Some(&'"') => {
+                cur.push('"');
+                chars.next();
+            }
+            '"' => quoted = !quoted,
+            c if c == sep && !quoted => out.push(std::mem::take(&mut cur).trim().to_string()),
+            c => cur.push(c),
+        }
+    }
+    out.push(cur.trim().to_string());
+    out
+}
+
+const FILE_COLS: &[&str] = &["file", "filename", "file_name", "image", "image_id", "img", "path", "name", "patch", "patch_id", "id"];
+const LABEL_COLS: &[&str] = &["labels", "label", "tags", "classes", "class", "categories", "landcover"];
+
+/// a multi-label CSV (the same reading as the harness's label_rows): its columns, rows, the file column, and the class names: the 0/1
+/// columns, or every name found in the labels column (sorted), with how many images have each
+pub fn csv_classes(path: &Path) -> Result<Value> {
+    let text = std::fs::read_to_string(path)?;
+    let text = text.trim_start_matches('\u{feff}');
+    let sep = if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("tsv")) { '\t' } else { ',' };
+    let mut lines = text.lines().filter(|l| !l.trim().is_empty());
+    let head = csv_fields(lines.next().unwrap_or(""), sep);
+    let low: Vec<String> = head.iter().map(|h| h.to_ascii_lowercase()).collect();
+    let fcol = low.iter().position(|h| FILE_COLS.contains(&h.as_str())).unwrap_or(0);
+    let rows: Vec<Vec<String>> = lines.map(|l| csv_fields(l, sep)).collect();
+    // one 0/1 column per class: every other column holds only 0 / 1
+    let binary: Vec<usize> = (0..head.len()).filter(|&i| i != fcol && !rows.is_empty()
+        && rows.iter().all(|r| matches!(r.get(i).map(|s| s.as_str()), Some("0" | "1" | "0.0" | "1.0" | "true" | "false" | "")))).collect();
+    let mut counts: std::collections::BTreeMap<String, usize> = Default::default();
+    let label_col;
+    if binary.len() >= 2 && binary.len() + 1 == head.len() {
+        label_col = Value::Null;
+        for &i in &binary {
+            counts.insert(head[i].clone(), rows.iter().filter(|r| matches!(r.get(i).map(|s| s.as_str()), Some("1" | "1.0" | "true"))).count());
+        }
+    } else {
+        let lcol = low.iter().enumerate().position(|(i, h)| i != fcol && LABEL_COLS.contains(&h.as_str())).or((0..head.len()).find(|&i| i != fcol));
+        let Some(lcol) = lcol else { bail!("The CSV needs a file column and a labels column.") };
+        label_col = json!(head[lcol]);
+        for r in &rows {
+            let cell = r.get(lcol).map(|s| s.trim()).unwrap_or("");
+            let parts: Vec<&str> = if cell.contains([';', ',', '|']) { cell.split([';', ',', '|']).collect() } else { cell.split_whitespace().collect() };
+            for p in parts {
+                let p = p.trim().trim_matches(|c| "'\"[]".contains(c));
+                if !p.is_empty() {
+                    *counts.entry(p.to_string()).or_default() += 1;
+                }
+            }
+        }
+    }
+    Ok(json!({"columns": head, "rows": rows.len(), "file_column": head.get(fcol), "label_column": label_col,
+        "classes": counts.keys().collect::<Vec<_>>(), "counts": counts.values().collect::<Vec<_>>()}))
 }

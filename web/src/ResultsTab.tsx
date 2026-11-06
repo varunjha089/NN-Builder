@@ -19,9 +19,17 @@ export function ResultsTab({ runId }: { runId: string | null }) {
   return (
     <div className="page">
       <h2>Results of run {runId}</h2>
+      {r.task === "multilabel" && <p className="muted small">Several classes per image: each class is a yes/no (score ≥ 50%). Micro F1 counts every
+        (image, class) decision together, macro F1 averages the classes (rare classes count as much as common ones), mAP ranks the images
+        by each class's score (independent of the 50% threshold), and exact match is the share of images with every class right.</p>}
       {r.task === "segment" && <p className="muted small">"Test accuracy" is the share of pixels classified correctly; mean IoU (overlap of predicted and true areas per class) is the usual segmentation measure.</p>}
       <div className="row cards">
-        <div className="card"><div className="muted">Test accuracy</div><div className="big">{(r.test_acc * 100).toFixed(2)}%</div></div>
+        <div className="card"><div className="muted">{r.task === "multilabel" ? "Micro F1" : "Test accuracy"}</div><div className="big">{(r.test_acc * 100).toFixed(2)}%</div></div>
+        {r.task === "multilabel" && <>
+          <div className="card"><div className="muted">Macro F1</div><div className="big">{(r.macro_f1 * 100).toFixed(2)}%</div></div>
+          <div className="card"><div className="muted">mAP</div><div className="big">{(r.map * 100).toFixed(2)}%</div></div>
+          <div className="card"><div className="muted">Exact match</div><div className="big">{(r.exact * 100).toFixed(2)}%</div></div>
+        </>}
         {r.test_top5 != null && <div className="card"><div className="muted">Top-5 accuracy</div><div className="big">{(r.test_top5 * 100).toFixed(2)}%</div></div>}
         {r.miou != null && <div className="card"><div className="muted">Mean IoU</div><div className="big">{(r.miou * 100).toFixed(2)}%</div></div>}
         {r.test_loss != null && <div className="card"><div className="muted">Test loss</div><div className="big">{Number(r.test_loss).toFixed(4)}</div></div>}
@@ -47,7 +55,20 @@ export function ResultsTab({ runId }: { runId: string | null }) {
           <Img img={s.image} scale={Math.max(1, Math.round(96 / s.image[0].length))} /><Img img={s.truth} scale={Math.max(1, Math.round(96 / s.truth[0].length))} />
           <Img img={s.pred} scale={Math.max(1, Math.round(96 / s.pred[0].length))} /></div><div>{(s.pixel_acc * 100).toFixed(1)}% of pixels right</div></div>)}
       </div></>}
-      {r.task !== "segment" && r.samples?.length > 0 && <><div className="row"><h3 style={{ margin: 0 }}>Sample predictions</h3>
+      {r.task === "multilabel" && r.per_class && <table className="grid"><tbody>
+        <tr><th>Class</th><th className="num">Images</th><th className="num">Precision</th><th className="num">Recall</th><th className="num">F1</th><th className="num">AP</th></tr>
+        {r.per_class.map((c: any, i: number) => <tr key={i}><td>{classes[i]}</td><td className="num">{c.support}</td><td className="num">{(c.precision * 100).toFixed(1)}%</td>
+          <td className="num">{(c.recall * 100).toFixed(1)}%</td><td className="num">{(c.f1 * 100).toFixed(1)}%</td><td className="num">{c.ap == null ? "–" : `${(c.ap * 100).toFixed(1)}%`}</td></tr>)}
+      </tbody></table>}
+      {r.task === "multilabel" && r.samples?.length > 0 && <><h3>Sample predictions (✓ right, ✗ wrong, ○ missed)</h3><div className="thumbs">
+        {r.samples.map((s: any, i: number) => {
+          const all = [...new Set([...s.labels, ...s.preds])].sort((a, b) => a - b);
+          return <div key={i} className={`thumb ${all.some((k) => s.labels.includes(k) !== s.preds.includes(k)) ? "wrong" : ""}`} style={{ width: 120 }}>
+            <Img img={s.image} scale={Math.max(1, Math.round(64 / s.image[0].length))} />
+            {all.map((k) => <div key={k} className="small">{s.labels.includes(k) ? (s.preds.includes(k) ? "✓" : "○") : "✗"} {String(classes[k] ?? k).slice(0, 14)} {(s.probs[k] * 100).toFixed(0)}%</div>)}
+            {all.length === 0 && <div className="small muted">no class</div>}</div>;
+        })}</div></>}
+      {r.task !== "segment" && r.task !== "multilabel" && r.samples?.length > 0 && <><div className="row"><h3 style={{ margin: 0 }}>Sample predictions</h3>
         {r.cam_layer && <label className="chk small"><input type="checkbox" checked={cam} onChange={(e) => setCam(e.target.checked)} />
           show Grad-CAM (where the network looked, from layer “{r.cam_layer}”)</label>}</div><div className="thumbs">
         {r.samples.map((s: any, i: number) => <div key={i} className={`thumb ${s.pred !== s.label ? "wrong" : ""}`} title={`true: ${classes[s.label]}`}>

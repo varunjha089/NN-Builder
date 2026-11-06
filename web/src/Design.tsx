@@ -177,7 +177,7 @@ export function Design({ st, graph, setGraph, analysis, persist, focus, toast, r
         if (old && (old.data as LayerData & { sig?: string }).sig === sig && old.selected === (n.id === selected)
           && old.position.x === pos.x && old.position.y === pos.y) return old;
         return {
-          ...(old ?? {}), id: n.id, type: "layer", position: pos, selected: n.id === selected, deletable: n.kind !== "input",
+          ...(old ?? {}), id: n.id, type: "layer", position: pos, selected: n.id === selected, deletable: n.kind !== "input" || graph.nodes.filter((x) => x.kind === "input").length > 1,
           data: { kind: n.kind, title: titles[n.kind] ?? n.kind, params: n.params, result: r, summary: summary(n.kind, n.params), label: n.label, sig },
         };
       });
@@ -379,6 +379,14 @@ export function Design({ st, graph, setGraph, analysis, persist, focus, toast, r
         </ReactFlow>}
       </div>
       <Inspector node={sel} result={sel ? results[sel.id] : undefined} analysis={analysis} graph={graph} st={st} setParam={setParam} setParams={setParams}
+        addInput={() => {
+          // mid fusion: this Input takes band group 1, a new Input below it group 2 (give it its own branch, then join them with Concat)
+          if (!sel) return;
+          const id = `n${Date.now().toString(36)}`;
+          save({ nodes: [...graph.nodes.map((n) => (n.id === sel.id ? { ...n, params: { ...n.params, group: 1 } } : n)),
+            { id, kind: "input", params: { group: 2 }, x: sel.x, y: sel.y + 180 }], edges: graph.edges });
+          setSelected(id);
+        }}
         candidates={candidates} addSkip={addSkip} />
     </div>
   );
@@ -628,9 +636,9 @@ function LayerTable({ nodes, graph }: { nodes: NodeResult[]; graph: Graph }) {
   );
 }
 
-function Inspector({ node, result, analysis, graph, st, setParam, setParams, candidates, addSkip }: {
+function Inspector({ node, result, analysis, graph, st, setParam, setParams, candidates, addSkip, addInput }: {
   node: { id: string; kind: string; params: Params } | null; result?: NodeResult; analysis: Analysis | null; graph: Graph; st: AppState;
-  setParam: (k: string, v: unknown) => void; setParams: (p: Params) => void;
+  setParam: (k: string, v: unknown) => void; setParams: (p: Params) => void; addInput: () => void;
   candidates: { id: string; label: string }[]; addSkip: (src: string, mode: "add" | "concat") => void;
 }) {
   const color = useKindColor();
@@ -720,7 +728,12 @@ function Inspector({ node, result, analysis, graph, st, setParam, setParams, can
         {node.kind === "output" && <p className="muted">One score per class of the dataset ({analysis?.classes ?? "?"}); the loss applies softmax.</p>}
         {node.kind === "seg_output" && <p className="muted">A 1×1 convolution giving a score per class ({analysis?.classes ?? "?"}) for every pixel. Its size must equal the input (the masks).</p>}
         {node.kind === "multiply" && <p className="muted">Multiplies two branches element by element: equal shapes, a one-channel map times an image (an attention gate: the map, after a sigmoid, weights every pixel), or one weight per channel (squeeze-and-excitation).</p>}
-        {node.kind === "input" && <p className="muted">The images of the dataset (Dataset tab): {fmt(analysis?.input)}.</p>}
+        {node.kind === "input" && <>
+          <p className="muted">The images of the dataset (Dataset tab): {fmt(analysis?.input)}.</p>
+          <Sel label="Bands" value={String(p.group ?? 0)} options={[["0", "all (both band groups stacked: early fusion)"], ["1", "band group 1 (e.g. Sentinel-2)"],
+            ["2", "band group 2 (e.g. Sentinel-1)"]]} onChange={(v) => setParam("group", Number(v))} />
+          {graph.nodes.filter((n) => n.kind === "input").length === 1 && <p className="row small"><button className="small" onClick={addInput}>Add an Input for band group 2</button><span className="muted">two branches, one per sensor, joined by Concat (mid fusion)</span></p>}
+        </>}
       </div>
       {result && <>
         <h4>{result.inputs.map(fmt).join(" + ")}{result.inputs.length ? " → " : ""}{fmt(result.out)}{result.params ? ` · ${result.params.toLocaleString()} parameters` : ""}</h4>

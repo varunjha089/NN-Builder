@@ -111,6 +111,42 @@ def make_segfiles(root):
         tifffile.imwrite(os.path.join(root, "masks", f"p{i}_mask.tif"), m)
 
 
+def make_fusion(root):
+    """Sentinel-2 (4 bands, 40×40 GeoTIFF) in s2/<class>/ and Sentinel-1 (VV, VH linear, 20×20 .npy) with the same names in s1/<class>/:
+    the classes differ only in the radar, so the network must use the second band group"""
+    import tifffile
+    rng = np.random.default_rng(6)
+    for cls in ["flood", "land"]:
+        for d in ("s2", "s1"):
+            os.makedirs(os.path.join(root, d, cls), exist_ok=True)
+        for i in range(100):
+            tifffile.imwrite(os.path.join(root, "s2", cls, f"t{i}.tif"), rng.normal(1000, 200, size=(40, 40, 4)).astype(np.float32))
+            level = 0.01 if cls == "flood" else 0.16
+            np.save(os.path.join(root, "s1", cls, f"t{i}.npy"), rng.gamma(4.0, level / 4.0, size=(2, 20, 20)).astype(np.float32))
+
+
+def make_multilabel(root):
+    """BigEarthNet-like: S2 patches (.npy) and S1 patches with the same names, and labels.csv with any of forest / water / urban per
+    patch (forest raises B8, water lowers VV, urban raises B4)"""
+    rng = np.random.default_rng(7)
+    for d in ("s2", "s1"):
+        os.makedirs(os.path.join(root, d), exist_ok=True)
+    rows = ["patch_id,labels"]
+    for i in range(400):
+        has = [c for c in ("forest", "water", "urban") if rng.random() < 0.4]
+        a = rng.normal(1000, 150, size=(4, 24, 24)).astype(np.float32)
+        a[3] += 900 if "forest" in has else 0
+        a[2] += 700 if "urban" in has else 0
+        r = rng.normal(-8, 1.0, size=(2, 24, 24)).astype(np.float32)   # already in dB
+        r[0] -= 10 if "water" in has else 0
+        np.save(os.path.join(root, "s2", f"p{i}.npy"), a)
+        np.save(os.path.join(root, "s1", f"p{i}.npy"), r)
+        rows.append(f"p{i},\"{'; '.join(has)}\"")
+    rows.append("missing_patch,forest")
+    with open(os.path.join(root, "labels.csv"), "w") as f:
+        f.write("\n".join(rows) + "\n")
+
+
 def run(folder, data, slug):
     env = {**os.environ, "NNB_DATA": data, "PYTHONUNBUFFERED": "1"}
     with open(os.path.join(folder, "log.txt"), "w") as log:
@@ -184,6 +220,27 @@ def own_files(root):
     res = json.load(open(os.path.join(root, "scene", "results.json")))
     assert len(res["samples"][0]["image"]) == 3, "composite pictures"
     print(f"scene: {tiles['message']}, pixel accuracy {done['test_acc']}, mean IoU {done['miou']}")
+
+    make_fusion(os.path.join(root, "own", "fusion"))
+    ev = run(os.path.join(root, "fusion"), data, "fusion")
+    st = json.load(open(os.path.join(root, "fusion", "band_stats.json")))
+    assert st["bands"] == ["B2", "B3", "B4", "B8", "VV", "VH"], st
+    assert all(-25 < m < -5 for m in st["mean"][4:]) and all(900 < m < 1100 for m in st["mean"][:4]), f"S1 group in dB: {st}"
+    done = next(e for e in ev if e["event"] == "done")
+    assert done["test_acc"] >= 0.9, f"fusion: the radar group must reach the network: {done}"
+    print(f"fusion: S2 4 bands + S1 2 bands (20×20 resized), mid fusion, per-band mean {[round(m, 1) for m in st['mean']]}, "
+          f"test accuracy {done['test_acc']}")
+
+    make_multilabel(os.path.join(root, "own", "ml"))
+    ev = run(os.path.join(root, "multilabel"), data, "multilabel")
+    assert any(e["event"] == "warning" and "not in the dataset" in e.get("message", "") for e in ev), "the missing row is reported"
+    check = next(e for e in ev if e["event"] == "check")
+    assert check["batch"][1:] == [5, 24, 24], check
+    done = next(e for e in ev if e["event"] == "done")
+    assert done["test_acc"] >= 0.85 and done["test_map"] >= 0.85, f"multi-label: {done}"
+    res = json.load(open(os.path.join(root, "multilabel", "results.json")))
+    assert res["task"] == "multilabel" and len(res["per_class"]) == 3 and "labels" in res["samples"][0], res.keys()
+    print(f"multilabel: micro F1 {done['test_acc']}, macro F1 {done['test_macro_f1']}, mAP {done['test_map']}, exact {done['test_exact']}")
 
     ev = run(os.path.join(root, "segfiles"), data, "segfiles")
     done = next(e for e in ev if e["event"] == "done")

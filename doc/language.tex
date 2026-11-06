@@ -176,10 +176,27 @@ except \texttt{input} may end with \texttt{<- INPUT} (by default the line above)
 
 \subsubsection*{\texttt{input} --- the images}
 \begin{Verbatim}[fontsize=\small]
-LABEL input
+LABEL input [GROUP]
 \end{Verbatim}
-\texttt{1 input}. No values: its shape (channels, height, width) comes from the Dataset tab. Every design has exactly one, as its first
-block; it takes no input.
+\texttt{1 input}: its shape (channels, height, width) comes from the Dataset tab; it takes no input. A design has one, except with two
+band groups (Dataset tab, Section~\ref{sec:fusion}: e.g.\ Sentinel-2 and Sentinel-1), where it may have one Input per group, each
+starting its own branch (mid fusion):
+\begin{verbatim}
+1 input 1                  # band group 1 (Sentinel-2)
+2 conv 32 3x3
+3 input 2                  # band group 2 (Sentinel-1)
+4 conv 16 3x3
+5 concat <- 2, 4           # the two branches joined
+6 global_pool
+7 output
+\end{verbatim}
+\begin{tabular}{@{}lllll@{}}
+\toprule
+value & short & name & default & allowed \\
+\midrule
+band group & \texttt{1} & \texttt{group} & 0 & 0 (all bands), 1, 2 \\
+\bottomrule
+\end{tabular}
 
 \subsubsection*{\texttt{conv} (also \texttt{conv2d}) --- 2-D convolution}
 \begin{Verbatim}[fontsize=\small]

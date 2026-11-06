@@ -85,6 +85,8 @@ pub fn defaults(kind: &str) -> Value {
         "cls_pos" => json!({"cls": true}),
         "attention" => json!({"heads": 4, "dropout": 0.0}),
         "token_pool" => json!({"mode": "cls"}),
+        // 0 = all channels; 1 / 2 = one band group of a fused dataset (Sentinel-2 + Sentinel-1: one Input per sensor)
+        "input" => json!({"group": 0}),
         _ => json!({}),
     }
 }

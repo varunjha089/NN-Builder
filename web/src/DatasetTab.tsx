@@ -19,7 +19,7 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
       // keep the columns already chosen when the dataset has them; otherwise the first image column, and the class column named
       // "label" or else the one with the most classes (the column list arrives sorted by name: cifar100 has coarse_label before fine_label)
       const img = c.columns.find((x) => x.type === "Image" && x.name === ds.hf_image_col)?.name ?? c.columns.find((x) => x.type === "Image")?.name ?? ds.hf_image_col;
-      const labels = c.columns.filter((x) => x.type === "ClassLabel");
+      const labels = c.columns.filter((x) => x.type === (ds.task === "multilabel" ? "ClassLabelList" : "ClassLabel"));
       const lab = labels.find((x) => x.name === ds.hf_label_col) ?? labels.find((x) => x.name === "label")
         ?? [...labels].sort((a, b) => (b.names?.length ?? 0) - (a.names?.length ?? 0))[0];
       const splits = c.splits.map((s) => s.name);
@@ -44,13 +44,15 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
       <p className="muted">Choose the data here. Only its description is read on this Mac; the images are downloaded on the GPU machine when training starts.</p>
       <div className="row">
         <strong>Task:</strong>
-        <label className="radio"><input type="radio" checked={ds.task !== "segment"} onChange={() => up({ task: "classify" })} />Classification (one label per image)</label>
+        <label className="radio"><input type="radio" checked={ds.task === "classify"} onChange={() => up({ task: "classify" })} />Classification (one label per image)</label>
+        <label className="radio"><input type="radio" checked={ds.task === "multilabel"} onChange={() => up({ task: "multilabel", ...(ds.source === "builtin" ? { source: "local" } : {}) })} />
+          Multi-label (any number of classes per image, e.g. BigEarthNet)</label>
         <label className="radio"><input type="radio" checked={ds.task === "segment"} onChange={() => up({ task: "segment", ...(ds.source === "builtin" ? { source: "huggingface" } : {}) })} />
           Segmentation (a class for every pixel: images + masks)</label>
       </div>
       <div className="row">
         <strong>Source:</strong>
-        {(["builtin", "huggingface", "kaggle", "local"] as const).filter((s) => !(s === "builtin" && ds.task === "segment")).map((s) => (
+        {(["builtin", "huggingface", "kaggle", "local"] as const).filter((s) => !(s === "builtin" && ds.task !== "classify")).map((s) => (
           <label key={s} className="radio"><input type="radio" checked={ds.source === s} onChange={() => up({ source: s })} />
             {{ builtin: "Built-in (torchvision)", huggingface: "Hugging Face", kaggle: "Kaggle", local: "My own files (e.g. Sentinel from Google Earth Engine)" }[s]}</label>
         ))}
@@ -82,8 +84,10 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
         {hf && conf && !conf.columns.some((c) => c.type === "Image") && <div className="msg error">This dataset has no image column
           ({conf.columns.slice(0, 6).map((c) => `${c.name}: ${c.type}`).join(", ")}{conf.columns.length > 6 ? ", …" : ""}). NN Builder trains networks on
           images: choose an image dataset, for example uoft-cs/cifar10, ylecun/mnist or food101.</div>}
-        {hf && conf && ds.task !== "segment" && conf.columns.some((c) => c.type === "Image") && !conf.columns.some((c) => c.type === "ClassLabel") &&
+        {hf && conf && ds.task === "classify" && conf.columns.some((c) => c.type === "Image") && !conf.columns.some((c) => c.type === "ClassLabel") &&
           <div className="msg warn">No class column (ClassLabel) was found: type the class names below, in label order.</div>}
+        {hf && conf && ds.task === "multilabel" && !conf.columns.some((c) => c.type === "ClassLabelList") &&
+          <div className="msg warn">No column holds a list of class labels: choose the column whose rows list the classes of each image, and type the class names below.</div>}
         {hf && conf?.columns.some((c) => c.type === "Image") && <HfPreview repo={ds.hf_repo} config={ds.hf_config || conf.name} split={ds.hf_train_split}
           labelCol={ds.task === "segment" ? "" : ds.hf_label_col} names={ds.classes} />}
         {!st.secrets.huggingface && <p className="muted small">Gated or private datasets need your Hugging Face token (Connection tab).</p>}
@@ -94,7 +98,7 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
           <button onClick={readKaggle} disabled={busy || !ds.kaggle_slug || !st.secrets.kaggle || !st.tools_ready}>Read files</button></div>
         {(!st.secrets.kaggle || !st.tools_ready) && <p className="muted small">Reading the file list needs the tools and your Kaggle token (Connection tab).</p>}
         {kg && <p className="muted small">{kg.files.toLocaleString()} files listed{kg.folders.length ? `; folders with one subfolder per class: ${kg.folders.map((f) => f.folder || "(top)").join(", ")}` : ""}.</p>}
-        {ds.task === "segment" ? <div className="form">
+        {ds.task === "multilabel" ? <LabelsCsv ds={ds} up={up} /> : ds.task === "segment" ? <div className="form">
           <label>Images folder<input value={ds.kaggle_train_dir} onChange={(e) => up({ kaggle_train_dir: e.target.value.trim() })} placeholder="e.g. Image" /></label>
           <label>Masks folder (same file names)<input value={ds.kaggle_mask_dir} onChange={(e) => up({ kaggle_mask_dir: e.target.value.trim() })} placeholder="e.g. Mask" /></label>
           {kg && <p className="muted small wide">Folders seen: {[...new Set(kg.sample.map((f) => f.split("/").slice(0, -1).join("/")))].slice(0, 8).join(", ")}</p>}
@@ -115,7 +119,7 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
         <label>Image width<input type="number" min={8} max={1024} value={ds.image_size[1]} onChange={(e) => up({ image_size: [ds.image_size[0], Number(e.target.value)] })} /></label>
         {ds.bands?.length ? <span className="muted small">Channels: {ds.bands.length} (the bands chosen above)</span>
           : <label>Channels<select value={ds.channels} onChange={(e) => up({ channels: Number(e.target.value) })}><option value={1}>1 (grey)</option><option value={3}>3 (colour)</option></select></label>}
-        {ds.source !== "builtin" && <label className="wide">{ds.task === "segment" ? "Classes, one per line (mask pixel value 0 = first line; with two classes any non-zero pixel is the second)" : "Class names, one per line, in label order"} ({ds.classes.length})
+        {ds.source !== "builtin" && <label className="wide">{ds.task === "multilabel" ? "Class names, one per line (from the labels CSV with Read labels, or typed)" : ds.task === "segment" ? "Classes, one per line (mask pixel value 0 = first line; with two classes any non-zero pixel is the second)" : "Class names, one per line, in label order"} ({ds.classes.length})
           <ClassBox classes={ds.classes} onChange={(classes) => up({ classes })} /></label>}
       </div>}
       {problems.map((p) => <div key={p} className="msg warn">{p}</div>)}
@@ -182,7 +186,7 @@ function BandsBox({ ds, up }: { ds: Dataset; up: (p: Partial<Dataset>) => void }
   const sensor = ds.bands?.length ? ds.sensor || "other" : "";
   const order = ds.band_order ?? [], chosen = ds.bands ?? [];
   const set = (s: string) => {
-    if (s === "") up({ bands: [], band_order: [], sensor: "", s1_db: false });
+    if (s === "") up({ bands: [], band_order: [], sensor: "", s1_db: false, bands2: [], band_order2: [], sensor2: "", fuse_dir: "" });
     else if (s === "s2") up({ sensor: "s2", band_order: S2, bands: S2, s1_db: false });
     else if (s === "s1") up({ sensor: "s1", band_order: ["VV", "VH"], bands: ["VV", "VH"], s1_db: true });
     else up({ sensor: "other", band_order: ["b1", "b2", "b3", "b4"], bands: ["b1", "b2", "b3", "b4"], s1_db: false });
@@ -212,7 +216,8 @@ function BandsBox({ ds, up }: { ds: Dataset; up: (p: Partial<Dataset>) => void }
       {sensor === "s1" && <label className="chk"><input type="checkbox" checked={!!ds.s1_db} onChange={(e) => up({ s1_db: e.target.checked })} />
         the files hold linear backscatter: convert to decibels (10·log10) first (Earth Engine's S1_GRD is already in decibels: such files are
         recognised by their negative values and left alone)</label>}
-      <p className="muted small">The network receives {chosen.length} channels ({chosen.join(" ") || "none"}). Every band is normalised by its own mean and
+      <SecondGroup ds={ds} up={up} />
+      <p className="muted small">The network receives {chosen.length + (ds.bands2?.length ?? 0)} channels ({[...chosen, ...(ds.bands2 ?? [])].join(" ") || "none"}). Every band is normalised by its own mean and
         spread, measured on the training images on the GPU machine. Flips and quarter turns are used for augmentation; the result pictures
         show {sensor === "s2" ? "true colour (B04 B03 B02)" : sensor === "s1" ? "VV / VH / VV−VH" : "the first three bands"}.</p>
     </>}
@@ -276,7 +281,7 @@ function LocalBox({ ds, up, toast }: { ds: Dataset; up: (p: Partial<Dataset>) =>
       <label className="radio"><input type="radio" checked={!scene} onChange={() => up({ layout: "" })} />images + masks (same file names)</label>
       <label className="radio"><input type="radio" checked={scene} onChange={() => up({ layout: "scene" })} />large images + a label image on the same grid (Earth Engine export), cut into tiles</label>
     </p>}
-    {ds.task !== "segment" ? <div className="form">
+    {ds.task === "multilabel" ? <LabelsCsv ds={ds} up={up} scan={scan} toast={toast} /> : ds.task !== "segment" ? <div className="form">
       <label>Training folder (one subfolder per class)
         {scan?.folders.length ? <select value={ds.kaggle_train_dir} onChange={(e) => { const f = scan.folders.find((x) => x.folder === e.target.value); up({ kaggle_train_dir: e.target.value, classes: f?.classes ?? ds.classes }); }}>
           {scan.folders.map((f) => <option key={f.folder} value={f.folder}>{f.folder || "(the folder itself)"} — {f.classes.length} classes</option>)}</select>
@@ -398,4 +403,67 @@ print("started", i + 1, "exports: see the Tasks tab or ee.batch.Task.list()")`;
         Set this tab to match the export</button>
       <span className="muted">not run by the app: check it in Earth Engine (it needs your Earth Engine account)</span></p>
   </details>;
+}
+
+/** multi-label: the CSV with each image's classes (a file column and a labels column, or one 0/1 column per class) */
+function LabelsCsv({ ds, up, scan, toast }: { ds: Dataset; up: (p: Partial<Dataset>) => void; scan?: LocalScan | null; toast?: (m: string) => void }) {
+  const [info, setInfo] = useState<string>("");
+  const read = async () => {
+    try {
+      const r = await api.localCsv(ds.local_dir ?? "", ds.labels_csv ?? "");
+      up({ classes: r.classes });
+      setInfo(`${r.rows.toLocaleString()} rows; files in “${r.file_column}”, ${r.label_column ? `classes in “${r.label_column}”` : "one 0/1 column per class"}: `
+        + r.classes.map((c, i) => `${c} ${r.counts[i]}`).join(", "));
+    } catch (e) { toast?.(errText(e)); }
+  };
+  return <div className="form">
+    <label>Labels file (CSV)
+      {scan?.csvs?.length ? <select value={ds.labels_csv ?? ""} onChange={(e) => up({ labels_csv: e.target.value })}>
+        <option value="">choose…</option>{scan.csvs.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+        : <input value={ds.labels_csv ?? ""} onChange={(e) => up({ labels_csv: e.target.value.trim() })} placeholder="e.g. labels.csv" />}</label>
+    <label>Images folder (optional)<input value={ds.kaggle_train_dir} onChange={(e) => up({ kaggle_train_dir: e.target.value.trim() })} placeholder="empty = next to the CSV" /></label>
+    {ds.source === "local" && !ds.local_on_machine && <p className="row small wide"><button className="small" disabled={!ds.labels_csv || !ds.local_dir} onClick={read}>Read labels</button>
+      <span className="muted">{info}</span></p>}
+    <p className="muted small wide">One row per image: a file column (file, image, name, path or id; with or without the extension, relative to the CSV's folder or the
+      images folder) and a labels column with the classes separated by ; , | or spaces, or one 0/1 column per class. The network's Output
+      gives one score per class; each is a yes/no (sigmoid ≥ 0.5), trained with binary cross-entropy. Scores: micro and macro F1, mean
+      average precision (mAP) and exact match.</p>
+  </div>;
+}
+
+/** fusion: a second band group (e.g. Sentinel-1 next to Sentinel-2) from files with the same names in another folder, stacked after the
+ *  first group's bands; Input blocks can take one group each (Design: an Input's "Bands") */
+function SecondGroup({ ds, up }: { ds: Dataset; up: (p: Partial<Dataset>) => void }) {
+  const on = (ds.bands2?.length ?? 0) > 0 || !!ds.sensor2;
+  const order = ds.band_order2 ?? [], chosen = ds.bands2 ?? [];
+  const set = (s: string) => {
+    if (s === "") up({ bands2: [], band_order2: [], sensor2: "", s1_db2: false, fuse_dir: "" });
+    else if (s === "s1") up({ sensor2: "s1", band_order2: ["VV", "VH"], bands2: ["VV", "VH"], s1_db2: false });
+    else if (s === "s2") up({ sensor2: "s2", band_order2: S2_GEE, bands2: S2_GEE.filter((b) => !(ds.bands ?? []).some((x) => bandKey(x) === bandKey(b))) });
+    else up({ sensor2: "other", band_order2: ["c1", "c2"], bands2: ["c1", "c2"], s1_db2: false });
+  };
+  const toggle = (b: string) => up({ bands2: chosen.includes(b) ? chosen.filter((x) => x !== b) : order.filter((x) => x === b || chosen.includes(x)) });
+  return <div className="aug" style={{ margin: "8px 0" }}>
+    <strong>Second band group (fusion)</strong> <span className="muted small">(another sensor for the same places, e.g. Sentinel-1 next to Sentinel-2)</span>
+    <p className="row">
+      <label className="radio"><input type="radio" checked={!on} onChange={() => set("")} />none</label>
+      <label className="radio"><input type="radio" checked={ds.sensor2 === "s1"} onChange={() => set("s1")} />Sentinel-1 (VV, VH)</label>
+      <label className="radio"><input type="radio" checked={ds.sensor2 === "s2"} onChange={() => set("s2")} />Sentinel-2</label>
+      <label className="radio"><input type="radio" checked={ds.sensor2 === "other"} onChange={() => set("other")} />other</label>
+    </p>
+    {on && <>
+      <div className="form">
+        <label>Folder with these files (same file names as the first group's, any extension)
+          <input value={ds.fuse_dir ?? ""} onChange={(e) => up({ fuse_dir: e.target.value.trim() })} placeholder="e.g. s1  (s2/forest/x.tif ↔ s1/forest/x.tif)" /></label>
+        <label className="wide">Bands in these files, in their order
+          <input value={order.join(" ")} onChange={(e) => { const o = e.target.value.split(/\s+/).filter((x) => x); up({ band_order2: o, bands2: chosen.filter((b) => o.includes(b)) }); }} /></label>
+      </div>
+      <div className="bandgrid">{order.map((b) => <label key={b} className="chk"><input type="checkbox" checked={chosen.includes(b)} onChange={() => toggle(b)} />{b}</label>)}</div>
+      {ds.sensor2 === "s1" && <label className="chk"><input type="checkbox" checked={!!ds.s1_db2} onChange={(e) => up({ s1_db2: e.target.checked })} />
+        linear backscatter: convert to decibels (Earth Engine's S1_GRD is already in dB)</label>}
+      <p className="muted small">Both groups are stacked into one image: group 1's {(ds.bands ?? []).length} bands, then these {chosen.length}. One Input takes
+        both (early fusion), or, in the Design tab, give the Input “band group 1” and add an Input for band group 2: one branch per sensor,
+        joined by Concat (mid fusion). The folder mirrors the first group's: the same subfolders and file names.</p>
+    </>}
+  </div>;
 }

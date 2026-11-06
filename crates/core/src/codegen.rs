@@ -394,7 +394,17 @@ fn model_code_opts(g: &Graph, a: &Analysis, save_memory: bool) -> Result<String>
         let v = &var[id];
         let label = format!("{i}. {}", r.title);
         match n.kind.as_str() {
-            "input" => fwd.push(format!("        {v} = x")),
+            "input" => {
+                // a band group of the stacked image (mid fusion): its channels, first group first
+                let c = r.out.as_ref().map(|o| o[0]).unwrap_or(0);
+                let total = a.input.first().copied().unwrap_or(c);
+                let group = n.params.get("group").and_then(|g| g.as_u64()).unwrap_or(0);
+                fwd.push(match group {
+                    1 if c < total => format!("        {v} = x[:, :{c}]   # band group 1"),
+                    2 if c < total => format!("        {v} = x[:, {}:]   # band group 2", total - c),
+                    _ => format!("        {v} = x"),
+                });
+            }
             "add" => fwd.push(format!("        {v} = {}   # {label} -> {}", ins.join(" + "), fmt(r.out.as_ref().unwrap()))),
             "multiply" => {
                 let shp: Vec<&Vec<usize>> = r.inputs.iter().collect();

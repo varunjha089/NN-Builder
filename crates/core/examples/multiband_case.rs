@@ -30,15 +30,27 @@ fn main() {
         ("segfiles", Dataset { source: "local".into(), task: "segment".into(), local_dir: format!("{dir}/own/segfiles"), local_on_machine: true,
             kaggle_train_dir: "images".into(), kaggle_mask_dir: "masks".into(), image_size: [16, 16], sensor: "other".into(),
             band_order: s(&["b1", "b2", "b3", "b4", "b5"]), bands: s(&["b2", "b5"]), classes: s(&["background", "field"]), ..Default::default() }),
+        // S1 + S2 fusion, mid: one Input per band group (the classes differ only in the radar group)
+        ("fusion", Dataset { source: "local".into(), local_dir: format!("{dir}/own/fusion"), local_on_machine: true, kaggle_train_dir: "s2".into(),
+            image_size: [32, 32], sensor: "s2".into(), band_order: s(&["B2", "B3", "B4", "B8"]), bands: s(&["B2", "B3", "B4", "B8"]),
+            sensor2: "s1".into(), band_order2: s(&["VV", "VH"]), bands2: s(&["VV", "VH"]), s1_db2: true, fuse_dir: "s1".into(),
+            classes: s(&["flood", "land"]), ..Default::default() }),
+        // multi-label (BigEarthNet-like): a labels CSV, S2 + S1 stacked into one Input (early fusion)
+        ("multilabel", Dataset { source: "local".into(), task: "multilabel".into(), local_dir: format!("{dir}/own/ml"), local_on_machine: true,
+            labels_csv: "labels.csv".into(), kaggle_train_dir: "s2".into(), image_size: [24, 24], sensor: "s2".into(),
+            band_order: s(&["B2", "B3", "B4", "B8"]), bands: s(&["B2", "B4", "B8"]), sensor2: "s1".into(), band_order2: s(&["VV", "VH"]),
+            bands2: s(&["VV", "VH"]), fuse_dir: "s1".into(), classes: s(&["forest", "water", "urban"]), ..Default::default() }),
     ];
+    let mid = nnb_core::dsl::apply("net \"mid fusion ci\"\n1 input 1\n2 conv 16 3x3\n3 maxpool 2x2\n4 input 2\n5 conv 8 3x3\n6 maxpool 2x2\n\
+        7 concat <- 3, 6\n8 conv 32 3x3\n9 global_pool\n10 output\n", &Default::default()).unwrap();
     let seg = nnb_core::dsl::apply("net \"multiband seg ci\"\n1 input\n2 conv 16 3x3\n3 conv 16 3x3\n4 seg_output\n", &Default::default()).unwrap();
     for (name, ds) in cases {
         assert!(ds.problems().is_empty(), "{name}: {:?}", ds.problems());
-        let g = if ds.task == "segment" { &seg } else { &g };
+        let g = if ds.task == "segment" { &seg } else if name == "fusion" { &mid } else { &g };
         let a = analyze(g, &ds);
         assert!(a.ok, "{name}: {:?}", a.problems);
-        assert_eq!(a.input, vec![ds.bands.len(), ds.image_size[0], ds.image_size[1]]);
-        let t = TrainSettings { epochs: if ds.task == "segment" { 10 } else { 3 }, batch_size: 16, amp: false, aug_hflip: true, aug_rotate: 10.0, ..Default::default() };
+        assert_eq!(a.input, vec![ds.bands.len() + ds.bands2.len(), ds.image_size[0], ds.image_size[1]]);
+        let t = TrainSettings { epochs: match ds.task.as_str() { "segment" => 10, "multilabel" => 8, _ => 3 }, batch_size: 16, amp: false, aug_hflip: true, aug_rotate: 10.0, ..Default::default() };
         let d = format!("{dir}/{name}");
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(format!("{d}/train.py"), train_script(g, &ds, &a, &t, name).unwrap()).unwrap();

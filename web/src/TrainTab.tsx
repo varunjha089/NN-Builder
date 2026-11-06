@@ -153,7 +153,7 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
             {train.early_stop && <>
               <label>stop after<input type="number" min={1} max={100} value={train.patience} onChange={(e) => set({ patience: Number(e.target.value) })} />epochs without improvement</label>
               <label>in<select value={train.monitor} onChange={(e) => set({ monitor: e.target.value as TrainSettings["monitor"] })}>
-                <option value="val_loss">validation loss</option><option value="val_acc">validation accuracy</option>
+                <option value="val_loss">validation loss</option><option value="val_acc">validation accuracy (multi-label: micro F1)</option>
                 {datasetTask === "segment" && <option value="val_miou">validation mIoU</option>}</select></label>
             </>}
           </div>
@@ -262,9 +262,11 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
           { name: "batch loss", color: "#c7d2e0", thin: true, pts: bt.map((e) => [e.epoch - 1 + e.step / e.steps, e.loss]) },
           { name: "train", color: "#2f6fde", pts: ep.map((e) => [e.epoch, e.train_loss]) },
           { name: "validation", color: "#e76f51", pts: ep.map((e) => [e.epoch, e.val_loss]) }]} />
-        <Chart title={ep.some((e) => e.val_miou != null) ? "Pixel accuracy and mean IoU" : "Accuracy"} percent series={[
+        <Chart title={ep.some((e) => e.val_miou != null) ? "Pixel accuracy and mean IoU" : ep.some((e) => e.val_map != null)
+          ? "Multi-label: label accuracy (train), micro F1 and mAP (validation)" : "Accuracy"} percent series={[
           { name: "train", color: "#2f6fde", pts: ep.map((e) => [e.epoch, e.train_acc]) },
-          { name: "validation", color: "#e76f51", pts: ep.map((e) => [e.epoch, e.val_acc]) },
+          { name: ep.some((e) => e.val_map != null) ? "validation micro F1" : "validation", color: "#e76f51", pts: ep.map((e) => [e.epoch, e.val_acc]) },
+          { name: "validation mAP", color: "#8e44ad", pts: ep.filter((e) => e.val_map != null).map((e) => [e.epoch, e.val_map]) },
           { name: "validation mIoU", color: "#2a9d8f", pts: ep.filter((e) => e.val_miou != null).map((e) => [e.epoch, e.val_miou]) }]} />
         <details><summary>Log</summary><pre className="log">{status.log.join("\n")}</pre></details>
       </div>}

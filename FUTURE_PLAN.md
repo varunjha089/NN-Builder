@@ -23,7 +23,10 @@ What is still open, in the suggested order. Done work is in git and CLAUDE.md; t
    labels ignored); a generated GEE export script (Code Editor for scene + WorldCover labels, Python for class patches; not run against a
    real GEE account). Next in this step: multi-label (BigEarthNet), Hugging Face band arrays, first-conv expansion for ImageNet weights,
    a spatially separate test region for scenes.*
-   **Plan for the next two parts (2026-11-06, being built):**
+   **Multi-label and S1 + S2 fusion (2026-11-06): built as planned below** (CI trains a mid-fusion S2 + S1 set whose classes differ only in
+   the radar, and a BigEarthNet-like multi-label set with early fusion). Left in this step: Hugging Face band arrays, first-conv
+   expansion for ImageNet weights, a separate test region for scenes, BigEarthNet's own layout (one folder of per-band GeoTIFFs per
+   patch). The plan as written before building:
    - *Multi-label* (several classes per image, BigEarthNet): task "multilabel". Labels from a CSV in the dataset folder (own files or
      Kaggle): a file column plus either one column of class names separated by `;` `,` `|` or spaces, or one 0/1 column per class;
      class names read from the CSV on the Mac. The Output block stays (one logit per class, no softmax); loss = BCE with logits

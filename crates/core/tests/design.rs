@@ -501,3 +501,75 @@ fn own_files_and_earth_engine_exports() {
     assert!(sig.starts_with("2 files"), "{sig}");
     assert!(localdata::describe(&dir.path().join("missing")).is_err());
 }
+
+#[test]
+fn multilabel_and_fusion() {
+    use nnb_core::localdata;
+    let s = |v: &[&str]| v.iter().map(|b| b.to_string()).collect::<Vec<_>>();
+    // multi-label: a CSV of labels; built-in sets refused; the Output gives one score per class
+    let ml = Dataset { source: "local".into(), task: "multilabel".into(), local_dir: "/data/ben".into(), labels_csv: "labels.csv".into(),
+        classes: s(&["forest", "water", "urban"]), image_size: [32, 32], ..Default::default() };
+    assert!(ml.problems().is_empty(), "{:?}", ml.problems());
+    assert!(Dataset { labels_csv: "".into(), ..ml.clone() }.problems().join(" ").contains("CSV file with the labels"));
+    assert!(Dataset { source: "builtin".into(), ..ml.clone() }.problems().join(" ").contains("one label per image"));
+    let g = chain(vec![("input", json!({})), ("conv2d", json!({"filters": 4})), ("global_pool", json!({})), ("output", json!({}))]);
+    let a = analyze(&g, &ml);
+    assert!(a.ok, "{:?}", a.problems);
+    assert_eq!(a.nodes.last().unwrap().out, Some(vec![3]));
+
+    // fusion: Sentinel-2 (4 bands) + Sentinel-1 (2) stacked = 6 channels
+    let fused = Dataset { source: "local".into(), local_dir: "/data/fuse".into(), kaggle_train_dir: "s2".into(), sensor: "s2".into(),
+        band_order: s(&["B2", "B3", "B4", "B8"]), bands: s(&["B2", "B3", "B4", "B8"]), sensor2: "s1".into(), band_order2: s(&["VV", "VH"]),
+        bands2: s(&["VV", "VH"]), fuse_dir: "s1".into(), classes: s(&["a", "b"]), image_size: [32, 32], ..Default::default() };
+    assert!(fused.problems().is_empty(), "{:?}", fused.problems());
+    assert!(fused.fused());
+    assert_eq!(fused.input_shape(), vec![6, 32, 32]);
+    let bad = |f: &dyn Fn(&mut Dataset)| { let mut d = fused.clone(); f(&mut d); d.problems().join(" ") };
+    assert!(bad(&|d| d.fuse_dir = "".into()).contains("second group's files"));
+    assert!(bad(&|d| d.bands2 = s(&["VV", "HH"])).contains("HH is not in the bands of the second files"));
+    assert!(bad(&|d| d.band_order2 = s(&["B2", "VH"])).contains("share a band name") || bad(&|d| { d.band_order2 = s(&["B02", "VH"]); d.bands2 = s(&["B02"]); }).contains("share a band name"));
+    assert!(bad(&|d| d.kaggle_test_dir = "test".into()).contains("leave the test folder empty"));
+    // early fusion: one Input takes all 6
+    let a = analyze(&g, &fused);
+    assert!(a.ok && a.nodes[0].out == Some(vec![6, 32, 32]), "{:?}", a.problems);
+    // mid fusion, written as text: an Input per group, a branch each, joined by Concat
+    let text = "net \"fusion\"\n1 input 1\n2 conv 16 3x3\n3 input 2\n4 conv 8 3x3\n5 concat <- 2, 4\n6 global_pool\n7 output\n";
+    let mid = nnb_core::dsl::apply(text, &Default::default()).unwrap();
+    let a = analyze(&mid, &fused);
+    assert!(a.ok, "{:?} {:?}", a.problems, a.nodes.iter().map(|n| (&n.kind, &n.messages)).collect::<Vec<_>>());
+    let convs: Vec<_> = a.nodes.iter().filter(|n| n.kind == "conv2d").collect();
+    assert_eq!(convs.iter().map(|n| n.params).collect::<Vec<_>>(), vec![4 * 9 * 16 + 16, 2 * 9 * 8 + 8]);
+    assert!(a.nodes.iter().any(|n| n.kind == "concat" && n.out == Some(vec![24, 32, 32])));
+    let code = model_code(&mid, &a).unwrap();
+    assert!(code.contains("= x[:, :4]   # band group 1") && code.contains("= x[:, 4:]   # band group 2"), "{code}");
+    // the text prints back the same groups
+    let printed = nnb_core::dsl::print(&mid).0;
+    assert!(printed.contains("input 1") && printed.contains("input 2"), "{printed}");
+    // two Inputs without a second group, or two of the same group, or one Input with only one group: explained
+    assert!(analyze(&mid, &Dataset { bands2: vec![], band_order2: vec![], sensor2: "".into(), ..fused.clone() }).problems.join(" ").contains("exactly one Input"));
+    let same = nnb_core::dsl::apply(&text.replace("3 input 2", "3 input 1"), &Default::default()).unwrap();
+    assert!(analyze(&same, &fused).problems.join(" ").contains("one takes band group 1"));
+    let only1 = chain(vec![("input", json!({"group": 1})), ("conv2d", json!({"filters": 4})), ("global_pool", json!({})), ("output", json!({}))]);
+    assert!(analyze(&only1, &fused).problems.join(" ").contains("is not used"));
+    assert!(!analyze(&only1, &Dataset { bands2: vec![], ..fused.clone() }).ok, "group 1 without a second group");
+    // a train.py for mid fusion + multi-label compiles
+    let both = Dataset { task: "multilabel".into(), labels_csv: "labels.csv".into(), classes: s(&["a", "b", "c"]), ..fused.clone() };
+    let a = analyze(&mid, &both);
+    assert!(a.ok, "{:?}", a.problems);
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("train.py"), train_script(&mid, &both, &a, &TrainSettings::default(), "t").unwrap()).unwrap();
+    if let Some(out) = py_compile(&dir.path().join("train.py")) {
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    }
+
+    // the labels CSV on the Mac: names in one column (quoted, with spaces), or one 0/1 column per class
+    let c1 = dir.path().join("labels.csv");
+    std::fs::write(&c1, "\u{feff}patch_id,labels\na,\"tree cover; water\"\nb,water\nc,\n").unwrap();
+    let r = localdata::csv_classes(&c1).unwrap();
+    assert_eq!((r["rows"].clone(), r["file_column"].clone(), r["classes"].clone(), r["counts"].clone()),
+        (json!(3), json!("patch_id"), json!(["tree cover", "water"]), json!([1, 2])));
+    let c2 = dir.path().join("onehot.csv");
+    std::fs::write(&c2, "image,forest,water\nx.tif,1,0\ny.tif,1,1\n").unwrap();
+    let r = localdata::csv_classes(&c2).unwrap();
+    assert_eq!((r["label_column"].clone(), r["classes"].clone(), r["counts"].clone()), (Value::Null, json!(["forest", "water"]), json!([2, 1])));
+}

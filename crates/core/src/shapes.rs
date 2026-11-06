@@ -183,17 +183,26 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
     let no_targets: Vec<&str> = vec![];
 
     let inputs: Vec<&Node> = g.nodes.iter().filter(|n| n.kind == "input").collect();
-    if inputs.len() != 1 {
-        problems.push(if inputs.is_empty() { "Add an Input block.".into() } else { "There must be exactly one Input block.".into() });
+    // which band group an Input takes: 0 = all channels; 1 / 2 = the first / second band group of a fused dataset (mid fusion)
+    let group_of = |n: &Node| n.params.get("group").and_then(|v| v.as_u64()).unwrap_or(0);
+    let groups: Vec<u64> = inputs.iter().map(|n| group_of(n)).collect();
+    if inputs.is_empty() {
+        problems.push("Add an Input block.".into());
+    } else if inputs.len() > 1 {
+        if !ds.fused() {
+            problems.push("There must be exactly one Input block (two are for two band groups, e.g. Sentinel-2 + Sentinel-1: Dataset tab).".into());
+        } else if groups.contains(&0) || groups.iter().enumerate().any(|(i, g)| groups[..i].contains(g)) {
+            problems.push("With two Input blocks, one takes band group 1 and the other band group 2.".into());
+        }
+    } else if ds.fused() && groups[0] != 0 {
+        problems.push(format!("The Input takes only band group {}: the other group is not used (add an Input for it, or take all bands).", groups[0]));
     }
-    // reachable from the (first) Input
+    // reachable from the Inputs
     let mut reach: HashSet<&str> = HashSet::new();
-    if let Some(inp) = inputs.first() {
-        let mut q = VecDeque::from([inp.id.as_str()]);
-        while let Some(id) = q.pop_front() {
-            if reach.insert(id) {
-                q.extend(out_edges.get(id).unwrap_or(&no_targets).iter().copied());
-            }
+    let mut q: VecDeque<&str> = if inputs.len() == 1 || ds.fused() { inputs.iter().map(|n| n.id.as_str()).collect() } else { inputs.iter().take(1).map(|n| n.id.as_str()).collect() };
+    while let Some(id) = q.pop_front() {
+        if reach.insert(id) {
+            q.extend(out_edges.get(id).unwrap_or(&no_targets).iter().copied());
         }
     }
     // computation order (Kahn) over the reached part
@@ -230,7 +239,18 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
         let mut r = NodeResult { id: id.to_string(), kind: node.kind.clone(), title: model::title(&node.kind).into(), status: "ok".into(), ..Default::default() };
         let blocked = srcs.iter().any(|s| results.get(s).map(|x| x.out.is_none()).unwrap_or(true));
         if node.kind == "input" {
-            r.out = Some(input_shape.clone());
+            match ds.group_channels(group_of(node)) {
+                Some(c) if !input_shape.is_empty() => {
+                    let mut shp = input_shape.clone();
+                    shp[0] = c;
+                    r.out = Some(shp);
+                }
+                _ if group_of(node) == 0 => r.out = Some(input_shape.clone()),
+                _ => {
+                    r.status = "error".into();
+                    r.messages.push(format!("Band group {} needs a second band group in the Dataset tab (e.g. Sentinel-1 next to Sentinel-2).", group_of(node)));
+                }
+            }
             rfs.insert(id, ([1, 1], [1, 1]));
         } else if blocked {
             r.status = "blocked".into();

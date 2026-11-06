@@ -576,6 +576,11 @@ async fn hf_info(repo: String) -> R<Value> {
         let mut configs = vec![];
         for (name, info) in v["dataset_info"].as_object().cloned().unwrap_or_default() {
             let cols: Vec<Value> = info["features"].as_object().cloned().unwrap_or_default().into_iter().map(|(c, f)| {
+                // a list of class labels (Sequence / List of ClassLabel, or a JSON list of one): several classes per image (multi-label)
+                let inner = if f.is_array() { f[0].clone() } else if matches!(f["_type"].as_str(), Some("Sequence" | "List" | "LargeList")) { f["feature"].clone() } else { Value::Null };
+                if inner["_type"] == "ClassLabel" {
+                    return json!({"name": c, "type": "ClassLabelList", "names": inner["names"].clone()});
+                }
                 json!({"name": c, "type": f["_type"].as_str().unwrap_or(if f.is_object() { "?" } else { "list" }), "names": f["names"].clone()})
             }).collect();
             let splits: Vec<Value> = info["splits"].as_object().cloned().unwrap_or_default().into_iter().map(|(s, i)| json!({"name": s, "n": i["num_examples"]})).collect();
@@ -663,6 +668,17 @@ async fn kaggle_files(slug: String) -> R<Value> {
 #[tauri::command]
 async fn local_scan(dir: String) -> R<Value> {
     blocking(move || nnb_core::localdata::describe(&runs::local_path(dir.trim())).map_err(e)).await
+}
+
+/// the class names of a multi-label CSV inside the owner's folder
+#[tauri::command]
+async fn local_csv(dir: String, csv: String) -> R<Value> {
+    blocking(move || {
+        if csv.contains("..") {
+            return Err("The labels file must be inside the folder.".into());
+        }
+        nnb_core::localdata::csv_classes(&runs::local_path(dir.trim()).join(csv.trim())).map_err(e)
+    }).await
 }
 
 #[tauri::command]
@@ -1060,7 +1076,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             app_state, templates_list, template_apply, project_from_template, project_save_as, project_new, project_open, set_projects_dir, project_delete, set_max_blocks, project_load, save_graph, design_from_text, design_format, save_dataset, save_train, code, export_code,
             set_kaggle, set_hf, set_aws, clear_secret, test_kaggle, test_hf, test_aws, tools_install,
-            machine_save, machine_delete, machine_test, machine_connect, machine_prepare, hf_info, hf_preview, kaggle_files, local_scan, pick_folder,
+            machine_save, machine_delete, machine_test, machine_connect, machine_prepare, hf_info, hf_preview, kaggle_files, local_scan, local_csv, pick_folder,
             update_settings, set_auto_update, update_check, update_install, update_restart, targets, run_start, run_start_seeds, runs_summary, runs_export, run_resume_on, runs_list, run_status, run_stop, run_fetch, run_results, run_reveal, job_status, open_url
         ])
         .build(tauri::generate_context!())
