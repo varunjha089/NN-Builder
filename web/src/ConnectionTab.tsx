@@ -21,6 +21,7 @@ const POLICY = `{
 export function ConnectionTab({ st, reload, toast, startJob }: { st: AppState; reload: () => void; toast: (m: string) => void; startJob: () => void }) {
   const [ku, setKu] = useState(""); const [kk, setKk] = useState("");
   const [hf, setHf] = useState("");
+  const [gk, setGk] = useState("");
   const [ak, setAk] = useState(""); const [as, setAs] = useState("");
   const [m, setM] = useState<Machine>(EMPTY);
   const [editing, setEditing] = useState(false);
@@ -57,6 +58,17 @@ export function ConnectionTab({ st, reload, toast, startJob }: { st: AppState; r
           <button onClick={() => run(api.testHf())}>Test</button><button onClick={() => run(api.clearSecret("huggingface"), "Removed from the Keychain.")}>Remove</button></p>
           : <div className="row"><input type="password" className="grow" placeholder="hf_…" value={hf} onChange={(e) => setHf(e.target.value)} />
             <button onClick={() => run(api.setHf(hf).then(() => setHf("")), "Saved in the Keychain.")}>Save</button></div>}
+      </section>
+
+      <section className="card">
+        <h3>Google Cloud Storage (optional)</h3>
+        <p className="muted small">Only for data in a private Cloud Storage bucket (Earth Engine's Cloud Storage export, Dataset tab → My own files → in the cloud):
+          a service-account key (Google Cloud console → IAM → Service accounts → Keys → JSON) with read access to the bucket. It is copied to an
+          SSH / AWS machine when a run starts (like the other tokens); Kaggle notebooks can read public buckets only.</p>
+        {st.secrets.gcs ? <p className="row"><span className="st-ok">Key saved.</span>
+          <button onClick={() => run(api.clearSecret("gcs"), "Removed from the Keychain.")}>Remove</button></p>
+          : <div className="row"><textarea className="grow" rows={2} placeholder='the key file contents: {"type": "service_account", …}' value={gk} onChange={(e) => setGk(e.target.value)} />
+            <button onClick={() => run(api.setGcs(gk).then(() => setGk("")), "Saved in the Keychain.")}>Save</button></div>}
       </section>
 
       <section className="card">

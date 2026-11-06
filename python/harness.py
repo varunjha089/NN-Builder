@@ -422,7 +422,10 @@ def local_root():
     """the owner's own files: a folder already on this machine, the private Kaggle dataset the app uploaded (attached to the notebook),
     or the copy the app made in <data>/local/<key>"""
     key = DATASET["local_key"]
-    if DATASET.get("local_on_machine"):
+    if DATASET.get("cloud_url"):
+        root = os.path.join(DATA, "cloud", key)
+        cloud_fetch(DATASET["cloud_url"], root)
+    elif DATASET.get("local_on_machine"):
         root = os.path.expanduser(DATASET["local_dir"])
     elif ON_KAGGLE:
         found = [c for c in [f"/kaggle/input/{key}"] + glob.glob(f"/kaggle/input/**/{key}", recursive=True) if os.path.isdir(c)]
@@ -434,6 +437,89 @@ def local_root():
     if not os.path.isdir(root):
         raise SystemExit(f"DATA: the folder with your files is not on this machine ({root}).")
     return root
+
+
+def pip_install(*names):
+    subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", *names], check=False)
+
+
+def cloud_fetch(url, root):
+    """bring the dataset from the cloud to this machine (once; later runs fetch only what is new or changed). gs://bucket/folder with
+    the google-cloud-storage library (the key the app copied to ~/.config/nnb/gcs-key.json, else anonymous: public buckets);
+    a shared Google Drive folder or file link with gdown (a zip / tar is unpacked); rclone:remote:path with rclone; file:///folder copies"""
+    import shutil
+    os.makedirs(root, exist_ok=True)
+    done = os.path.join(root, ".nnb_fetched")
+    emit("info", message=f"fetching the data from {url}")
+    t0, count, size = time.time(), 0, 0
+    if url.startswith("gs://"):
+        try:
+            from google.cloud import storage
+        except ImportError:
+            pip_install("google-cloud-storage")
+            from google.cloud import storage
+        key = os.path.expanduser("~/.config/nnb/gcs-key.json")
+        client = storage.Client.from_service_account_json(key) if os.path.exists(key) else storage.Client.create_anonymous_client()
+        bucket, _, prefix = url[5:].partition("/")
+        prefix = prefix.strip("/") + "/" if prefix.strip("/") else ""
+        try:
+            blobs = list(client.list_blobs(bucket, prefix=prefix))
+        except Exception as e:
+            raise SystemExit(f"DATA: cannot list {url}: {type(e).__name__}: {e} (a private bucket needs the Cloud Storage key: Connection tab, "
+                             "and 'copy tokens' when starting the run; Kaggle notebooks can read public buckets only)")
+        for b in blobs:
+            if b.name.endswith("/"):
+                continue
+            dest = os.path.join(root, b.name[len(prefix):])
+            if os.path.exists(dest) and os.path.getsize(dest) == b.size:
+                continue
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            b.download_to_filename(dest + ".part")
+            os.replace(dest + ".part", dest)
+            count, size = count + 1, size + (b.size or 0)
+        if not blobs:
+            raise SystemExit(f"DATA: nothing found under {url}.")
+    elif url.startswith("https://drive.google.com/"):
+        if os.path.exists(done):
+            return
+        try:
+            import gdown
+        except ImportError:
+            pip_install("gdown")
+            import gdown
+        if "/folders/" in url:
+            try:
+                files = gdown.download_folder(url, output=root, quiet=True) or []
+            except Exception as e:
+                raise SystemExit(f"DATA: Google Drive folder download failed: {e}. The folder must be shared as 'anyone with the link'; "
+                                 "gdown fetches at most 50 files per folder (for more, use Cloud Storage or rclone)")
+            count = len(files)
+        else:
+            f = gdown.download(url, output=root + "/", quiet=True, fuzzy=True)
+            if not f:
+                raise SystemExit("DATA: Google Drive file download failed (is it shared as 'anyone with the link'?)")
+            count = 1
+            if f.lower().endswith((".zip", ".tar", ".tar.gz", ".tgz")):
+                shutil.unpack_archive(f, root)
+                os.remove(f)
+    elif url.startswith("rclone:"):
+        exe = shutil.which("rclone")
+        if not exe:
+            raise SystemExit("DATA: rclone is not installed on this machine (https://rclone.org/install/; then 'rclone config' once to add the remote)")
+        r = subprocess.run([exe, "copy", url[len("rclone:"):], root, "--transfers", "8"], capture_output=True, text=True)
+        if r.returncode != 0:
+            raise SystemExit("DATA: rclone copy failed: " + (r.stderr or r.stdout)[-500:])
+    elif url.startswith("file://"):
+        src = url[len("file://"):]
+        if not os.path.isdir(src):
+            raise SystemExit(f"DATA: the folder {src} does not exist.")
+        shutil.copytree(src, root, dirs_exist_ok=True)
+        count = sum(len(fs) for _, _, fs in os.walk(src))
+    else:
+        raise SystemExit(f"DATA: unknown cloud location {url}")
+    with open(done, "w") as f:
+        f.write(url)
+    emit("info", message=f"data ready in {root}: {count} files fetched ({size / 1e6:.1f} MB known) in {time.time() - t0:.0f} s")
 
 
 def data_root():

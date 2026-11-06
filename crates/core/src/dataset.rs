@@ -71,6 +71,11 @@ pub struct Dataset {
     pub local_dir: String,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub local_on_machine: bool,
+    /// local: the files are in the cloud and the training machine fetches them itself (nothing passes through the Mac):
+    /// gs://bucket/folder (Earth Engine's Cloud Storage export; a private bucket needs the key from the Connection tab), a shared
+    /// Google Drive folder or file link (https://drive.google.com/…), or rclone:remote:path (rclone set up on the machine)
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub cloud_url: String,
     /// "" = files (one subfolder per class, or images + masks) | "scene" = large images (an Earth Engine export, possibly split into
     /// several files) with a label image on the same grid, cut into tiles of `image_size` (segmentation)
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -116,6 +121,23 @@ pub const SENTINEL1_BANDS: &[&str] = &["VV", "VH"];
 pub const SENTINEL2_GEE: &[&str] = &["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B9", "B11", "B12"];
 /// the most bands an image may have
 pub const MAX_BANDS: usize = 32;
+
+/// what is wrong with a cloud location (None: empty or fine)
+pub fn cloud_url_problem(u: &str) -> Option<String> {
+    if u.is_empty() {
+        return None;
+    }
+    if u.chars().any(|c| c.is_whitespace() || c.is_control() || "\"'`$\\;|&<>".contains(c)) {
+        return Some("The cloud location may not contain spaces, quotes or shell characters.".into());
+    }
+    let ok = match u.split_once("://") {
+        Some(("gs", rest)) => rest.split('/').next().is_some_and(|b| b.len() >= 3),
+        Some(("https", rest)) => rest.starts_with("drive.google.com/"),
+        Some(("file", rest)) => rest.starts_with('/'),
+        _ => u.strip_prefix("rclone:").is_some_and(|r| r.split_once(':').is_some_and(|(remote, _)| !remote.is_empty())),
+    };
+    (!ok).then(|| "The cloud location: gs://bucket/folder, a Google Drive link (https://drive.google.com/…), or rclone:remote:path.".into())
+}
 
 /// a band name for comparing: upper case, and Earth Engine's B1 … B9 written as B01 … B09 (so B4 and B04 are the same band)
 pub fn band_key(b: &str) -> String {
@@ -198,6 +220,7 @@ impl Default for Dataset {
             s1_db: false,
             local_dir: String::new(),
             local_on_machine: false,
+            cloud_url: String::new(),
             layout: String::new(),
             scene_image: String::new(),
             scene_label: String::new(),
@@ -251,7 +274,8 @@ impl Dataset {
     /// local: the name the files have on the training machine (<data>/local/<key>) and on Kaggle (<owner>/<key>, a private dataset):
     /// "nnb-" + the folder's name + a short hash of its full path, in the letters Kaggle allows (3 to 50 characters)
     pub fn local_key(&self) -> String {
-        let path = self.local_dir.trim_end_matches(['/', '\\']);
+        let path = if self.cloud_url.is_empty() { self.local_dir.as_str() } else { self.cloud_url.as_str() };
+        let path = path.trim_end_matches(['/', '\\']);
         let base = path.rsplit(['/', '\\']).next().unwrap_or("");
         let mut name: String = base.to_ascii_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
         while name.contains("--") {
@@ -298,7 +322,11 @@ impl Dataset {
             "local" => {
                 let d = self.local_dir.trim();
                 let absolute = d.starts_with('/') || d.starts_with("~/") || (d.len() > 2 && d.as_bytes()[1] == b':');
-                if d.is_empty() || !absolute {
+                if let Some(problem) = cloud_url_problem(&self.cloud_url) {
+                    p.push(problem)
+                } else if !self.cloud_url.is_empty() {
+                    // fetched by the training machine: no folder on this Mac
+                } else if d.is_empty() || !absolute {
                     p.push("Your own files: give the full path of the folder (Choose… picks it).".into())
                 } else if d.chars().any(|c| c.is_control() || "\"'`$".contains(c)) {
                     p.push("Your own files: the folder's path may not contain quotes, ` or $.".into())

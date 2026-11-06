@@ -75,7 +75,7 @@ fn set_secret(name: &str, value: &str) -> R<()> {
 /// id): nothing secret. Kept in settings.json, so that starting the app never reads the Keychain (a Keychain prompt, as after every
 /// unsigned rebuild, would otherwise hold up the window); the secrets themselves are read only when a run or a test needs them.
 fn meta_of(c: &Creds) -> Value {
-    json!({"kaggle": c.kaggle.as_ref().map(|k| k.username.clone()), "huggingface": c.hf_token.is_some(),
+    json!({"kaggle": c.kaggle.as_ref().map(|k| k.username.clone()), "huggingface": c.hf_token.is_some(), "gcs": c.gcs_key.is_some(),
         "aws": c.aws.as_ref().map(|a| format!("{}…", a.access_key_id.chars().take(4).collect::<String>()))})
 }
 
@@ -107,6 +107,7 @@ fn creds() -> Creds {
         kaggle: secret("kaggle").and_then(|s| serde_json::from_str(&s).ok()),
         aws: secret("aws").and_then(|s| serde_json::from_str(&s).ok()),
         hf_token: secret("huggingface"),
+        gcs_key: secret("gcs"),
     }
 }
 
@@ -428,6 +429,16 @@ async fn set_hf(token: String) -> R<()> {
     set_secret("huggingface", t)
 }
 
+/// a Google Cloud service-account key (the JSON file's contents) for private Cloud Storage buckets
+#[tauri::command]
+async fn set_gcs(key: String) -> R<()> {
+    let v: Value = serde_json::from_str(key.trim()).map_err(|_| "Paste the whole service-account key file (JSON).".to_string())?;
+    if v["type"] != "service_account" || !v["private_key"].is_string() || !v["client_email"].is_string() {
+        return Err("This is not a service-account key (it needs type service_account, client_email and private_key).".into());
+    }
+    set_secret("gcs", &v.to_string())
+}
+
 #[tauri::command]
 async fn set_aws(access_key_id: String, secret_access_key: String) -> R<()> {
     if !access_key_id.trim().starts_with("AK") || secret_access_key.trim().len() < 20 {
@@ -438,7 +449,7 @@ async fn set_aws(access_key_id: String, secret_access_key: String) -> R<()> {
 
 #[tauri::command]
 async fn clear_secret(name: String) -> R<()> {
-    if !["kaggle", "huggingface", "aws"].contains(&name.as_str()) {
+    if !["kaggle", "huggingface", "aws", "gcs"].contains(&name.as_str()) {
         return Err("unknown".into());
     }
     if let Ok(en) = keyring::Entry::new(SERVICE, &name) {
@@ -1076,7 +1087,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             app_state, templates_list, template_apply, project_from_template, project_save_as, project_new, project_open, set_projects_dir, project_delete, set_max_blocks, project_load, save_graph, design_from_text, design_format, save_dataset, save_train, code, export_code,
-            set_kaggle, set_hf, set_aws, clear_secret, test_kaggle, test_hf, test_aws, tools_install,
+            set_kaggle, set_hf, set_aws, set_gcs, clear_secret, test_kaggle, test_hf, test_aws, tools_install,
             machine_save, machine_delete, machine_test, machine_connect, machine_prepare, hf_info, hf_preview, kaggle_files, local_scan, local_csv, pick_folder,
             update_settings, set_auto_update, update_check, update_install, update_restart, targets, run_start, run_start_seeds, runs_summary, runs_export, run_resume_on, runs_list, run_status, run_stop, run_fetch, run_results, run_reveal, job_status, open_url
         ])

@@ -361,6 +361,19 @@ def hfbands(root):
     print(f"hfbands: Hugging Face band arrays, bands b2 b4 -> {check['batch'][1:]}, test accuracy {done['test_acc']}")
 
 
+def cloud(root):
+    """a cloud location (file:// stands in for gs:// / Drive): fetched into <data>/cloud/<key> once, then used like own files"""
+    import shutil
+    root = os.path.abspath(root)
+    shutil.copytree(os.path.join(root, "own", "imb"), os.path.join(root, "own", "cloudsrc"), dirs_exist_ok=True)
+    ev = run(os.path.join(root, "cloud"), os.path.join(root, "data"), "cloud")
+    got = next(e for e in ev if e["event"] == "info" and e.get("message", "").startswith("data ready in"))
+    assert "/data/cloud/nnb-cloudsrc-" in got["message"] and "files fetched" in got["message"], got
+    assert next(e for e in ev if e["event"] == "done")["test_acc"] >= 0.8
+    ev = run(os.path.join(root, "cloud"), os.path.join(root, "data"), "cloud")   # a second run: already there
+    print(f"cloud: {got['message']}")
+
+
 def check_data(root):
     """Check data: no training, a report that sees the linear Sentinel-1 values and counts the classes, and the one-batch check"""
     root = os.path.abspath(root)
@@ -383,6 +396,7 @@ if __name__ == "__main__":
     own_files(sys.argv[1])
     check_data(sys.argv[1])
     imbalanced(sys.argv[1])
+    cloud(sys.argv[1])
     ben(sys.argv[1])
     pretrained_ms(sys.argv[1])
     hfbands(sys.argv[1])

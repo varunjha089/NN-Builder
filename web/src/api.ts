@@ -27,7 +27,7 @@ export interface Dataset {
   image_size: [number, number]; channels: number; classes: string[];
   /** multispectral / radar images: the bands the model uses (in order), the bands in the files, the sensor, Sentinel-1 in dB */
   bands?: string[]; band_order?: string[]; sensor?: "" | "s2" | "s1" | "other"; s1_db?: boolean;
-  local_dir?: string; local_on_machine?: boolean; layout?: "" | "scene"; scene_image?: string; scene_label?: string;
+  local_dir?: string; local_on_machine?: boolean; cloud_url?: string; layout?: "" | "scene"; scene_image?: string; scene_label?: string;
   scene_split?: "" | "strip" | "files"; scene_test_image?: string; scene_test_label?: string;
   /** multi-label: the CSV with each image's classes; fusion: a second band group from files with the same names in fuse_dir */
   labels_csv?: string; bands2?: string[]; band_order2?: string[]; sensor2?: "" | "s2" | "s1" | "other"; s1_db2?: boolean; fuse_dir?: string;
@@ -55,7 +55,7 @@ export interface AppState {
   version: string; home: string; projects: { path: string; name: string; exists: boolean }[]; projects_dir: string;
   design_size: DesignSize;
   project: { name: string; path: string; draft: boolean } | null; tools_ready: boolean;
-  secrets: { kaggle: string | null; huggingface: boolean; aws: string | null };
+  secrets: { kaggle: string | null; huggingface: boolean; aws: string | null; gcs?: boolean };
   machines: { machine: Machine; prepared: Prepared | null }[];
   builtins: { key: string; label: string; shape: number[]; classes: string[] }[];
   kinds: { kind: string; title: string; defaults: Params }[];
@@ -101,6 +101,7 @@ export const api = {
   exportCode: () => invoke<string>("export_code"),
   setKaggle: (username: string, key: string) => invoke<void>("set_kaggle", { username, key }),
   setHf: (token: string) => invoke<void>("set_hf", { token }),
+  setGcs: (key: string) => invoke<void>("set_gcs", { key }),
   setAws: (accessKeyId: string, secretAccessKey: string) => invoke<void>("set_aws", { accessKeyId, secretAccessKey }),
   clearSecret: (name: string) => invoke<void>("clear_secret", { name }),
   testKaggle: () => invoke<string>("test_kaggle"),

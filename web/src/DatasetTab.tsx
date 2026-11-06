@@ -261,18 +261,29 @@ function LocalBox({ ds, up, toast }: { ds: Dataset; up: (p: Partial<Dataset>) =>
     if (d) { up({ local_dir: d }); read(d); }
   };
   const scene = ds.layout === "scene";
+  const [cloudMode, setCloud] = useState(!!ds.cloud_url);
+  const cloud = cloudMode || !!ds.cloud_url;
   return <>
-    <div className="row">
+    {cloud ? <div className="row">
+      <input className="grow" placeholder="gs://bucket/folder, https://drive.google.com/drive/folders/…, or rclone:remote:path" value={ds.cloud_url ?? ""}
+        onChange={(e) => up({ cloud_url: e.target.value.trim() })} />
+    </div> : <div className="row">
       <input className="grow" placeholder={ds.local_on_machine ? "the folder's path on the training machine, e.g. ~/data/sentinel2" : "the folder on this Mac"}
         value={ds.local_dir ?? ""} onChange={(e) => up({ local_dir: e.target.value })} />
       {!ds.local_on_machine && <button onClick={choose} disabled={busy}>Choose…</button>}
       {!ds.local_on_machine && <button onClick={() => read()} disabled={busy || !ds.local_dir}>Read folder</button>}
-    </div>
+    </div>}
     <p className="row small">
-      <label className="radio"><input type="radio" checked={!ds.local_on_machine} onChange={() => up({ local_on_machine: false })} />on this Mac</label>
-      <label className="radio"><input type="radio" checked={!!ds.local_on_machine} onChange={() => up({ local_on_machine: true })} />already on the training machine (SSH / AWS)</label>
+      <label className="radio"><input type="radio" checked={!ds.local_on_machine && !cloud} onChange={() => { setCloud(false); up({ local_on_machine: false, cloud_url: "" }); }} />on this Mac</label>
+      <label className="radio"><input type="radio" checked={!!ds.local_on_machine && !cloud} onChange={() => { setCloud(false); up({ local_on_machine: true, cloud_url: "" }); }} />already on the training machine (SSH / AWS)</label>
+      <label className="radio"><input type="radio" checked={cloud} onChange={() => { setCloud(true); up({ local_on_machine: false }); }} />in the cloud (Cloud Storage, Google Drive)</label>
     </p>
-    <p className="muted small">{ds.local_on_machine
+    <p className="muted small">{cloud
+      ? "The training machine (or Kaggle notebook) fetches the files itself, so nothing passes through this Mac: gs://bucket/folder (Earth Engine's "
+        + "Cloud Storage export; a private bucket needs the Cloud Storage key, Connection tab, and works on SSH / AWS machines), a Google Drive "
+        + "folder or file shared as 'anyone with the link' (at most 50 files per folder; a zip is unpacked), or rclone:remote:path (rclone set "
+        + "up on the machine). Fetched once into the machine's data folder; later runs fetch only what is new."
+      : ds.local_on_machine
       ? "train.py reads the folder where it is; nothing is copied. Kaggle cannot reach it."
       : "When a run starts, the folder is copied to the training machine (rsync: only the first time and after changes) or, for Kaggle, uploaded "
         + "once as a private Kaggle dataset under your account (again only when it changed). Nothing in the folder is changed."}</p>
@@ -320,6 +331,9 @@ function GeeBox({ ds, up, toast }: { ds: Dataset; up: (p: Partial<Dataset>) => v
   const [end, setEnd] = useState("2024-12-31");
   const [cloud, setCloud] = useState(20);
   const [crs, setCrs] = useState("EPSG:3857");
+  const [dest, setDest] = useState<"drive" | "gcs">("drive");
+  const [bucket, setBucket] = useState("your-bucket");
+  const gcs = dest === "gcs";
   const s1 = ds.sensor === "s1";
   const seg = ds.task === "segment";
   // Earth Engine's own names for the chosen bands (B04 -> B4)
@@ -366,8 +380,9 @@ image = (ee.ImageCollection("${toa ? "COPERNICUS/S2_HARMONIZED" : "COPERNICUS/S2
          .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", ${cloud}))
          .map(clear).select([${list}]).median().toFloat())`;
   const script = seg ? `// NN Builder: ${s1 ? "Sentinel-1" : "Sentinel-2"} image + label image for segmentation. In code.earthengine.google.com: draw your
-// region with the drawing tools (it becomes "geometry"), press Run, then in Tasks press Run on both exports. Download the two Drive
-// folders nnb_image and nnb_label into one folder, choose it in the Dataset tab (image folder nnb_image, label folder nnb_label).
+// region with the drawing tools (it becomes "geometry"), press Run, then in Tasks press Run on both exports. ${gcs
+    ? `They land in gs://${bucket}/nnb_export/;\n// in the Dataset tab choose "in the cloud" with that address (the training machine fetches it; nothing passes through the Mac).`
+    : `Download the two Drive\n// folders nnb_image and nnb_label into one folder, choose it in the Dataset tab (image folder nnb_image, label folder nnb_label).`}
 var start = '${start}', end = '${end}';
 var crs = '${crs}', scale = ${scale};  // both exports use the same grid; a UTM zone (e.g. EPSG:32643) keeps pixels square
 ${collection}
@@ -376,13 +391,16 @@ var label = ee.ImageCollection('ESA/WorldCover/v200').first().select('Map')
   .remap([10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 100], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]).rename('label');
 // pixels without image data get no class (255: left out of the loss and the scores)
 label = label.updateMask(image.mask().reduce(ee.Reducer.min())).unmask(255).toByte();
-var common = {region: geometry, scale: scale, crs: crs, maxPixels: 1e10, fileNamePrefix: 'scene', fileDimensions: ${Math.max(256, Math.ceil(2048 / 256) * 256)}};
-Export.image.toDrive(Object.assign({image: image.unmask(0), description: 'nnb_image', folder: 'nnb_image'}, common));
-Export.image.toDrive(Object.assign({image: label, description: 'nnb_label', folder: 'nnb_label'}, common));`
+var common = {region: geometry, scale: scale, crs: crs, maxPixels: 1e10, fileDimensions: ${Math.max(256, Math.ceil(2048 / 256) * 256)}};
+${gcs ? `Export.image.toCloudStorage(Object.assign({image: image.unmask(0), description: 'nnb_image', bucket: '${bucket}', fileNamePrefix: 'nnb_export/nnb_image/scene'}, common));
+Export.image.toCloudStorage(Object.assign({image: label, description: 'nnb_label', bucket: '${bucket}', fileNamePrefix: 'nnb_export/nnb_label/scene'}, common));`
+  : `Export.image.toDrive(Object.assign({image: image.unmask(0), description: 'nnb_image', folder: 'nnb_image', fileNamePrefix: 'scene'}, common));
+Export.image.toDrive(Object.assign({image: label, description: 'nnb_label', folder: 'nnb_label', fileNamePrefix: 'scene'}, common));`}`
     : `# NN Builder: ${s1 ? "Sentinel-1" : "Sentinel-2"} patches of ${w}×${h} pixels, one Drive folder per class, for classification.
 # Python with the Earth Engine API (pip install earthengine-api): it starts every export itself (the Code Editor would need a click per task).
 # points: your labelled points (an Earth Engine asset) with a property "class" holding the class name.
-# Download the class folders from Drive into one folder and choose it in the Dataset tab.
+${gcs ? `# The patches land in gs://${bucket}/nnb_export/<class>/; in the Dataset tab choose "in the cloud" with that address.`
+  : "# Download the class folders from Drive into one folder and choose it in the Dataset tab."}
 import ee
 ee.Authenticate()
 ee.Initialize(project="YOUR-CLOUD-PROJECT")
@@ -393,8 +411,10 @@ ${pyCollection}
 for i, f in enumerate(points.getInfo()["features"]):
     c = f["properties"]["class"]
     region = ee.Geometry.Point(f["geometry"]["coordinates"]).buffer(${Math.max(h, w) / 2} * scale).bounds()
-    ee.batch.Export.image.toDrive(image=image.unmask(0), description=f"nnb_{i}", folder=str(c), fileNamePrefix=f"{c}_{i}",
-                                  region=region, scale=scale, crs=crs).start()   # about ${w}×${h} pixels; the app resizes to exactly that
+    ${gcs ? `ee.batch.Export.image.toCloudStorage(image=image.unmask(0), description=f"nnb_{i}", bucket="${bucket}",
+                                         fileNamePrefix=f"nnb_export/{c}/{c}_{i}", region=region, scale=scale, crs=crs).start()`
+      : `ee.batch.Export.image.toDrive(image=image.unmask(0), description=f"nnb_{i}", folder=str(c), fileNamePrefix=f"{c}_{i}",
+                                  region=region, scale=scale, crs=crs).start()`}   # about ${w}×${h} pixels; the app resizes to exactly that
 print("started", i + 1, "exports: see the Tasks tab or ee.batch.Task.list()")`;
   return <details className="wide aug" style={{ marginTop: 8 }}>
     <summary><strong>Get Sentinel-1/2 data from Google Earth Engine</strong> <span className="muted small">(a script that exports exactly what this tab expects)</span></summary>
@@ -405,12 +425,17 @@ print("started", i + 1, "exports: see the Tasks tab or ee.batch.Task.list()")`;
       <label>To<input value={end} onChange={(e) => setEnd(e.target.value)} /></label>
       {!s1 && <label>Most clouds per scene (%)<input type="number" min={0} max={100} value={cloud} onChange={(e) => setCloud(Number(e.target.value))} /></label>}
       <label>Projection (crs)<input value={crs} onChange={(e) => setCrs(e.target.value.trim())} /></label>
+      <label>Export to<select value={dest} onChange={(e) => setDest(e.target.value as "drive" | "gcs")}>
+        <option value="drive">Google Drive (download it, then choose the folder)</option>
+        <option value="gcs">Cloud Storage (the training machine fetches it)</option></select></label>
+      {gcs && <label>Bucket<input value={bucket} onChange={(e) => setBucket(e.target.value.trim())} /></label>}
     </div>
     <textarea readOnly rows={14} className="mono small" style={{ width: "100%" }} value={script} />
     <p className="row small">
       <button className="small" onClick={() => navigator.clipboard.writeText(script).then(() => toast("Script copied")).catch((e) => toast(errText(e)))}>Copy script</button>
       <button className="small" onClick={() => up({ band_order: gee, bands: gee, sensor: s1 ? "s1" : "s2", ...(s1 ? { s1_db: false } : {}),
-        ...(seg ? { layout: "scene", scene_image: "nnb_image", scene_label: "nnb_label", classes: WORLDCOVER } : {}) })}>
+        ...(seg ? { layout: "scene", scene_image: "nnb_image", scene_label: "nnb_label", classes: WORLDCOVER } : {}),
+        ...(gcs ? { cloud_url: `gs://${bucket}/nnb_export`, local_on_machine: false } : {}) })}>
         Set this tab to match the export</button>
       <span className="muted">not run by the app: check it in Earth Engine (it needs your Earth Engine account)</span></p>
   </details>;

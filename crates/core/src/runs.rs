@@ -104,6 +104,8 @@ pub struct Creds {
     pub kaggle: Option<KaggleCreds>,
     pub aws: Option<AwsCreds>,
     pub hf_token: Option<String>,
+    /// a Google Cloud service-account key (JSON) for private Cloud Storage buckets
+    pub gcs_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -230,6 +232,7 @@ fn start_seeded(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_token
     let ds_label = match ds.source.as_str() {
         "builtin" => ds.builtin.clone(),
         "huggingface" => format!("hf:{}", ds.hf_repo),
+        "local" if !ds.cloud_url.is_empty() => format!("cloud:{}", ds.cloud_url),
         "local" => format!("own:{}", ds.local_dir.trim_end_matches('/').rsplit('/').next().unwrap_or("")),
         _ => format!("kaggle:{}", ds.kaggle_slug),
     };
@@ -241,6 +244,7 @@ fn start_seeded(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_token
         let c = creds.kaggle.as_ref().ok_or_else(|| anyhow!("Add your Kaggle token first (Connection tab)."))?;
         let attach = match ds.source.as_str() {
             "kaggle" => Ok(Some(ds.kaggle_slug.clone())),
+            "local" if !ds.cloud_url.is_empty() => Ok(None), // the notebook fetches it (public buckets / shared links)
             "local" if ds.local_on_machine => Err(anyhow!("Your files are on a training machine, not on this Mac: Kaggle cannot reach them. Train on that machine, or choose a folder on this Mac.")),
             "local" => cloud::kaggle_upload(c, &local_path(&ds.local_dir), &ds.local_key(), log).map(Some),
             _ => Ok(None),
@@ -404,8 +408,17 @@ fn start_remote(pr: &Project, d: &Path, info: &mut RunInfo, m: &mut Machine, t: 
             }
         }
     }
-    if source == "local" && !ds.local_on_machine {
+    if source == "local" && !ds.local_on_machine && ds.cloud_url.is_empty() {
         upload_local(m, ds, log)?;
+    }
+    if source == "local" && ds.cloud_url.starts_with("gs://") && copy_tokens {
+        if let Some(k) = &creds.gcs_key {
+            let (_, out) = m.run_script(&remote::put_secret_script(".config/nnb/gcs-key.json", k));
+            if !out.contains("NNB_OK") {
+                bail!("Could not copy the Cloud Storage key to the machine.");
+            }
+            log("Cloud Storage key copied to ~/.config/nnb/gcs-key.json on the machine (readable only by you).".into());
+        }
     }
     let method = remote::choose_launch(m, &p);
     let rdir = format!("{}/runs/{}", m.workdir.trim_end_matches('/'), info.id);

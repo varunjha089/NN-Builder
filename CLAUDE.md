@@ -111,6 +111,12 @@ crates/core/src/
                            preset; ImageNet weights on bands: load_pretrained widens the first conv (expand_rgb: B04/B03/B02 get R/G/B,
                            others the mean, ×3/C); HF band arrays: HFBands + hf_array (arrays, GeoTIFF / .npy bytes), problems() allows
                            huggingface (not fused). CI cases: scene strip, ben, pretrained_ms, hfbands (local parquet as the HF repo).
+                           Cloud source: Dataset.cloud_url (gs:// | https://drive.google.com/… | rclone:remote:path | file:// for CI;
+                           dataset::cloud_url_problem) with source local: no Mac folder, no upload; harness cloud_fetch() into
+                           <data>/cloud/<key> (google-cloud-storage with ~/.config/nnb/gcs-key.json or anonymous, gdown, rclone copy);
+                           Creds.gcs_key (Keychain "gcs", set_gcs, Connection tab) copied with copy_tokens to SSH/AWS; GeeBox
+                           "Export to: Cloud Storage" (toCloudStorage, nnb_export/ prefix). Real gs:// / Drive / rclone not tested
+                           (CI uses file://).
                            Kaggle runs: data in /tmp/nnb_data (not /kaggle/working, the notebook output), checkpoint removed at the
                            end, kaggle_output deleted after metrics/results/model/log are copied; the run card shows the last check.
   dataset.rs               Multispectral / radar: bands, band_order, sensor (s2 | s1 | other), s1_db; SENTINEL2_BANDS (EuroSAT order),

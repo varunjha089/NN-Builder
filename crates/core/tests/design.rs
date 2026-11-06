@@ -594,3 +594,19 @@ fn class_counts_weights_and_thresholds_settings() {
     let code = train_script(&g, &ds, &a, &t, "t").unwrap();
     assert!(code.contains("\"class_weights\": \"sqrt\""), "the weighting reaches train.py");
 }
+
+#[test]
+fn cloud_locations() {
+    use nnb_core::dataset::cloud_url_problem;
+    for ok in ["gs://my-bucket/nnb_export", "gs://abc", "https://drive.google.com/drive/folders/1AbC", "rclone:gdrive:exports/s2", "file:///data/x"] {
+        assert_eq!(cloud_url_problem(ok), None, "{ok}");
+    }
+    for bad in ["gs://ab", "http://drive.google.com/x", "https://example.com/x", "rclone::path", "s3://b/x", "gs://b/x y", "gs://b/$(id)", "rclone:x:a;rm"] {
+        assert!(cloud_url_problem(bad).is_some(), "{bad}");
+    }
+    let s = |v: &[&str]| v.iter().map(|b| b.to_string()).collect::<Vec<_>>();
+    let ds = Dataset { source: "local".into(), cloud_url: "gs://my-bucket/nnb_export".into(), classes: s(&["a", "b"]), ..Default::default() };
+    assert!(ds.problems().is_empty(), "no Mac folder needed: {:?}", ds.problems());
+    assert!(ds.local_key().starts_with("nnb-nnb-export-"), "{}", ds.local_key());
+    assert!(Dataset { cloud_url: "ftp://x".into(), ..ds.clone() }.problems().join(" ").contains("cloud location"));
+}

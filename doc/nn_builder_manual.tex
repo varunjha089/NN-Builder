@@ -611,6 +611,13 @@ and reads the first GeoTIFF's header: its size, number of bands and, when GEE or
         Kaggle, uploaded under your account as a \emph{private} Kaggle dataset of the same name and attached to the notebook (again only
         when it changed; the folders go up as zip files, which Kaggle unpacks). \ui{already on the training machine}: give its path there
         (e.g.\ a large export copied to the college server yourself); nothing is copied, and Kaggle cannot be used.
+  \item[In the cloud.] The training machine (or the Kaggle notebook) fetches the files itself, so a large Earth Engine export never passes
+        through the Mac: \texttt{gs://bucket/folder} (Earth Engine's Cloud Storage export: in the export script choose \ui{Export to: Cloud
+        Storage}; a private bucket needs a service-account key, Connection tab, which is copied to an SSH or AWS machine with the other
+        tokens; Kaggle notebooks read public buckets only), a Google Drive folder or file shared as ``anyone with the link'' (fetched with
+        \texttt{gdown}: at most 50 files per folder, a zip is unpacked), or \texttt{rclone:remote:path} for rclone set up on the machine
+        (any of its 70 storage services, Drive included). The files are kept in the machine's data folder; a later run fetches only what
+        is new.
   \item[Classification.] One subfolder per class (\file{forest/}, \file{water/} \dots) of \file{.tif} or \file{.npy} patches, or ordinary
         pictures. An optional test folder; else 10\,\% of the images.
   \item[Segmentation: images + masks.] An images folder and a masks folder with the same file names (a mask may add \file{\_mask}); masks

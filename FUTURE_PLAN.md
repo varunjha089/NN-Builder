@@ -11,7 +11,7 @@ What is still open, in the suggested order. Done work is in git and CLAUDE.md; t
    (inverse frequency; BCE pos_weight for multi-label), and per-class thresholds for multi-label chosen on the validation data.
 3. **Finish the Sentinel step** (done 2026-11-06): a spatially separate test region for scenes (honest scores), BigEarthNet's own layout (a folder of
    single-band GeoTIFFs per patch), ImageNet weights for more than 3 bands (first convolution expanded), Hugging Face band arrays.
-4. **Google Drive / Cloud Storage source**: Earth Engine exports reach the training machine directly (rclone / gsutil on the machine),
+4. **Google Drive / Cloud Storage source** (done 2026-11-06; real buckets / links not tried): Earth Engine exports reach the training machine directly (rclone / gsutil on the machine),
    without passing through the Mac.
 5. **Real-data run** (needs the owner): Check data and a short training run on a real Sentinel export; the Earth Engine script run once.
 6. **Release 0.4.0** with housekeeping: upload-artifact action update (Node.js 20 warning), delete the local backup branch, the first

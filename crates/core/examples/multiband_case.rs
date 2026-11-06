@@ -55,6 +55,9 @@ fn main() {
         ("hfbands", Dataset { source: "huggingface".into(), hf_repo: "ci/hfbands".into(), hf_test_split: "test".into(), hf_image_col: "bands".into(),
             image_size: [16, 16], sensor: "other".into(), band_order: s(&["b1", "b2", "b3", "b4"]), bands: s(&["b2", "b4"]),
             classes: s(&["dark", "bright"]), ..Default::default() }),
+        // files "in the cloud": the machine fetches them itself (file:// here; gs:// and Drive links take the same path into the cache)
+        ("cloud", Dataset { source: "local".into(), cloud_url: format!("file://{dir}/own/cloudsrc"), image_size: [16, 16], sensor: "other".into(),
+            band_order: s(&["b1", "b2"]), bands: s(&["b1", "b2"]), classes: s(&["common", "rare"]), kaggle_train_dir: "train".into(), ..Default::default() }),
         // Check data on Sentinel-1 left in linear units (the report must say so), with an extra constant band
         ("check", Dataset { source: "kaggle".into(), kaggle_slug: "ci/sentinel1".into(), image_size: [32, 32], sensor: "s1".into(),
             band_order: s(SENTINEL1_BANDS), bands: s(SENTINEL1_BANDS), classes: s(&["flood", "land"]), ..Default::default() }),

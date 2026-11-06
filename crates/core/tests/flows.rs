@@ -280,6 +280,17 @@ fn remote_and_kaggle_runs() {
     assert!(lines.lock().unwrap().iter().any(|l| l.contains("already on the machine")), "{:?}", lines.lock().unwrap());
     assert_eq!(std::fs::read_to_string(there.join("forest/p1.npy")).unwrap(), "changed there", "unchanged folder: not copied again");
     std::thread::sleep(Duration::from_millis(2500));
+    // files in the cloud: nothing is copied from the Mac, and the Cloud Storage key goes to the machine (with copy tokens)
+    let cloud = nnb_core::dataset::Dataset { cloud_url: "gs://some-bucket/nnb_export".into(), local_dir: String::new(), ..own.clone() };
+    pr.save_dataset(&cloud).unwrap();
+    std::thread::sleep(Duration::from_millis(1100));
+    lines.lock().unwrap().clear();
+    let gcs = Creds { gcs_key: Some("{\"type\": \"service_account\"}".into()), ..Default::default() };
+    runs::start(&pr, "college", "", &gcs, true, &log).unwrap_or_else(|e| panic!("{e}\n{:?}", lines.lock().unwrap()));
+    assert!(!lines.lock().unwrap().iter().any(|l| l.contains("Copying your files")), "{:?}", lines.lock().unwrap());
+    let key = remote_home.join(".config/nnb/gcs-key.json");
+    assert!(key.exists() && std::fs::metadata(&key).unwrap().permissions().mode() & 0o077 == 0, "key copied, readable only by the owner");
+    std::thread::sleep(Duration::from_millis(2500));
     // a folder already on the machine is not copied at all, and Kaggle refuses it
     let on_machine = nnb_core::dataset::Dataset { local_on_machine: true, local_dir: "~/elsewhere".into(), ..own.clone() };
     pr.save_dataset(&on_machine).unwrap();
@@ -313,6 +324,13 @@ fn remote_and_kaggle_runs() {
     std::thread::sleep(Duration::from_millis(1100));
     runs::start(&pr, KAGGLE, "", &creds, false, &log).unwrap();
     assert_eq!(std::fs::read_to_string(remote_home.join("uploads.log")).unwrap(), "create\nversion\n", "changed: a new version");
+    // files in the cloud on Kaggle: no upload, nothing attached (the notebook fetches them)
+    pr.save_dataset(&cloud).unwrap();
+    std::thread::sleep(Duration::from_millis(1100));
+    runs::start(&pr, KAGGLE, "", &creds, false, &log).unwrap();
+    let pushed: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(remote_home.join("pushed.json")).unwrap()).unwrap();
+    assert_eq!(pushed["dataset_sources"], serde_json::json!([]));
+    assert_eq!(std::fs::read_to_string(remote_home.join("uploads.log")).unwrap().lines().count(), 2, "no upload for cloud files");
     pr.save_dataset(&nnb_core::dataset::Dataset::default()).unwrap();
     assert!(runs::start(&pr, KAGGLE, "", &Creds::default(), false, &log).is_err(), "needs the token");
     std::thread::sleep(Duration::from_millis(1100));
