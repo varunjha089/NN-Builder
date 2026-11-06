@@ -42,6 +42,7 @@ fn main() {
             bands2: s(&["VV", "VH"]), fuse_dir: "s1".into(), classes: s(&["forest", "water", "urban"]), ..Default::default() }),
         // unbalanced classes (10 : 1), trained with inverse-frequency class weights
         ("imbalanced", Dataset { source: "local".into(), local_dir: format!("{dir}/own/imb"), local_on_machine: true, image_size: [16, 16],
+            kaggle_train_dir: "train".into(), kaggle_test_dir: "test".into(),
             sensor: "other".into(), band_order: s(&["b1", "b2"]), bands: s(&["b1", "b2"]), classes: s(&["common", "rare"]), ..Default::default() }),
         // BigEarthNet v2's layout: a folder of single-band GeoTIFFs per patch (10 m and 20 m sizes), metadata.parquet with label lists, a
         // split column and s1_name pairing the Sentinel-1 patch folders (fusion); a class name with commas

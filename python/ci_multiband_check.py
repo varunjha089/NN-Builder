@@ -257,14 +257,16 @@ def own_files(root):
 
 
 def make_imbalanced(root):
-    """200 'common' and 20 'rare' images (2 bands, 16×16); the rare class is brighter in b2"""
+    """train/: 200 'common' and 20 'rare' images (2 bands, 16×16), the rare class brighter in b2; test/: 30 of each, so the rare class's
+    recall is measured on enough images"""
     rng = np.random.default_rng(8)
-    for cls, n in (("common", 200), ("rare", 20)):
-        os.makedirs(os.path.join(root, cls), exist_ok=True)
-        for i in range(n):
-            a = rng.normal(0, 1, size=(2, 16, 16)).astype(np.float32)
-            a[1] += 2.5 if cls == "rare" else 0
-            np.save(os.path.join(root, cls, f"{i}.npy"), a)
+    for part, sizes in (("train", (("common", 200), ("rare", 20))), ("test", (("common", 30), ("rare", 30)))):
+        for cls, n in sizes:
+            os.makedirs(os.path.join(root, part, cls), exist_ok=True)
+            for i in range(n):
+                a = rng.normal(0, 1, size=(2, 16, 16)).astype(np.float32)
+                a[1] += 2.5 if cls == "rare" else 0
+                np.save(os.path.join(root, part, cls, f"{i}.npy"), a)
 
 
 def imbalanced(root):
@@ -274,7 +276,7 @@ def imbalanced(root):
     ev = run(os.path.join(root, "imbalanced"), os.path.join(root, "data"), "imbalanced")
     cw = next(e for e in ev if e["event"] == "class_weights")
     c, w = cw["counts"], cw["weights"]
-    assert c[0] > 5 * c[1] and abs(w[1] / w[0] - c[0] / c[1]) < 0.01 * c[0] / c[1], cw
+    assert c == [200, 20] and abs(w[1] / w[0] - 10) < 0.1, cw
     res = json.load(open(os.path.join(root, "imbalanced", "results.json")))
     conf = res["confusion"]
     rare_recall = conf[1][1] / max(1, sum(conf[1]))
