@@ -74,6 +74,7 @@ pub const KINDS: &[(&str, &str)] = &[
     ("conv1d", "Conv1D (over time)"),
     ("output", "Output"),
     ("seg_output", "Segmentation output"),
+    ("detect_output", "Detection output"),
     ("custom", "Custom (PyTorch)"),
     ("shared", "Shared weights"),
 ];

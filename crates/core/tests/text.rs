@@ -314,7 +314,7 @@ fn everything_design() {
     assert!(warns.is_empty(), "{warns:?}");
     // every block kind except the segmentation output and the time-series blocks (doc/examples/timeseries.nnb has those)
     for (kind, _) in model::KINDS {
-        if !matches!(*kind, "seg_output" | "conv3d" | "temporal_pool" | "to_sequence" | "lstm" | "gru" | "conv1d") {
+        if !matches!(*kind, "seg_output" | "detect_output" | "conv3d" | "temporal_pool" | "to_sequence" | "lstm" | "gru" | "conv1d") {
             assert!(g.nodes.iter().any(|n| n.kind == *kind), "no {kind} block");
         }
     }

@@ -376,10 +376,11 @@ $W_2(\mathrm{silu}(W_1x)\cdot W_3x)$ with HIDDEN units (\texttt{units=}, default
 
 \subsubsection*{\texttt{output}, \texttt{seg\_output}}
 \begin{Verbatim}[fontsize=\small]
-LABEL output [HEAD] | seg_output
+LABEL output [HEAD] | seg_output | detect
 \end{Verbatim}
 \texttt{output} gives one score per class of the dataset (classification); \texttt{seg\_output} one score per class for every pixel
-(segmentation; it must be at the size of the masks). A network has one of them, at the end of its path, unless the Dataset tab lists
+(segmentation; it must be at the size of the masks); \texttt{detect} (\texttt{detect\_output}) the boxes of an object-detection
+dataset, per cell of its input map (the image must be a whole number of cells). A network has one of them, at the end of its path, unless the Dataset tab lists
 \emph{extra outputs} (multi-task): then each has its own \texttt{output} with its number, \texttt{HEAD} (also \texttt{head=}; default 0,
 the main task):
 \begin{verbatim}

@@ -614,7 +614,7 @@ const ALIASES: &[(&str, (&str, &str))] = &[
     ("silu", ("activation", "silu")), ("sigmoid", ("activation", "sigmoid")), ("tanh", ("activation", "tanh")),
     ("add", ("add", "")), ("concat", ("concat", "")), ("cat", ("concat", "")), ("multiply", ("multiply", "")), ("mul", ("multiply", "")),
     ("to_tokens", ("to_tokens", "")), ("cls_pos", ("cls_pos", "")), ("attention", ("attention", "")), ("attn", ("attention", "")),
-    ("token_pool", ("token_pool", "")), ("output", ("output", "")), ("seg_output", ("seg_output", "")), ("custom", ("custom", "")),
+    ("token_pool", ("token_pool", "")), ("output", ("output", "")), ("seg_output", ("seg_output", "")), ("detect_output", ("detect_output", "")), ("detect", ("detect_output", "")), ("custom", ("custom", "")),
     ("subtract", ("subtract", "")), ("sub", ("subtract", "")), ("shared", ("shared", "")),
     ("conv3d", ("conv3d", "")), ("temporal_pool", ("temporal_pool", "")), ("tpool", ("temporal_pool", "")),
     ("cross_attention", ("cross_attention", "")), ("xattn", ("cross_attention", "")), ("rmsnorm", ("rmsnorm", "")), ("rms", ("rmsnorm", "")),

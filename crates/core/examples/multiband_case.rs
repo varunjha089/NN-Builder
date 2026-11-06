@@ -178,6 +178,20 @@ fn main() {
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(format!("{d}/train.py"), train_script(&g, &ds, &a, &TrainSettings::default(), "tokens").unwrap()).unwrap();
     }
+    // object detection: pictures with red squares and blue discs, YOLO label files, a CenterNet-style head on a quarter-size map
+    {
+        let ds = Dataset { source: "local".into(), task: "detect".into(), local_dir: format!("{dir}/own/det"), local_on_machine: true,
+            kaggle_train_dir: "images".into(), kaggle_mask_dir: "labels".into(), image_size: [64, 64], channels: 3,
+            classes: s(&["square", "disc"]), ..Default::default() };
+        let g = nnb_core::dsl::apply("net \"detector ci\"\n1 input\n2 conv 16 3x3\n3 conv 16 3x3\n4 maxpool 2x2\n5 conv 32 3x3\n6 conv 32 3x3\n\
+            7 maxpool 2x2\n8 conv 32 3x3\n9 detect\n", &Default::default()).unwrap();
+        let a = analyze(&g, &ds);
+        assert!(a.ok && ds.problems().is_empty(), "detect: {:?} {:?}", a.problems, ds.problems());
+        let t = TrainSettings { epochs: 30, batch_size: 16, amp: false, aug_hflip: true, aug_vflip: true, ..Default::default() }.clean();
+        let d = format!("{dir}/detect");
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(format!("{d}/train.py"), train_script(&g, &ds, &a, &t, "detect").unwrap()).unwrap();
+    }
     for (name, ds) in cases {
         assert!(ds.problems().is_empty(), "{name}: {:?}", ds.problems());
         let g = if ds.task == "segment" { &seg } else if name == "fusion" { &mid } else if name == "fusion_sizes" { &mid_sizes } else { &g };

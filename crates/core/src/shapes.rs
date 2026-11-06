@@ -177,7 +177,8 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
     let input_shape = ds.input_shape();
     let classes = ds.class_names().len();
     let py = crate::custom::classes(&g.python);
-    let need = if ds.task == "regress" { 1 } else { 2 }; // regression: the "classes" are the target columns
+    // regression: the "classes" are the target columns; detection may look for a single kind of object
+    let need = if ds.task == "regress" || ds.task == "detect" { 1 } else { 2 };
     let mut problems: Vec<String> = vec![];
     let ids: HashSet<&str> = g.nodes.iter().map(|n| n.id.as_str()).collect();
     let edges: Vec<_> = g.edges.iter().filter(|e| ids.contains(e.source.as_str()) && ids.contains(e.target.as_str()) && e.source != e.target).collect();
@@ -253,7 +254,7 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
 
     let mut results: HashMap<&str, NodeResult> = HashMap::new();
     let mut rfs: HashMap<&str, ([usize; 2], [usize; 2])> = HashMap::new();
-    let is_out = |k: &str| k == "output" || k == "seg_output";
+    let is_out = |k: &str| k == "output" || k == "seg_output" || k == "detect_output";
     let n_out = order.iter().filter(|id| node_of.get(*id).map(|n| is_out(&n.kind)).unwrap_or(false)).count();
     // several outputs (multi-task): one Output per head, head 0 = the main task
     let head_of = |n: &Node| n.params.get("head").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
@@ -313,13 +314,25 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
             }
         }
         if is_out(&node.kind) {
-            if (node.kind == "seg_output") != (ds.task == "segment") {
-                err(&mut r, if ds.task == "segment" {
-                    "The dataset is a segmentation dataset (a class for every pixel): end with a Segmentation output instead of Output."
-                } else {
-                    "Segmentation output gives a class for every pixel, but the dataset is for classification: use Output, or choose a segmentation dataset."
+            let want = match ds.task.as_str() { "segment" => "seg_output", "detect" => "detect_output", _ => "output" };
+            if node.kind != want && (node.kind != "output" || ds.task == "segment" || ds.task == "detect") {
+                err(&mut r, &match want {
+                    "detect_output" => "The dataset has boxes (object detection): end with a Detection output on a feature map.".to_string(),
+                    "seg_output" => "The dataset is a segmentation dataset (a class for every pixel): end with a Segmentation output instead of Output.".to_string(),
+                    _ => format!("{} is for {}, but the dataset has one label per image: use Output, or change the task in the Dataset tab.",
+                        model::title(&node.kind), if node.kind == "seg_output" { "segmentation" } else { "object detection" }),
                 });
                 r.out = None;
+            }
+            if node.kind == "detect_output" {
+                if let Some(o) = r.out.clone() {
+                    let (ih, iw) = (input_shape[input_shape.len() - 2], input_shape[input_shape.len() - 1]);
+                    if !ih.is_multiple_of(o[1]) || !iw.is_multiple_of(o[2]) || ih / o[1] != iw / o[2] {
+                        err(&mut r, &format!("The images are {ih}×{iw} and this map is {}×{}: the image must be a whole number of map cells \
+                            (the same stride, e.g. 4 or 8, both ways).", o[1], o[2]));
+                        r.out = None;
+                    }
+                }
             }
             if node.kind == "seg_output" {
                 if let Some(o) = r.out.clone() {
@@ -364,7 +377,9 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
         problems.push("Add an Output block for the main task (Output: head 0).".into());
     }
     if inputs.len() == 1 && n_out == 0 {
-        problems.push(if ds.task == "segment" {
+        problems.push(if ds.task == "detect" {
+            "Add a Detection output at the end, on a feature map (e.g. a quarter of the image size): it finds the boxes.".into()
+        } else if ds.task == "segment" {
             "Add a Segmentation output at the end, connected to the rest: it gives a class for every pixel.".into()
         } else {
             "Add an Output block at the end, connected to the rest: it gives one score per class.".into()
@@ -973,6 +988,16 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
             }
             r.params = (x[0] as u64 + 1) * classes.max(1) as u64;
             vec![classes.max(1), x[1], x[2]]
+        }
+        // CenterNet-style: one heatmap per class, then box width and height, then the centre's offset in its cell
+        "detect_output" => {
+            if !is3 {
+                need3(r);
+                return None;
+            }
+            let k = classes.max(1) + 4;
+            r.params = (x[0] as u64 + 1) * k as u64;
+            vec![k, x[1], x[2]]
         }
         "concat" => {
             if is2 {

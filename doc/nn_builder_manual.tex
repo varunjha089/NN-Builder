@@ -453,6 +453,8 @@ RMSNorm & same shape & per token: divided by its root mean square, times a learn
 SwiGLU & same shape & the gated MLP $W_2(\mathrm{silu}(W_1x)\cdot W_3x)$; hidden units\\
 Output & $(n)\rightarrow(K)$ & $K$ = number of classes; softmax/cross-entropy is in the training script\\
 Segmentation output & $(C,H,W)\rightarrow(K,H,W)$ & a 1$\times$1 convolution giving a class score for every pixel; must match the mask size\\
+Detection output & $(C,h,w)\rightarrow(K{+}4,h,w)$ & anchor-free boxes (CenterNet~\cite{zhou2019centernet}): per cell a score per class, the
+box's width and height and the centre's offset; the image must be a whole number of cells (Section~\ref{sec:detection})\\
 Conv3D & $(C,T,H,W)\rightarrow(F,T',H',W')$ & a time series: filters, kernel (pixels), dates per window, stride (pixels), padding same
 / valid (Section~\ref{sec:timeseries})\\
 Temporal pool & $(C,T,H,W)\rightarrow(C,H,W)$ & the dates of every pixel combined: mean, maximum, or attention (weights learnt per
@@ -753,6 +755,24 @@ text \texttt{output 1}). Usually they share the body of the network and each has
 Output. The network returns all outputs; the run reports the main task as usual (and its score decides early stopping and the best
 epoch) and every extra output in a table: accuracy, micro F1 and mAP, or R$^2$, MAE and RMSE per number, in the numbers' own units. The
 Train tab's chart draws each output's validation score.
+
+\subsection{Object detection (boxes)}
+\label{sec:detection}
+To find and count objects (ships, cars, buildings, trees, animals) with a box around each, choose \ui{Task: Object detection}. The data
+are an \ui{Images folder} and a \ui{Labels folder} with one text file per image of the same name (\file{im17.png} and \file{im17.txt}):
+one line per box, \texttt{class cx cy w h}, the class number (0 = the first line of the class list) and the box's centre, width and
+height as fractions of the image. This is the YOLO format that Roboflow, CVAT and most converted datasets offer; an image without a label
+file has no object. Pictures and multiband files both work; 10\,\% of the images are the test data; horizontal and vertical flips move
+the boxes with the image.
+
+The network ends in a \ui{Detection output} on a feature map, typically a quarter or an eighth of the image size (two or three
+$2\times2$ pools or stride-2 convolutions; the image must be a whole number of cells). For every cell it gives a score per class (is an
+object's centre here?), the box's width and height in cells and the centre's offset inside the cell: the anchor-free CenterNet
+design~\cite{zhou2019centernet}. Training draws every box as a Gaussian peak on its class's map and uses CenterNet's loss (a focal
+loss on the peaks, L1 on size and offset). The boxes found are the peaks of the scores; the run reports mAP@0.5 (a box counts when it
+overlaps a true one by at least half, IoU $\ge 0.5$) and mAP@0.5:0.95 (stricter overlaps, as COCO), with the AP of every class, and Results
+draws the boxes found (score $\ge$ 30\,\%) and the true ones on test images. Not yet: rotated boxes (DOTA's oriented format), COCO JSON
+labels, very large scenes cut into tiles with their boxes, and non-maximum suppression across classes.
 
 \subsection{Time series of satellite images}
 \label{sec:timeseries}
@@ -1895,6 +1915,7 @@ temporal attention networks. ICCV, 2021. arXiv:2107.07933.
 \bibitem{tarasiou2023tsvit} M.~Tarasiou, E.~Chavez and S.~Zafeiriou. ViTs for SITS: Vision transformers for satellite image time series. CVPR,
 2023. arXiv:2301.04944.
 \bibitem{hochreiter1997lstm} S.~Hochreiter and J.~Schmidhuber. Long short-term memory. Neural Computation 9(8), 1997.
+\bibitem{zhou2019centernet} X.~Zhou, D.~Wang and P.~Kr\"ahenb\"uhl. Objects as points. 2019. arXiv:1904.07850.
 \end{thebibliography}
 
 \end{document}

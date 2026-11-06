@@ -475,6 +475,60 @@ def transformer_math(root):
           f"RMSNorm; the cross-attention / SwiGLU network ({n} parameters) runs forward and backward")
 
 
+def make_detection(root):
+    """64×64 pictures, 1-3 objects each: red squares and blue discs of 8-18 pixels on noise; YOLO labels (class cx cy w h); a few images
+    without any object (no label file)"""
+    from PIL import Image
+    rng = np.random.default_rng(17)
+    for part in ("images", "labels"):
+        os.makedirs(os.path.join(root, part), exist_ok=True)
+    yy, xx = np.mgrid[0:64, 0:64]
+    for i in range(320):
+        img = rng.integers(0, 80, size=(64, 64, 3)).astype(np.float32)
+        rows = []
+        for _ in range(int(rng.integers(0, 4)) if i % 10 else 0):
+            c, s = int(rng.integers(0, 2)), int(rng.integers(8, 19))
+            x0, y0 = int(rng.integers(0, 64 - s)), int(rng.integers(0, 64 - s))
+            if c == 0:
+                img[y0:y0 + s, x0:x0 + s] = [220, 40, 40]
+            else:
+                img[(yy - (y0 + s / 2)) ** 2 + (xx - (x0 + s / 2)) ** 2 <= (s / 2) ** 2] = [40, 60, 220]
+            rows.append(f"{c} {(x0 + s / 2) / 64:.5f} {(y0 + s / 2) / 64:.5f} {s / 64:.5f} {s / 64:.5f}")
+        Image.fromarray(img.clip(0, 255).astype(np.uint8)).save(os.path.join(root, "images", f"im{i}.png"))
+        if rows:
+            open(os.path.join(root, "labels", f"im{i}.txt"), "w").write("\n".join(rows) + "\n")
+
+
+def detection(root):
+    """the detection maths (targets <-> boxes, mAP of a perfect prediction) and a detector that learns the two kinds of object"""
+    import importlib.util
+    import torch
+    root = os.path.abspath(root)
+    make_detection(os.path.join(root, "own", "det"))
+    spec = importlib.util.spec_from_file_location("det_net", os.path.join(root, "detect", "train.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    boxes = np.array([[0, 0.25, 0.25, 0.2, 0.2], [1, 0.7, 0.6, 0.3, 0.1]], dtype=np.float32)
+    t = m.det_target(boxes)
+    back = m.det_truth(t[None])[0]
+    want = torch.tensor([[0, 0.15, 0.15, 0.35, 0.35], [1, 0.55, 0.55, 0.85, 0.65]])
+    assert torch.allclose(back[back[:, 0].argsort()], want, atol=1e-5), f"targets -> boxes: {back}"
+    perfect = [torch.cat([b[:, :1], torch.ones(len(b), 1), b[:, 1:]], 1) for b in [back]]
+    sc = m.det_scores(perfect, [back])
+    assert abs(sc["map50"] - 1) < 1e-6 and abs(sc["map"] - 1) < 1e-6, sc
+    shifted = [torch.cat([b[:, :1], torch.ones(len(b), 1), b[:, 1:] + 0.01], 1) for b in [back]]
+    sc2 = m.det_scores(shifted, [back])
+    assert sc2["map50"] == 1.0 and sc2["map"] < 1.0, sc2
+    ev = run(os.path.join(root, "detect"), os.path.join(root, "data"), "detect")
+    assert next(e for e in ev if e["event"] == "check")["batch"][1:] == [3, 64, 64]
+    done = next(e for e in ev if e["event"] == "done")
+    res = json.load(open(os.path.join(root, "detect", "results.json")))
+    assert res["task"] == "detect" and len(res["per_class"]) == 2 and "boxes" in res["samples"][0], res.keys()
+    assert done["test_acc"] >= 0.6, f"detection mAP@0.5 {done}"
+    print(f"detection: targets <-> boxes exact, perfect mAP 1; detector mAP@0.5 {done['test_acc']}, mAP@0.5:0.95 {done['test_map']}, "
+          f"AP per class {[round(r['ap50'] or 0, 3) for r in res['per_class']]}")
+
+
 def custom_blocks(root):
     """the design's own PyTorch classes train like any block, the custom loss is used, and a wrong '# out:' line stops the run at the
     one-batch check with a message naming the block"""
@@ -684,6 +738,7 @@ if __name__ == "__main__":
     siamese(sys.argv[1])
     timeseries(sys.argv[1])
     transformer_math(sys.argv[1])
+    detection(sys.argv[1])
     cloud(sys.argv[1])
     ben(sys.argv[1])
     pretrained_ms(sys.argv[1])

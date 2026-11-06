@@ -25,7 +25,7 @@ export type LocalScan = { files: number; bytes: number; complete: boolean; tifs:
 export interface Head { name: string; task: "classify" | "multilabel" | "regress"; columns: string[]; classes: string[]; loss?: string; weight: number }
 
 export interface Dataset {
-  source: "builtin" | "huggingface" | "kaggle" | "local"; task: "classify" | "multilabel" | "segment" | "regress"; resize: boolean; builtin: string; hf_mask_col: string; kaggle_mask_dir: string;
+  source: "builtin" | "huggingface" | "kaggle" | "local"; task: "classify" | "multilabel" | "segment" | "regress" | "detect"; resize: boolean; builtin: string; hf_mask_col: string; kaggle_mask_dir: string;
   hf_repo: string; hf_config: string; hf_train_split: string; hf_test_split: string; hf_image_col: string; hf_label_col: string;
   kaggle_slug: string; kaggle_train_dir: string; kaggle_test_dir: string;
   image_size: [number, number]; channels: number; classes: string[];

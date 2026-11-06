@@ -845,3 +845,33 @@ fn transformer_additions() {
     assert!(msg("1 input\n2 conv 8 3x3\n3 conv 8 3x3 <- 1\n4 cross_attention <- 2, 3\n5 global_pool\n6 output\n", "4").contains("token sequences"));
     assert!(msg("1 input\n2 conv 8 2x2 stride 2\n3 to_tokens\n4 conv 4 2x2 stride 2 <- 1\n5 to_tokens\n6 concat <- 3, 5\n7 token_pool mean\n8 output\n", "6").contains("dimension must match"));
 }
+
+#[test]
+fn object_detection() {
+    let ds = Dataset { source: "local".into(), task: "detect".into(), local_dir: "/data/boats".into(), kaggle_train_dir: "images".into(),
+        kaggle_mask_dir: "labels".into(), image_size: [64, 64], channels: 3, classes: vec!["boat".into(), "car".into()], ..Default::default() };
+    assert!(ds.problems().is_empty(), "{:?}", ds.problems());
+    assert!(Dataset { kaggle_mask_dir: String::new(), ..ds.clone() }.problems().iter().any(|p| p.contains("labels folder")));
+    assert!(Dataset { classes: vec![], ..ds.clone() }.problems().iter().any(|p| p.contains("object classes")));
+    let one = Dataset { classes: vec!["boat".into()], ..ds.clone() };
+    let text = "1 input\n2 conv 16 3x3\n3 maxpool 2x2\n4 conv 32 3x3\n5 maxpool 2x2\n6 detect\n";
+    let g = nnb_core::dsl::apply(text, &Graph::default()).unwrap();
+    let a = analyze(&g, &ds);
+    assert!(a.ok, "{:?}", a.problems);
+    let head = a.get(&g.nodes.iter().find(|n| n.label == "6").unwrap().id).unwrap();
+    assert_eq!((head.out.clone(), head.params), (Some(vec![6, 16, 16]), 33 * 6), "2 heatmaps + width, height, x, y offset per cell");
+    assert!(analyze(&g, &one).ok, "one class is enough to detect");
+    let code = train_script(&g, &ds, &a, &TrainSettings::default(), "det").unwrap();
+    assert!(code.contains("DetectHead(32, 2)") && code.contains("\"detect\": [6, 16, 16]") && code.contains("\"task\": \"detect\""), "{code}");
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("train.py"), &code).unwrap();
+    if let Some(o) = py_compile(&dir.path().join("train.py")) {
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    }
+    // the map must divide the image evenly; an Output or a Segmentation output is refused for boxes, and the other way round
+    let msg = |t: &str, d: &Dataset| { let g = nnb_core::dsl::apply(t, &Graph::default()).unwrap(); let a = analyze(&g, d); a.nodes.iter().flat_map(|n| n.messages.clone()).collect::<Vec<_>>().join(" ") };
+    assert!(msg("1 input\n2 conv 8 3x3 stride 3\n3 detect\n", &ds).contains("whole number of map cells"));
+    assert!(msg("1 input\n2 global_pool\n3 output\n", &ds).contains("Detection output"));
+    let cls = Dataset { task: "classify".into(), ..ds.clone() };
+    assert!(msg("1 input\n2 conv 8 3x3\n3 detect\n", &cls).contains("object detection"));
+}

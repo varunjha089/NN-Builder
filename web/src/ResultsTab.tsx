@@ -28,12 +28,19 @@ export function ResultsTab({ runId }: { runId: string | null }) {
       {r.task === "multilabel" && <p className="muted small">Several classes per image: each class is a yes/no (score ≥ 50%). Micro F1 counts every
         (image, class) decision together, macro F1 averages the classes (rare classes count as much as common ones), mAP ranks the images
         by each class's score (independent of the 50% threshold), and exact match is the share of images with every class right.</p>}
+      {r.task === "detect" && <p className="muted small">mAP@0.5: for every class, the average precision of the boxes found (sorted by
+        score) when a box counts as right if it overlaps a true one by at least half (IoU ≥ 0.5); then the mean over the classes. mAP@0.5:0.95
+        averages it over stricter overlaps (0.5, 0.55 … 0.95), as COCO does.</p>}
       {r.task === "regress" && <p className="muted small">R² is the share of the targets' variation the network explains (1 = perfect, 0 = no
         better than always predicting the mean, below 0 = worse); MAE is the mean absolute error and RMSE the root of the mean squared error,
         both in the target's own units. With several targets the cards show their averages.</p>}
       {r.task === "segment" && <p className="muted small">"Test accuracy" is the share of pixels classified correctly; mean IoU (overlap of predicted and true areas per class) is the usual segmentation measure.</p>}
       <div className="row cards">
-        {r.task === "regress" ? <>
+        {r.task === "detect" ? <>
+          <div className="card"><div className="muted">mAP@0.5</div><div className="big">{(r.map50 * 100).toFixed(2)}%</div></div>
+          <div className="card"><div className="muted">mAP@0.5:0.95</div><div className="big">{(r.map * 100).toFixed(2)}%</div></div>
+          <div className="card"><div className="muted">Test boxes</div><div className="big">{Number(r.boxes ?? 0).toLocaleString()}</div></div></>
+        : r.task === "regress" ? <>
           <div className="card"><div className="muted">Test R²</div><div className="big">{Number(r.r2).toFixed(3)}</div></div>
           <div className="card"><div className="muted">MAE</div><div className="big">{fmt(r.mae)}</div></div>
           <div className="card"><div className="muted">RMSE</div><div className="big">{fmt(r.rmse)}</div></div></>
@@ -75,6 +82,14 @@ export function ResultsTab({ runId }: { runId: string | null }) {
           <td className="small">{h.task === "regress" ? h.per_target.map((t: any) => `${t.target}: R² ${t.r2.toFixed(3)}, MAE ${fmt(t.mae)}, RMSE ${fmt(t.rmse)}`).join("; ")
             : h.task === "multilabel" ? `mAP ${(h.map * 100).toFixed(1)}%, macro F1 ${(h.macro_f1 * 100).toFixed(1)}%` : ""}</td></tr>)}
       </tbody></table><p className="muted small">The cards above are the main task's; these are the network's other outputs, on the same test images.</p></>}
+      {r.task === "detect" && r.per_class && <>
+        <table className="grid"><tbody><tr><th>Class</th><th className="num">Test boxes</th><th className="num">AP@0.5</th><th className="num">AP@0.5:0.95</th></tr>
+          {r.per_class.map((c: any) => <tr key={c.class}><td>{c.class}</td><td className="num">{c.boxes}</td>
+            <td className="num">{c.ap50 == null ? "–" : `${(c.ap50 * 100).toFixed(1)}%`}</td><td className="num">{c.ap == null ? "–" : `${(c.ap * 100).toFixed(1)}%`}</td></tr>)}
+        </tbody></table>
+        {r.samples?.length > 0 && <><h3>Sample detections (green: found, score ≥ 30%; white dashed: the true boxes)</h3><div className="thumbs">
+          {r.samples.map((s: any, i: number) => <BoxImage key={i} s={s} classes={classes} />)}</div></>}
+      </>}
       {r.task === "regress" && r.per_target && <>
         <table className="grid"><tbody>
           <tr><th>Target</th><th className="num">mean</th><th className="num">R²</th><th className="num">MAE</th><th className="num">RMSE</th></tr>
@@ -126,6 +141,23 @@ export function ResultsTab({ runId }: { runId: string | null }) {
       </>}
     </div>
   );
+}
+
+/** an image with its true boxes (dashed) and the boxes found (with class and score) */
+function BoxImage({ s, classes }: { s: any; classes: string[] }) {
+  const size = 192;
+  const scale = Math.max(1, Math.round(size / s.image[0].length));
+  const px = s.image[0].length * scale;
+  const r = (b: number[]) => ({ x: b[0] * px, y: b[1] * px, width: Math.max(1, (b[2] - b[0]) * px), height: Math.max(1, (b[3] - b[1]) * px) });
+  return <div className="thumb" style={{ width: px, position: "relative" }}>
+    <Img img={s.image} scale={scale} />
+    <svg width={px} height={px} style={{ position: "absolute", left: 0, top: 0 }}>
+      {s.truth.map((b: number[], k: number) => <rect key={`t${k}`} {...r(b.slice(1))} fill="none" stroke="white" strokeDasharray="3 2" strokeWidth={1} />)}
+      {s.boxes.map((b: number[], k: number) => <g key={`b${k}`}><rect {...r(b.slice(2))} fill="none" stroke="#39ff88" strokeWidth={1.5} />
+        <text x={b[2] * px + 2} y={Math.max(9, b[3] * px - 2)} fontSize={9} fill="#39ff88">{String(classes[b[0]] ?? b[0]).slice(0, 10)} {Math.round(b[1] * 100)}%</text></g>)}
+    </svg>
+    <div className="small">{s.boxes.length} found · {s.truth.length} true</div>
+  </div>;
 }
 
 /** a number with about 4 significant digits */

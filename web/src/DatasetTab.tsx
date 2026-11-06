@@ -52,6 +52,8 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
           Segmentation (a class for every pixel: images + masks)</label>
         <label className="radio"><input type="radio" checked={ds.task === "regress"} onChange={() => up({ task: "regress", ...(ds.source === "builtin" ? { source: "local" } : {}) })} />
           Regression (numbers per image, e.g. biomass or canopy height)</label>
+        <label className="radio"><input type="radio" checked={ds.task === "detect"} onChange={() => up({ task: "detect", ...(ds.source === "builtin" || ds.source === "huggingface" ? { source: "local" } : {}) })} />
+          Object detection (boxes: ships, cars, buildings …)</label>
       </div>
       <div className="row">
         <strong>Source:</strong>
@@ -106,7 +108,7 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
           <button onClick={readKaggle} disabled={busy || !ds.kaggle_slug || !st.secrets.kaggle || !st.tools_ready}>Read files</button></div>
         {(!st.secrets.kaggle || !st.tools_ready) && <p className="muted small">Reading the file list needs the tools and your Kaggle token (Connection tab).</p>}
         {kg && <p className="muted small">{kg.files.toLocaleString()} files listed{kg.folders.length ? `; folders with one subfolder per class: ${kg.folders.map((f) => f.folder || "(top)").join(", ")}` : ""}.</p>}
-        {ds.task === "multilabel" || ds.task === "regress" ? <LabelsCsv ds={ds} up={up} /> : ds.task === "segment" ? <div className="form">
+        {ds.task === "detect" ? <DetectFolders ds={ds} up={up} /> : ds.task === "multilabel" || ds.task === "regress" ? <LabelsCsv ds={ds} up={up} /> : ds.task === "segment" ? <div className="form">
           <label>Images folder<input value={ds.kaggle_train_dir} onChange={(e) => up({ kaggle_train_dir: e.target.value.trim() })} placeholder="e.g. Image" /></label>
           <label>Masks folder (same file names)<input value={ds.kaggle_mask_dir} onChange={(e) => up({ kaggle_mask_dir: e.target.value.trim() })} placeholder="e.g. Mask" /></label>
           {kg && <p className="muted small wide">Folders seen: {[...new Set(kg.sample.map((f) => f.split("/").slice(0, -1).join("/")))].slice(0, 8).join(", ")}</p>}
@@ -122,14 +124,14 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
       </>}
 
       {ds.source === "local" && <LocalBox ds={ds} up={up} toast={toast} />}
-      {ds.source !== "builtin" && ds.task !== "segment" && <HeadsBox ds={ds} up={up} />}
+      {ds.source !== "builtin" && ds.task !== "segment" && ds.task !== "detect" && <HeadsBox ds={ds} up={up} />}
 
       {(ds.source !== "builtin" || ds.resize) && <div className="form">
         <label>Image height<input type="number" min={8} max={1024} value={ds.image_size[0]} onChange={(e) => up({ image_size: [Number(e.target.value), ds.image_size[1]] })} /></label>
         <label>Image width<input type="number" min={8} max={1024} value={ds.image_size[1]} onChange={(e) => up({ image_size: [ds.image_size[0], Number(e.target.value)] })} /></label>
         {ds.bands?.length ? <span className="muted small">Channels: {ds.bands.length + (ds.bands2?.length ?? 0)} (the bands chosen above)</span>
           : <label>Channels<select value={ds.channels} onChange={(e) => up({ channels: Number(e.target.value) })}><option value={1}>1 (grey)</option><option value={3}>3 (colour)</option></select></label>}
-        {ds.source !== "builtin" && <label className="wide">{ds.task === "regress" ? "Target columns, one per line (numeric columns of the labels table; the Output gives one number per target)" : ds.task === "multilabel" ? "Class names, one per line (from the labels CSV with Read labels, or typed)" : ds.task === "segment" ? "Classes, one per line (mask pixel value 0 = first line; with two classes any non-zero pixel is the second)" : "Class names, one per line, in label order"} ({ds.classes.length})
+        {ds.source !== "builtin" && <label className="wide">{ds.task === "detect" ? "Object classes, one per line (line 1 = class number 0 in the label files)" : ds.task === "regress" ? "Target columns, one per line (numeric columns of the labels table; the Output gives one number per target)" : ds.task === "multilabel" ? "Class names, one per line (from the labels CSV with Read labels, or typed)" : ds.task === "segment" ? "Classes, one per line (mask pixel value 0 = first line; with two classes any non-zero pixel is the second)" : "Class names, one per line, in label order"} ({ds.classes.length})
           <ClassBox classes={ds.classes} onChange={(classes) => up({ classes })} /></label>}
       </div>}
       {problems.map((p) => <div key={p} className="msg warn">{p}</div>)}
@@ -313,7 +315,7 @@ function LocalBox({ ds, up, toast }: { ds: Dataset; up: (p: Partial<Dataset>) =>
       <label className="radio"><input type="radio" checked={!scene} onChange={() => up({ layout: "" })} />images + masks (same file names)</label>
       <label className="radio"><input type="radio" checked={scene} onChange={() => up({ layout: "scene" })} />large images + a label image on the same grid (Earth Engine export), cut into tiles</label>
     </p>}
-    {ds.task === "multilabel" || ds.task === "regress" ? <LabelsCsv ds={ds} up={up} scan={scan} toast={toast} /> : ds.task !== "segment" ? <div className="form">
+    {ds.task === "detect" ? <DetectFolders ds={ds} up={up} dirs={scan?.dirs} /> : ds.task === "multilabel" || ds.task === "regress" ? <LabelsCsv ds={ds} up={up} scan={scan} toast={toast} /> : ds.task !== "segment" ? <div className="form">
       <label>Training folder (one subfolder per class)
         {scan?.folders.length ? <><select value={ds.kaggle_train_dir} onChange={(e) => { const f = scan.folders.find((x) => x.folder === e.target.value); up({ kaggle_train_dir: e.target.value, classes: f?.classes ?? ds.classes }); }}>
           {scan.folders.map((f) => <option key={f.folder} value={f.folder}>{f.folder || "(the folder itself)"} — {f.classes.length} classes</option>)}</select>
@@ -515,6 +517,20 @@ function LabelsCsv({ ds, up, scan, toast }: { ds: Dataset; up: (p: Partial<Datas
 
 /** fusion: a second band group (e.g. Sentinel-1 next to Sentinel-2) from files with the same names in another folder, stacked after the
  *  first group's bands; Input blocks can take one group each (Design: an Input's "Bands") */
+/** object detection: an images folder and a labels folder of YOLO .txt files with the same names */
+function DetectFolders({ ds, up, dirs }: { ds: Dataset; up: (p: Partial<Dataset>) => void; dirs?: string[] }) {
+  return <div className="form">
+    <label>Images folder<input value={ds.kaggle_train_dir} onChange={(e) => up({ kaggle_train_dir: e.target.value.trim() })} placeholder="e.g. images or train/images" /></label>
+    <label>Labels folder (YOLO .txt, same names)<input value={ds.kaggle_mask_dir} onChange={(e) => up({ kaggle_mask_dir: e.target.value.trim() })} placeholder="e.g. labels or train/labels" /></label>
+    {dirs && dirs.length > 0 && <p className="muted small wide">Folders seen: {dirs.slice(0, 10).join(", ")}</p>}
+    <p className="muted small wide">One label file per image (<code>image17.png</code> ↔ <code>image17.txt</code>), one line per box: <code>class cx cy w h</code>, the
+      class number (0 = the first class below) and the box's centre, width and height as fractions of the image: the YOLO format that
+      Roboflow, CVAT and most converted datasets (DOTA, xView, ship and car sets) offer. An image without a label file has no object.
+      Pictures or multiband files (GeoTIFF / .npy). The network ends in a Detection output on a feature map (e.g. a quarter of the image
+      size): every cell gives a score per class and a box; the run reports mAP@0.5 and mAP@0.5:0.95.</p>
+  </div>;
+}
+
 /** several outputs (multi-task): extra targets next to the main task, each from columns of the labels table (Hugging Face: of the rows),
  *  each given to the Output block with the same number */
 function HeadsBox({ ds, up }: { ds: Dataset; up: (p: Partial<Dataset>) => void }) {

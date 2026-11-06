@@ -159,6 +159,14 @@ crates/core/src/
                            sinusoidal, nopos, xattn, rms, swiglu N. Harness fill_dates (empty dates of a time series interpolated). CI:
                            ci_multiband_check transformer_math (imports the generated tokens/train.py: causal, rotary distance-only scores,
                            sinusoidal values, RMSNorm, forward + backward); everything.nnb has ca / rn / sw and rotary attention.
+                           Object detection: task "detect" (kaggle_train_dir = images, kaggle_mask_dir = YOLO .txt labels; classes ≥ 1),
+                           kind detect_output (DetectHead: K heatmaps + w, h, dx, dy per cell; stride must divide the image; EXPECTED
+                           "detect"); train_script allows only CenterNet's loss or custom. Harness DETECT / DET_OUT: yolo_boxes, det_pairs,
+                           det_target (Gaussian peaks, size, offset, mask: a fixed-size label), DetFiles (flips move boxes), det_loss
+                           (CenterNet focal + L1), det_decode (3×3 peaks, top 100), det_truth (boxes back from the target), det_scores
+                           (AP every-point, mAP@0.5 and @0.5:0.95); evaluate -> map50 in acc slot, map in mIoU slot; samples with boxes.
+                           UI: Dataset task radio + DetectFolders, Results cards / per-class AP / BoxImage, Train chart. CI:
+                           ci_multiband_check detection (targets <-> boxes exact, perfect mAP 1, detector on squares and discs).
                            Sentinel step finished: scene_split ("" random | strip = eastern tenth, one tile column gap | files =
                            scene_test_image/_label) in harness scene_split(); BigEarthNet layout: read_patch_folder (one GeoTIFF per band,
                            <patch>_<band>.tif, bands resized to the largest), label tables via read_table (CSV/TSV/Parquet, pyarrow on

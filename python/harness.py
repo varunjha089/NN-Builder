@@ -28,6 +28,10 @@ MULTILABEL = TASK == "multilabel"   # any number of classes per image: one sigmo
 # one number per target. The network learns the targets standardised with the training data's mean and spread (TARGET_MEAN / _STD);
 # scores (R², MAE, RMSE) are in the targets' own units
 REGRESS = TASK == "regress"
+# object detection: boxes from YOLO label files; the network ends in a CenterNet-style head (a heatmap per class, box size, centre offset
+# per cell of a feature map); the targets are drawn on that map, so a label is a fixed-size tensor (K heatmaps, 4 box values, a mask)
+DETECT = TASK == "detect"
+DET_OUT = EXPECTED.get("detect") if DETECT else None   # the head's output (K + 4, h, w), from the design
 # several outputs (multi-task): extra targets next to the main task, each with its own Output block (head 1, 2, ...). A label is then a
 # tuple (main, head 1, ...) and the network returns a tuple in the same order; everything that is not about the extra heads works on
 # the main part (main_y / main_out)
@@ -1344,6 +1348,200 @@ def split(n, seed, part=0.1):
     return idx[k:], idx[:k]
 
 
+# ---------------------------------------------------------------- object detection (CenterNet-style)
+def yolo_boxes(path):
+    """a YOLO label file: one box per line, "class cx cy w h" with the centre and size as fractions of the image; no file = no object"""
+    import numpy as np
+    rows = []
+    if path and os.path.exists(path):
+        for line in open(path, encoding="utf-8", errors="replace"):
+            v = line.split()
+            if len(v) >= 5:
+                try:
+                    c, cx, cy, w, h = int(float(v[0])), *(float(x) for x in v[1:5])
+                except ValueError:
+                    continue
+                if 0 <= c < len(CLASSES) and w > 0 and h > 0:
+                    rows.append([c, min(max(cx, 0.0), 1.0), min(max(cy, 0.0), 1.0), min(w, 1.0), min(h, 1.0)])
+    return np.array(rows, dtype=np.float32).reshape(-1, 5)
+
+
+def det_pairs(root):
+    """(image file, label file or None) for every image of the images folder; the label file has the image's name with .txt"""
+    idir, ldir = kaggle_folder(root, DATASET["kaggle_train_dir"]), kaggle_folder(root, DATASET["kaggle_mask_dir"])
+    labels = {os.path.splitext(f)[0]: os.path.join(ldir, f) for f in os.listdir(ldir) if f.lower().endswith(".txt")}
+    exts = BAND_EXT if MULTI else IMAGE_EXT
+    pairs = [(os.path.join(idir, f), labels.get(os.path.splitext(f)[0])) for f in sorted(os.listdir(idir)) if f.lower().endswith(exts)]
+    if not pairs:
+        raise SystemExit(f"DATA: no image in {DATASET['kaggle_train_dir']!r}.")
+    if not any(l for _, l in pairs):
+        raise SystemExit(f"DATA: no image in {DATASET['kaggle_train_dir']!r} has a label file (.txt, same name) in {DATASET['kaggle_mask_dir']!r}.")
+    return pairs
+
+
+def gaussian_radius(h, w, overlap=0.7):
+    """the radius around a centre within which a box of h × w cells still overlaps the true one by `overlap` (CenterNet's formula)"""
+    import math
+    r1 = (h + w - math.sqrt((h + w) ** 2 - 4 * h * w * (1 - overlap) / (1 + overlap))) / 2
+    r2 = (2 * (h + w) - math.sqrt(4 * (h + w) ** 2 - 16 * (1 - overlap) * h * w)) / 4
+    r3 = (-2 * overlap * (h + w) + math.sqrt(4 * overlap ** 2 * (h + w) ** 2 - 16 * overlap * (overlap - 1) * h * w)) / 4
+    return max(0, int(min(r1, r2, r3)))
+
+
+def det_target(boxes):
+    """the boxes drawn on the head's map: per class a Gaussian peak (1 at each centre), then width, height, x and y offset at the centre
+    cells, and a mask of the centre cells: (K + 5, h, w)"""
+    k = len(CLASSES)
+    _, gh, gw = DET_OUT
+    t = torch.zeros(k + 5, gh, gw)
+    ys, xs = torch.meshgrid(torch.arange(gh, dtype=torch.float32), torch.arange(gw, dtype=torch.float32), indexing="ij")
+    for c, cx, cy, bw, bh in boxes:
+        x, y = cx * gw, cy * gh
+        ix, iy = min(int(x), gw - 1), min(int(y), gh - 1)
+        r = gaussian_radius(bh * gh, bw * gw)
+        sigma = (2 * r + 1) / 6
+        g = torch.exp(-((xs - ix) ** 2 + (ys - iy) ** 2) / (2 * sigma * sigma))
+        t[int(c)] = torch.maximum(t[int(c)], g)
+        t[int(c), iy, ix] = 1.0
+        t[k:k + 4, iy, ix] = torch.tensor([bw * gw, bh * gh, x - ix, y - iy])
+        t[k + 4, iy, ix] = 1.0
+    return t
+
+
+class DetFiles(torch.utils.data.Dataset):
+    """images (pictures or multiband files) with their YOLO boxes; flips move the boxes too; the label is the target map (det_target)"""
+    def __init__(self, pairs, train, tfm=None):
+        self.items = [(img, yolo_boxes(lab)) for img, lab in pairs]
+        self.train, self.tfm = train, tfm
+
+    def __len__(self):
+        return len(self.items)
+
+    def __getitem__(self, i):
+        path, boxes = self.items[i]
+        if MULTI:
+            x = normalise(read_bands(path))
+        else:
+            from PIL import Image
+            x = self.tfm(Image.open(path))
+        boxes = boxes.copy()
+        if self.train:
+            if AUG.get("hflip") and random.random() < 0.5:
+                x, boxes[:, 1] = x.flip(-1), 1.0 - boxes[:, 1]
+            if AUG.get("vflip") and random.random() < 0.5:
+                x, boxes[:, 2] = x.flip(-2), 1.0 - boxes[:, 2]
+        return x, det_target(boxes)
+
+
+def det_loss(out, y):
+    """CenterNet's loss: a focal loss on the heatmaps (positives at the centres; negatives down-weighted near them by (1 - target)^4),
+    and L1 on the width / height (× 0.1) and the offset at the centre cells"""
+    k = len(CLASSES)
+    out, y = out.float(), y.float()
+    p = torch.sigmoid(out[:, :k]).clamp(1e-4, 1 - 1e-4)
+    gt = y[:, :k]
+    pos = gt.eq(1).float()
+    neg = (1 - pos) * (1 - gt) ** 4
+    n = pos.sum().clamp_min(1.0)
+    focal = -((torch.log(p) * (1 - p) ** 2 * pos).sum() + (torch.log(1 - p) * p ** 2 * neg).sum()) / n
+    m = y[:, k + 4:k + 5]
+    l1 = (out[:, k:k + 4] - y[:, k:k + 4]).abs() * m
+    return focal + (0.1 * l1[:, :2].sum() + l1[:, 2:].sum()) / n
+
+
+def det_decode(out, thresh=0.05, top=100):
+    """predicted boxes per image from the head's map: the peaks of the heatmaps (higher than their 3 × 3 neighbours), the best `top`
+    with a score of at least `thresh`, as [class, score, x1, y1, x2, y2] in fractions of the image"""
+    k = len(CLASSES)
+    heat = torch.sigmoid(out[:, :k].float())
+    heat = heat * (nn.functional.max_pool2d(heat, 3, 1, 1) == heat)
+    b, _, h, w = heat.shape
+    res = []
+    for i in range(b):
+        sc, idx = heat[i].flatten().topk(min(top, k * h * w))
+        keep = sc >= thresh
+        sc, idx = sc[keep], idx[keep]
+        c, rest = idx // (h * w), idx % (h * w)
+        cy, cx = (rest // w).float(), (rest % w).float()
+        reg = out[i, k:k + 4].float()
+        bw, bh, ox, oy = (reg[j].flatten()[rest] for j in range(4))
+        x, y = (cx + ox) / w, (cy + oy) / h
+        bw, bh = bw.clamp_min(0) / w, bh.clamp_min(0) / h
+        res.append(torch.stack([c.float(), sc, x - bw / 2, y - bh / 2, x + bw / 2, y + bh / 2], 1).cpu() if len(sc) else torch.zeros(0, 6))
+    return res
+
+
+def det_truth(y):
+    """the true boxes back from a target map: one per centre cell, [class, x1, y1, x2, y2]"""
+    k = len(CLASSES)
+    _, h, w = y.shape[1:]
+    res = []
+    for i in range(y.shape[0]):
+        cells = y[i, k + 4].flatten().nonzero().flatten()
+        cy, cx = (cells // w).float(), (cells % w).float()
+        cls = y[i, :k].flatten(1)[:, cells].argmax(0).float()
+        bw, bh, ox, oy = (y[i, k + j].flatten()[cells] for j in range(4))
+        x, yy = (cx + ox) / w, (cy + oy) / h
+        res.append(torch.stack([cls, x - bw / w / 2, yy - bh / h / 2, x + bw / w / 2, yy + bh / h / 2], 1).cpu() if len(cells) else torch.zeros(0, 5))
+    return res
+
+
+def box_iou(a, b):
+    """IoU of every box in a with every box in b ([x1, y1, x2, y2])"""
+    lt, rb = torch.maximum(a[:, None, :2], b[None, :, :2]), torch.minimum(a[:, None, 2:], b[None, :, 2:])
+    inter = (rb - lt).clamp_min(0).prod(2)
+    area = lambda z: (z[:, 2:] - z[:, :2]).clamp_min(0).prod(1)
+    return inter / (area(a)[:, None] + area(b)[None, :] - inter).clamp_min(1e-9)
+
+
+def det_scores(preds, truths):
+    """average precision per class at IoU 0.5 and 0.5 … 0.95 (every-point interpolation, as VOC 2010+ / COCO); mAP = their mean over
+    the classes that have boxes"""
+    k = len(CLASSES)
+    thresholds = [0.5 + 0.05 * i for i in range(10)]
+    ap = {t: [] for t in thresholds}
+    per = []
+    for c in range(k):
+        gts = [t[t[:, 0] == c, 1:] for t in truths]
+        n_gt = sum(len(g) for g in gts)
+        dets = sorted(((float(p[j, 1]), i, p[j, 2:]) for i, p in enumerate(preds) for j in range(len(p)) if int(p[j, 0]) == c), key=lambda d: -d[0])
+        row = {"class": CLASSES[c], "boxes": n_gt, "ap50": None, "ap": None}
+        if n_gt == 0:
+            per.append(row)
+            continue
+        for t in thresholds:
+            used = [torch.zeros(len(g), dtype=torch.bool) for g in gts]
+            tp = []
+            for _, i, box in dets:
+                g = gts[i]
+                hit = False
+                if len(g):
+                    iou = box_iou(box[None], g)[0]
+                    iou[used[i]] = -1
+                    j = int(iou.argmax())
+                    if float(iou[j]) >= t:
+                        used[i][j], hit = True, True
+                tp.append(1.0 if hit else 0.0)
+            tp = torch.tensor(tp) if tp else torch.zeros(0)
+            ctp = tp.cumsum(0)
+            prec = ctp / torch.arange(1, len(tp) + 1) if len(tp) else torch.zeros(0)
+            rec = ctp / n_gt if len(tp) else torch.zeros(0)
+            # the precision envelope (the best precision at this recall or higher), integrated over recall
+            mrec = torch.cat([torch.zeros(1), rec, torch.ones(1)])
+            mpre = torch.cat([torch.zeros(1), prec, torch.zeros(1)])
+            for i in range(len(mpre) - 2, -1, -1):
+                mpre[i] = max(mpre[i], mpre[i + 1])
+            a = float(((mrec[1:] - mrec[:-1]) * mpre[1:]).sum())
+            ap[t].append(a)
+            if abs(t - 0.5) < 1e-9:
+                row["ap50"] = a
+        row["ap"] = sum(ap[t][-1] for t in thresholds) / len(thresholds)
+        per.append(row)
+    mean = lambda v: sum(v) / len(v) if v else 0.0
+    return {"map50": mean(ap[0.5]), "map": mean([mean(ap[t]) for t in thresholds]) if ap[0.5] else 0.0, "per_class": per,
+            "boxes": sum(r["boxes"] for r in per)}
+
+
 def load_data(cfg):
     from torch.utils.data import Subset
     src = DATASET["source"]
@@ -1374,6 +1572,16 @@ def load_data(cfg):
             train, test, train_eval = SegPairs(HFPairs(tr), True), SegPairs(HFPairs(te), False), SegPairs(HFPairs(tr), False)
         else:
             train, test, train_eval = HFImages(tr, train_t), HFImages(te, test_t), HFImages(tr, test_t)
+    elif DETECT:
+        root = data_root()
+        pairs = det_pairs(root)
+        tr_i, te_i = split(len(pairs), cfg["seed"])
+        tr, te = [pairs[i] for i in tr_i], [pairs[i] for i in te_i]
+        if MULTI:
+            multiband_stats(tr, cfg["seed"])
+        n_boxes = sum(len(yolo_boxes(l)) for _, l in pairs)
+        emit("info", message=f"{len(pairs)} images, {n_boxes} boxes ({sum(1 for _, l in pairs if l)} with a label file)")
+        train, test, train_eval = DetFiles(tr, True, test_t), DetFiles(te, False, test_t), DetFiles(tr, False, test_t)
     elif MULTI and SEG:
         root = data_root()
         if DATASET.get("layout") == "scene":
@@ -1462,6 +1670,8 @@ GAMMA = float(TRAIN.get("focal_gamma") or 2.0)
 
 def loss_of(out, y, smoothing=0.0):
     """the training loss: the main task's, plus each extra output's times its weight (several outputs)"""
+    if DETECT:
+        return custom_loss(out, y) if LOSS == "custom" else det_loss(out, y)
     if not MULTITASK:
         return loss_one(out, y, smoothing)
     total = loss_one(out[0], y[0], smoothing)
@@ -1734,6 +1944,8 @@ def one_batch_check(model, loader, device):
         raise SystemExit(f"CHECK: the network gives {len(outs) if isinstance(outs, (tuple, list)) else 1} output(s), but the dataset has "
                          f"{len(HEADS) + 1} (the main task and {len(HEADS)} extra).")
     out = main_out(outs)
+    if DETECT and list(y.shape[2:]) != list(out.shape[2:]):
+        raise SystemExit(f"CHECK: the box targets are drawn on a {list(y.shape[2:])} map, but the detection head gives {list(out.shape[2:])}.")
     if SEG and list(y.shape[1:]) != list(out.shape[2:]):
         raise SystemExit(f"CHECK: the masks are {list(y.shape[1:])}, but the network outputs {list(out.shape[2:])}.")
     if (MULTILABEL or REGRESS) and list(y.shape) != list(out.shape):
@@ -1746,7 +1958,7 @@ def one_batch_check(model, loader, device):
            for name, label, _ in LAYERS if seen.get(name) != EXPECTED[name]]
     if bad:
         raise SystemExit("CHECK: shapes differ from the design: " + "; ".join(bad[:5]))
-    if not REGRESS and int(y.max()) >= len(CLASSES):
+    if not REGRESS and not DETECT and int(y.max()) >= len(CLASSES):
         raise SystemExit(f"CHECK: a label is {int(y.max())}, but there are only {len(CLASSES)} classes"
                          + (" (mask pixel values must be class numbers 0, 1, 2, ...)" if SEG else "") + ".")
     emit("check", message="one batch passed: every layer has the shape the design shows", batch=list(x.shape))
@@ -1758,7 +1970,7 @@ def evaluate(model, loader, device):
     model.eval()
     k = len(CLASSES)
     loss_sum, n_items, cm = 0.0, 0, torch.zeros(k * k, dtype=torch.long)
-    top5 = 0 if (not SEG and not MULTILABEL and not REGRESS and k > 5) else None
+    top5 = 0 if (not SEG and not MULTILABEL and not REGRESS and not DETECT and k > 5) else None
     probs, targets = [], []
     global HEAD_SCORES
     h_out, h_y = {k: [] for k in range(1, len(HEADS) + 1)}, {k: [] for k in range(1, len(HEADS) + 1)}
@@ -1775,6 +1987,12 @@ def evaluate(model, loader, device):
             if MULTITASK and not SEG:
                 # the validation loss is the whole training loss (every output), as in training
                 loss_sum += loss_of(outs, yall).item() * len(y)
+            if DETECT:
+                loss_sum += det_loss(out, y).item() * len(y)
+                n_items += len(y)
+                probs.extend(det_decode(out))
+                targets.extend(det_truth(y))
+                continue
             if REGRESS:
                 loss_sum += 0 if MULTITASK else loss_of(out, y).item() * len(y)
                 n_items += len(y)
@@ -1796,6 +2014,10 @@ def evaluate(model, loader, device):
             if top5 is not None:
                 top5 += int((out.topk(5, dim=1).indices == y.unsqueeze(1)).any(1).sum())
     HEAD_SCORES = head_scores(h_out, h_y) if MULTITASK else None
+    if DETECT:
+        # (loss, mAP@0.5 in the accuracy's place, the scores in the confusion matrix's place, mAP@0.5:0.95 in mean IoU's place)
+        sc = det_scores(probs, targets)
+        return loss_sum / max(n_items, 1), sc["map50"], sc, sc["map"], None, None
     if REGRESS:
         # (loss, R² in the accuracy's place, the scores in the confusion matrix's place, MAE in mean IoU's place)
         sc = regression_scores(torch.cat(probs), torch.cat(targets)) if probs else regression_scores(torch.zeros(0, k), torch.zeros(0, k))
@@ -1890,6 +2112,11 @@ def pictures(model, test, device):
             res["samples"].append({"image": small(img, 64), "truth": small((truth.float() / k).unsqueeze(0), 64),
                                    "pred": small((pred.float() / k).unsqueeze(0), 64),
                                    "pixel_acc": round(float((pred == truth).float().mean()), 3)})
+        elif DETECT:
+            pred = det_decode(out[j:j + 1], thresh=0.3, top=30)[0]
+            truth = det_truth(main_y(test[i][1])[None])[0]
+            res["samples"].append({"image": small(img, 96), "truth": [[int(b[0])] + [round(float(v), 4) for v in b[1:]] for b in truth],
+                                   "boxes": [[int(b[0]), round(float(b[1]), 3)] + [round(float(v), 4) for v in b[2:]] for b in pred]})
         elif REGRESS:
             pred = to_units(out[j]).cpu()
             res["samples"].append({"image": small(img), "target": [round(float(v), 5) for v in main_y(test[i][1])],
@@ -1903,7 +2130,7 @@ def pictures(model, test, device):
             prob = torch.softmax(out[j], 0).cpu()
             p = int(prob.argmax())
             res["samples"].append({"image": small(img), "label": int(main_y(test[i][1])), "pred": p, "prob": round(float(prob[p]), 3)})
-    if not SEG and not MULTILABEL and not REGRESS:
+    if not SEG and not MULTILABEL and not REGRESS and not DETECT:
         try:
             cam = grad_cam(model, xs)
             if cam:
@@ -1978,9 +2205,24 @@ def labels_of(ds):
     return None
 
 
+def det_items(ds):
+    """the (image, boxes) items of a detection dataset, also through a Subset"""
+    from torch.utils.data import Subset
+    if isinstance(ds, Subset):
+        inner = det_items(ds.dataset)
+        return [inner[i] for i in ds.indices]
+    return ds.items
+
+
 def class_counts(ds, sample=64):
-    """images per class (multi-label: images having each class; segmentation: pixels per class in up to `sample` items)"""
+    """images per class (multi-label: images having each class; segmentation: pixels per class in up to `sample` items; detection: boxes)"""
     k = len(CLASSES)
+    if DETECT:
+        counts = [0] * k
+        for _, boxes in det_items(ds):
+            for c in boxes[:, 0]:
+                counts[int(c)] += 1
+        return counts, True
     if SEG:
         counts = torch.zeros(k, dtype=torch.long)
         for i in random.Random(0).sample(range(len(ds)), min(sample, len(ds))):
@@ -2045,7 +2287,7 @@ def data_report(train, val, test):
     else:
         counts, exact = class_counts(train)
     rep = {"sizes": {"train": len(train), "validation": len(val) if val is not None else 0, "test": len(test)},
-           "counts": counts, "counts_exact": exact, "count_unit": "pixels (sampled)" if SEG else "images", "bands": [], "warnings": []}
+           "counts": counts, "counts_exact": exact, "count_unit": "pixels (sampled)" if SEG else "boxes" if DETECT else "images", "bands": [], "warnings": []}
     w = rep["warnings"]
     if MULTI:
         rep["bands"] = band_report(base)
@@ -2099,7 +2341,7 @@ def check_only(model, train, val, test, first_batch, device):
             x, y = test[i]
             y = main_y(y)
             img = composite(x) if MULTI else (x * torch.tensor(stats_s).view(-1, 1, 1) + torch.tensor(stats_m).view(-1, 1, 1)).clamp(0, 1)
-            label = ([round(float(v), 5) for v in y] if REGRESS else [c for c in range(len(CLASSES)) if float(y[c]) > 0.5] if MULTILABEL
+            label = (len(det_truth(y[None])[0]) if DETECT else [round(float(v), 5) for v in y] if REGRESS else [c for c in range(len(CLASSES)) if float(y[c]) > 0.5] if MULTILABEL
                      else None if SEG else int(y))
             res["samples"].append({"image": small(img, 64), "label": label})
     with open(os.path.join(OUT, "results.json"), "w", encoding="utf-8") as f:
@@ -2164,7 +2406,7 @@ def main():
             emit("memory_split", what="evaluation", batch=eval_bs["v"])
     # early stopping: the monitored value, the best epoch so far and how many epochs since then (kept in the checkpoint)
     monitor = cfg.get("monitor", "val_loss")
-    if REGRESS and monitor == "val_miou":
+    if (REGRESS or DETECT) and monitor == "val_miou":
         monitor = "val_loss"   # val_acc is R² for regression; there is no mIoU
     early, patience = bool(cfg.get("early_stop")), max(1, int(cfg.get("patience", 5)))
     es = {"best": None, "best_epoch": 0, "bad": 0}
@@ -2277,7 +2519,7 @@ def main():
         return
     if REGRESS:
         target_stats(train)
-    elif cfg.get("class_weights") in ("inverse", "sqrt"):
+    elif cfg.get("class_weights") in ("inverse", "sqrt") and not DETECT:
         class_weights(train, cfg["class_weights"])
     if MULTITASK:
         head_stats(train)
@@ -2320,7 +2562,7 @@ def main():
                                     loss = out.float().sum() * 0.0  # no labelled pixel in this piece: nothing to learn (and no NaN)
                             scaler.scale(loss).backward()
                             batch_loss += loss.item()
-                            if not REGRESS:
+                            if not REGRESS and not DETECT:
                                 batch_correct += int(((out > 0) == (ys > 0.5)).sum()) if MULTILABEL else int((out.argmax(1) == ys).sum())
                         break
                     except Exception as e:
@@ -2380,6 +2622,9 @@ def main():
             if REGRESS:
                 ev["val_mae"] = round(miou, 6)
                 del ev["train_acc"]   # no running R² while training
+            if DETECT:
+                ev["val_map"] = round(miou, 5)   # mAP@0.5:0.95 (val_acc is mAP@0.5)
+                del ev["train_acc"]
             if val_top5 is not None:
                 ev["val_top5"] = round(val_top5, 5)
             if HEAD_SCORES:
@@ -2427,6 +2672,9 @@ def main():
     torch.save(model.state_dict(), os.path.join(OUT, "model.pt"))
     res = {"task": TASK, "test_acc": val_acc, "test_loss": val_loss, "classes": CLASSES,
            "confusion": None if MULTILABEL or REGRESS else confusion}
+    if DETECT:
+        res.update(confusion)   # map50 (= test_acc), map, per_class, boxes
+        res["confusion"] = None
     if REGRESS:
         res.update(confusion)   # r2 (= test_acc), mae, rmse, per_target, scatter
         res["target_stats"] = {"mean": [float(v) for v in TARGET_MEAN], "std": [float(v) for v in TARGET_STD]}
@@ -2456,6 +2704,7 @@ def main():
          **({"test_map": round(confusion["map"], 5), "test_macro_f1": round(confusion["macro_f1"], 5), "test_exact": round(confusion["exact"], 5)}
             if MULTILABEL else {}),
          **({"test_mae": round(confusion["mae"], 6), "test_rmse": round(confusion["rmse"], 6)} if REGRESS else {}),
+         **({"test_map": round(confusion["map"], 5)} if DETECT else {}),
          **({"heads": [{"name": h["name"], "metric": h["metric"], "score": round(h["score"], 5)} for h in HEAD_SCORES]} if HEAD_SCORES else {}),
          **({"best_epoch": es["best_epoch"]} if early else {}), **({"test_top5": round(test_top5, 5)} if test_top5 is not None else {}))
     if ON_KAGGLE:

@@ -381,6 +381,21 @@ class Conv1dSteps(nn.Module):
 
 "#;
 
+const DETECT_MODULES: &str = r#"class DetectHead(nn.Module):
+    """an anchor-free detection head (CenterNet, Zhou et al. 2019): for every cell of the feature map one heatmap score per class (an
+    object's centre is here), the box's width and height in cells, and the centre's offset inside the cell"""
+    def __init__(self, channels, classes):
+        super().__init__()
+        self.conv = nn.Conv2d(channels, classes + 4, 1)
+        with torch.no_grad():
+            self.conv.bias[:classes].fill_(-2.19)   # start with "no object here" (a probability of 0.1), as CenterNet does
+
+    def forward(self, x):
+        return self.conv(x)
+
+
+"#;
+
 /// the modules of one node as Python source (empty for Input / Add / Concat, which are written in forward)
 fn modules(n: &Node, a: &Analysis, classes: usize) -> Vec<String> {
     let r = a.get(&n.id).unwrap();
@@ -522,6 +537,7 @@ fn modules(n: &Node, a: &Analysis, classes: usize) -> Vec<String> {
         "custom" => m.push(format!("{}({})", p.get("class").and_then(|v| v.as_str()).unwrap_or(""),
             inp.iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", "))),
         "seg_output" => m.push(format!("nn.Conv2d(in_channels={}, out_channels={classes}, kernel_size=1)", inp[0])),
+        "detect_output" => m.push(format!("DetectHead({}, {})", inp[0], r.out.as_ref().map(|o| o[0] - 4).unwrap_or(classes))),
         _ => {}
     }
     m
@@ -631,6 +647,7 @@ fn model_code_opts(g: &Graph, a: &Analysis, save_memory: bool) -> Result<String>
                 let note = match n.kind.as_str() {
                     "output" => " (one score per class; the loss applies softmax)",
                     "seg_output" => " (a score per class for every pixel)",
+                    "detect_output" => " (per map cell: a heatmap per class, then box width, height and the centre's offset)",
                     "custom" => " (your PyTorch class; parameters counted on the training machine)",
                     _ => "",
                 };
@@ -644,7 +661,10 @@ fn model_code_opts(g: &Graph, a: &Analysis, save_memory: bool) -> Result<String>
                 expected.insert(name, json!(r.out));
             }
         }
-        if n.kind == "output" || n.kind == "seg_output" {
+        if n.kind == "detect_output" {
+            expected.insert("detect".into(), json!(r.out));
+        }
+        if n.kind == "output" || n.kind == "seg_output" || n.kind == "detect_output" {
             let head = n.params.get("head").and_then(|h| h.as_u64()).unwrap_or(0) as usize;
             heads_out.push((head, v.clone()));
             result_var = v.clone();
@@ -662,6 +682,9 @@ fn model_code_opts(g: &Graph, a: &Analysis, save_memory: bool) -> Result<String>
     }
     if g.nodes.iter().any(|n| order.contains(&n.id.as_str()) && matches!(n.kind.as_str(), "temporal_pool" | "to_sequence" | "lstm" | "gru" | "conv1d")) {
         s += TIME_MODULES;
+    }
+    if g.nodes.iter().any(|n| order.contains(&n.id.as_str()) && n.kind == "detect_output") {
+        s += DETECT_MODULES;
     }
     if g.nodes.iter().any(|n| order.contains(&n.id.as_str()) && n.kind == "custom") {
         s += "# ---- the design's own PyTorch code (Custom blocks), as written in NN Builder\n";
@@ -725,6 +748,9 @@ fn py_json(v: &Value) -> String {
 pub fn train_script(g: &Graph, ds: &Dataset, a: &Analysis, t: &TrainSettings, title: &str) -> Result<String> {
     if let Some(p) = ds.problems().first() {
         bail!("{p}");
+    }
+    if ds.task == "detect" && !t.loss.is_empty() && t.loss != "custom" {
+        bail!("Object detection trains with CenterNet's loss (or your own Python loss): Train tab, Loss.");
     }
     if t.loss.starts_with("dice") && ds.task != "segment" && ds.task != "multilabel" {
         bail!("Dice loss needs segmentation or multi-label (one class per image: use cross-entropy or focal).");

@@ -7,7 +7,8 @@ pub struct Dataset {
     /// "builtin" | "huggingface" | "kaggle" | "local" (the owner's own files, e.g. GeoTIFFs exported from Google Earth Engine)
     pub source: String,
     /// "classify" (one label per image) | "multilabel" (any number of classes per image: sigmoid + BCE) | "segment" (a class for every
-    /// pixel: images + masks) | "regress" (numbers per image from columns of the labels table; `classes` holds the target columns)
+    /// pixel: images + masks) | "regress" (numbers per image from columns of the labels table; `classes` holds the target columns) |
+    /// "detect" (boxes: an images folder and a labels folder of YOLO .txt files, "class cx cy w h" normalised, one per image)
     #[serde(default = "classify")]
     pub task: String,
     /// built-in sets: resize to image_size / convert to channels (e.g. CIFAR-10 at 224×224 for AlexNet); other sources always resize
@@ -508,7 +509,7 @@ impl Dataset {
             }
             _ => p.push("Choose where the data comes from.".into()),
         }
-        if !matches!(self.task.as_str(), "classify" | "multilabel" | "segment" | "regress") {
+        if !matches!(self.task.as_str(), "classify" | "multilabel" | "segment" | "regress" | "detect") {
             p.push("Choose the task.".into())
         }
         if self.task == "multilabel" {
@@ -517,6 +518,18 @@ impl Dataset {
                 "kaggle" | "local" if self.labels_csv.is_empty() => p.push("Give the CSV file with the labels of every image.".into()),
                 "kaggle" | "local" if !ok_id(&self.labels_csv) => p.push("The labels file may contain letters, digits and - _ . / only.".into()),
                 _ => {}
+            }
+        }
+        if self.task == "detect" {
+            match self.source.as_str() {
+                "kaggle" | "local" if self.kaggle_train_dir.is_empty() || self.kaggle_mask_dir.is_empty() => {
+                    p.push("Give the images folder and the labels folder (YOLO .txt files with the same names: class cx cy w h per box).".into())
+                }
+                "kaggle" | "local" => {}
+                _ => p.push("Object detection reads boxes from YOLO label files: use your own files or Kaggle.".into()),
+            }
+            if !self.heads.is_empty() || self.time_steps > 0 || self.fused() {
+                p.push("Object detection works on single images (no extra outputs, time series or second band group yet).".into());
             }
         }
         if self.task == "regress" {
@@ -558,7 +571,11 @@ impl Dataset {
             }
         }
         if self.source != "builtin" || self.resize {
-            if self.task == "regress" {
+            if self.task == "detect" {
+                if self.classes.is_empty() {
+                    p.push("Give the object classes, one per line, in the order of the class numbers of the label files.".into())
+                }
+            } else if self.task == "regress" {
                 if self.classes.is_empty() {
                     p.push("Choose the target columns (the numbers to predict): read them from the labels file, or type them.".into())
                 }

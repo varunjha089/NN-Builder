@@ -108,7 +108,9 @@ escape hatch, 2-D only, supervised only, one GPU. The steps below, in this order
    cross-attention, token concat; empty dates of a time series filled from their neighbours. Left: padding masks (sequences of different
    lengths), token embeddings for text (no text datasets in the app), KV-cache / generation.* The plan: cross-attention (two inputs, needs step 4), attention masks (causal / padding; needed by step 6 for
    missing dates), sinusoidal and rotary positions, RMSNorm, gated MLP (SwiGLU); token embeddings for text.
-8. **Object detection:** an anchor-free head (FCOS / CenterNet style) with box losses and box mAP, box datasets (COCO / YOLO txt),
+8. **Object detection:** *Done 2026-11-06 (CI-tested, not yet on real data): YOLO-format datasets, CenterNet-style Detection output,
+   focal + L1 loss, mAP@0.5 and @0.5:0.95, boxes drawn in Results. Left: oriented boxes (DOTA), COCO JSON, tiling large scenes with
+   their boxes, cross-class NMS, a detection demo design, multi-scale heads (FPN).* The plan: an anchor-free head (FCOS / CenterNet style) with box losses and box mAP, box datasets (COCO / YOLO txt),
    boxes drawn in the mistakes gallery; needs steps 2 and 4.
 9. **Multi-GPU training:** DistributedDataParallel / FSDP on machines with several GPUs (college server, multi-GPU EC2), for the large
    ViTs and long time series.
