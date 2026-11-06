@@ -20,7 +20,8 @@ for rec in log.split(END):
     when, short, subject, body = (rec.split(SEP) + ["", "", "", ""])[:4]
     if subject.startswith("CHANGELOG"):
         continue
-    lines = [l.rstrip() for l in body.strip().splitlines() if not l.lower().startswith("co-authored-by")]
+    # attribution trailers (Co-Authored-By, Claude-Session links) are not part of what changed
+    lines = [l.rstrip() for l in body.strip().splitlines() if not l.lower().startswith(("co-authored-by", "claude-session"))]
     while lines and not lines[-1]:
         lines.pop()
     out += [f"## {when}", "", f"**{subject}** (`{short}`)", ""]
