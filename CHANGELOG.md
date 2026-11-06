@@ -3,6 +3,10 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 06_11_26_15_26_26
+
+**Transformer additions: causal masks, rotary and sinusoidal positions, RMSNorm, SwiGLU, cross-attention, token concat; empty dates filled** (`edc9553`)
+
 ## 06_11_26_14_36_19
 
 **CI: the time-series crop map with two Conv3D layers, more scenes and epochs (it underfit)** (`3a510ec`)
