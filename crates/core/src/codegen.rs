@@ -445,6 +445,11 @@ fn model_code_opts(g: &Graph, a: &Analysis, save_memory: bool) -> Result<String>
                 let group = n.params.get("group").and_then(|g| g.as_u64()).unwrap_or(0);
                 fwd.push(match group {
                     1 if c < total => format!("        {v} = x[:, :{c}]   # band group 1"),
+                    // at its own size (separate inputs): the top-left corner of its channels holds it
+                    2 if c < total && r.out.as_ref().is_some_and(|o| o[1..] != a.input[1..]) => {
+                        let o = r.out.as_ref().unwrap();
+                        format!("        {v} = x[:, {}:, :{}, :{}]   # band group 2 at its own size {}×{}", total - c, o[1], o[2], o[1], o[2])
+                    }
                     2 if c < total => format!("        {v} = x[:, {}:]   # band group 2", total - c),
                     _ => format!("        {v} = x"),
                 });

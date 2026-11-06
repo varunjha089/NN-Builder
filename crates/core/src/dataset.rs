@@ -119,6 +119,11 @@ pub struct Dataset {
     pub s1_db2: bool,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub fuse_dir: String,
+    /// the second band group's own image size [height, width] (empty = resized to image_size): the two groups then reach the network
+    /// as separate inputs (one Input block each), e.g. Sentinel-1 at 32×32 next to Sentinel-2 at 64×64. In the batch tensor group 2
+    /// fills the top-left corner of its channels (NaN / 0 elsewhere), which the generated forward cuts out, so it may not be larger
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub image_size2: Vec<usize>,
 }
 
 /// Sentinel-2 L1C bands in the order EuroSAT-MS stores them (B8A last); `SENTINEL2_10_20` are the 10 m and 20 m bands
@@ -276,6 +281,7 @@ impl Default for Dataset {
             sensor2: String::new(),
             s1_db2: false,
             fuse_dir: String::new(),
+            image_size2: vec![],
         }
     }
 }
@@ -375,6 +381,23 @@ impl Dataset {
     /// two band groups (e.g. Sentinel-2 + Sentinel-1)
     pub fn fused(&self) -> bool {
         self.multiband() && !self.bands2.is_empty()
+    }
+
+    /// the second band group has its own size (separate inputs, not stacked on one grid)
+    pub fn separate_inputs(&self) -> bool {
+        self.fused() && self.image_size2.len() == 2
+    }
+
+    /// the shape an Input block of this group receives (channels, height, width): group 2 at its own size when it has one
+    pub fn group_shape(&self, group: u64) -> Option<Vec<usize>> {
+        let c = self.group_channels(group)?;
+        let mut s = self.input_shape();
+        s[0] = c;
+        if group == 2 && self.separate_inputs() {
+            s[1] = self.image_size2[0];
+            s[2] = self.image_size2[1];
+        }
+        Some(s)
     }
 
     /// the channels an Input block of this group receives: 0 = all, 1 = the first band group, 2 = the second (None: no such group)
@@ -549,6 +572,17 @@ impl Dataset {
                     }
                     if !self.kaggle_test_dir.is_empty() && self.task != "multilabel" && self.task != "regress" {
                         p.push("With two band groups, leave the test folder empty (10% of the images are the test data).".into())
+                    }
+                    if !self.image_size2.is_empty() {
+                        if self.image_size2.len() != 2 || self.image_size2.iter().any(|&s| !(4..=1024).contains(&s)) {
+                            p.push("The second group's image size must be two numbers from 4 to 1024.".into())
+                        } else if self.image_size2[0] > self.image_size[0] || self.image_size2[1] > self.image_size[1] {
+                            p.push(format!("The second group's size ({}×{}) may not be larger than the first's ({}×{}): make the sharper sensor group 1.",
+                                self.image_size2[0], self.image_size2[1], self.image_size[0], self.image_size[1]))
+                        }
+                        if self.layout == "scene" {
+                            p.push("A scene and its second group are cut into tiles on one grid: leave the second group's own size empty.".into())
+                        }
                     }
                     if self.fuse_dir.is_empty() || !ok_id(&self.fuse_dir) {
                         p.push("Give the folder with the second group's files (same file names as the first).".into())

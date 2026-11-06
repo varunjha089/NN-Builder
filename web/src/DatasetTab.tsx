@@ -566,6 +566,17 @@ function SecondGroup({ ds, up }: { ds: Dataset; up: (p: Partial<Dataset>) => voi
           <input style={{ display: "block", width: "100%" }} value={order.join(" ")} onChange={(e) => { const o = e.target.value.split(/\s+/).filter((x) => x); up({ band_order2: o, bands2: chosen.filter((b) => o.includes(b)) }); }} /></label>
       </div>
       <div className="bandgrid">{order.map((b) => <label key={b} className="chk"><input type="checkbox" checked={chosen.includes(b)} onChange={() => toggle(b)} />{b}</label>)}</div>
+      <p className="row small">
+        <label className="chk"><input type="checkbox" checked={(ds.image_size2?.length ?? 0) === 2}
+          onChange={(e) => up({ image_size2: e.target.checked ? [Math.max(4, Math.round(ds.image_size[0] / 2)), Math.max(4, Math.round(ds.image_size[1] / 2))] : [] })} />
+          its own image size (a separate input, not resized to group 1's {ds.image_size[0]}×{ds.image_size[1]})</label>
+        {(ds.image_size2?.length ?? 0) === 2 && <>
+          <input type="number" min={4} max={ds.image_size[0]} style={{ width: 70 }} value={ds.image_size2![0]} onChange={(e) => up({ image_size2: [Number(e.target.value), ds.image_size2![1]] })} />×
+          <input type="number" min={4} max={ds.image_size[1]} style={{ width: 70 }} value={ds.image_size2![1]} onChange={(e) => up({ image_size2: [ds.image_size2![0], Number(e.target.value)] })} /></>}
+      </p>
+      {(ds.image_size2?.length ?? 0) === 2 && <p className="muted small">E.g. Sentinel-1 at 20 m next to Sentinel-2 at 10 m: each group keeps its own pixels.
+        Then the design needs one Input per group (Design: an Input's “Bands”), each with its own branch, joined where their sizes match
+        (e.g. after a pool on the larger one). It may not be larger than group 1.</p>}
       {ds.sensor2 === "s1" && <label className="chk"><input type="checkbox" checked={!!ds.s1_db2} onChange={(e) => up({ s1_db2: e.target.checked })} />
         linear backscatter: convert to decibels (Earth Engine's S1_GRD is already in dB)</label>}
       <p className="muted small">Both groups are stacked into one image: group 1's {(ds.bands ?? []).length} bands, then these {chosen.length}. One Input takes

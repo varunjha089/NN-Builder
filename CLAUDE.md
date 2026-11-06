@@ -129,6 +129,12 @@ crates/core/src/
                            evaluate total loss + head_scores -> HEAD_SCORES ("heads" in epoch / done / results.json). UI: DatasetTab
                            HeadsBox, Output inspector "Output for", ResultsTab table, Train chart lines. CI: ci_multiband_check
                            multitask (class from folders + 2 numbers + a class from labels.csv).
+                           Inputs at their own sizes: Dataset.image_size2 (group 2's [h, w], empty = resized to image_size;
+                           separate_inputs(), group_shape(); not larger than group 1, not for scenes); shapes gives Input group 2 its own
+                           shape and refuses a group-0 Input; codegen slices x[:, c1:, :h2, :w2]. Harness SIZE2 / C1: read_groups resizes
+                           group 2 to SIZE2, read_bands pads it with NaN into the top-left corner (stats NaN-aware, normalise -> 0),
+                           flips per group block, band_report on each group's own pixels. DatasetTab SecondGroup "its own image size".
+                           CI: ci_multiband_check fusion_sizes (S2 32×32 + S1 16×16).
                            Sentinel step finished: scene_split ("" random | strip = eastern tenth, one tile column gap | files =
                            scene_test_image/_label) in harness scene_split(); BigEarthNet layout: read_patch_folder (one GeoTIFF per band,
                            <patch>_<band>.tif, bands resized to the largest), label tables via read_table (CSV/TSV/Parquet, pyarrow on

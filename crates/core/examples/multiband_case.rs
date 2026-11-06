@@ -35,6 +35,11 @@ fn main() {
             image_size: [32, 32], sensor: "s2".into(), band_order: s(&["B2", "B3", "B4", "B8"]), bands: s(&["B2", "B3", "B4", "B8"]),
             sensor2: "s1".into(), band_order2: s(&["VV", "VH"]), bands2: s(&["VV", "VH"]), s1_db2: true, fuse_dir: "s1".into(),
             classes: s(&["flood", "land"]), ..Default::default() }),
+        // the same, with Sentinel-1 at its own size (16×16 next to S2's 32×32): two separate inputs, not stacked on one grid
+        ("fusion_sizes", Dataset { source: "local".into(), local_dir: format!("{dir}/own/fusion"), local_on_machine: true, kaggle_train_dir: "s2".into(),
+            image_size: [32, 32], sensor: "s2".into(), band_order: s(&["B2", "B3", "B4", "B8"]), bands: s(&["B2", "B3", "B4", "B8"]),
+            sensor2: "s1".into(), band_order2: s(&["VV", "VH"]), bands2: s(&["VV", "VH"]), s1_db2: true, fuse_dir: "s1".into(),
+            image_size2: vec![16, 16], classes: s(&["flood", "land"]), ..Default::default() }),
         // multi-label (BigEarthNet-like): a labels CSV, S2 + S1 stacked into one Input (early fusion)
         ("multilabel", Dataset { source: "local".into(), task: "multilabel".into(), local_dir: format!("{dir}/own/ml"), local_on_machine: true,
             labels_csv: "labels.csv".into(), kaggle_train_dir: "s2".into(), image_size: [24, 24], sensor: "s2".into(),
@@ -68,6 +73,9 @@ fn main() {
     ];
     let mid = nnb_core::dsl::apply("net \"mid fusion ci\"\n1 input 1\n2 conv 16 3x3\n3 maxpool 2x2\n4 input 2\n5 conv 8 3x3\n6 maxpool 2x2\n\
         7 concat <- 3, 6\n8 conv 32 3x3\n9 global_pool\n10 output\n", &Default::default()).unwrap();
+    // S1 at half S2's size: only the S2 branch is pooled, so both reach the join at 16×16
+    let mid_sizes = nnb_core::dsl::apply("net \"mid fusion, own sizes ci\"\n1 input 1\n2 conv 16 3x3\n3 maxpool 2x2\n4 input 2\n5 conv 8 3x3\n\
+        6 concat <- 3, 5\n7 conv 32 3x3\n8 global_pool\n9 output\n", &Default::default()).unwrap();
     let seg = nnb_core::dsl::apply("net \"multiband seg ci\"\n1 input\n2 conv 16 3x3\n3 conv 16 3x3\n4 seg_output\n", &Default::default()).unwrap();
     // ImageNet's ResNet-18 on 4 Sentinel-2 bands: its first convolution widened from 3 to 4 channels
     {
@@ -124,10 +132,14 @@ fn main() {
     }
     for (name, ds) in cases {
         assert!(ds.problems().is_empty(), "{name}: {:?}", ds.problems());
-        let g = if ds.task == "segment" { &seg } else if name == "fusion" { &mid } else { &g };
+        let g = if ds.task == "segment" { &seg } else if name == "fusion" { &mid } else if name == "fusion_sizes" { &mid_sizes } else { &g };
         let a = analyze(g, &ds);
         assert!(a.ok, "{name}: {:?}", a.problems);
         assert_eq!(a.input, vec![ds.bands.len() + ds.bands2.len(), ds.image_size[0], ds.image_size[1]]);
+        if name == "fusion_sizes" {
+            let i2 = g.nodes.iter().find(|n| n.kind == "input" && n.params["group"] == 2).unwrap();
+            assert_eq!(a.get(&i2.id).unwrap().out, Some(vec![2, 16, 16]), "group 2 at its own size");
+        }
         let t = TrainSettings { check_only: name == "check",
             class_weights: match name { "imbalanced" => "inverse".into(), "multilabel" => "sqrt".into(), _ => String::new() },
             loss: match name { "imbalanced" | "multilabel" => "focal".into(), "segfiles" => "dice_ce".into(), "scene" => "dice".into(), "regress" => "huber".into(), _ => String::new() },

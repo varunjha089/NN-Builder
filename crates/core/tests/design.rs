@@ -749,3 +749,25 @@ fn several_outputs_multi_task() {
     let old: Dataset = serde_json::from_str("{\"source\": \"builtin\"}").unwrap();
     assert!(old.heads.is_empty() && old.label_column.is_empty());
 }
+
+#[test]
+fn inputs_at_their_own_sizes() {
+    let s = |v: &[&str]| v.iter().map(|b| b.to_string()).collect::<Vec<_>>();
+    let ds = Dataset { source: "local".into(), local_dir: "/data/s".into(), kaggle_train_dir: "s2".into(), image_size: [64, 64], sensor: "s2".into(),
+        band_order: s(&["B2", "B3", "B4", "B8"]), bands: s(&["B2", "B3", "B4", "B8"]), sensor2: "s1".into(), band_order2: s(&["VV", "VH"]),
+        bands2: s(&["VV", "VH"]), fuse_dir: "s1".into(), image_size2: vec![32, 32], classes: s(&["a", "b"]), ..Default::default() };
+    assert!(ds.problems().is_empty(), "{:?}", ds.problems());
+    let mid = nnb_core::dsl::apply("1 input 1\n2 conv 8 3x3 stride 2\n3 input 2\n4 conv 8 3x3\n5 concat <- 2, 4\n6 global_pool\n7 output\n", &Graph::default()).unwrap();
+    let a = analyze(&mid, &ds);
+    assert!(a.ok, "{:?}", a.problems);
+    let out = |l: &str| a.get(&mid.nodes.iter().find(|n| n.label == l).unwrap().id).unwrap().out.clone();
+    assert_eq!((out("1"), out("3"), out("5")), (Some(vec![4, 64, 64]), Some(vec![2, 32, 32]), Some(vec![16, 32, 32])));
+    let code = train_script(&mid, &ds, &a, &TrainSettings::default(), "sizes").unwrap();
+    assert!(code.contains("x[:, :4]") && code.contains("x[:, 4:, :32, :32]") && code.contains("\"image_size2\": [32, 32]"), "{code}");
+    // one Input for both (early fusion) cannot stack groups of different sizes
+    let early = nnb_core::dsl::apply("1 input\n2 global_pool\n3 output\n", &Graph::default()).unwrap();
+    assert!(analyze(&early, &ds).nodes.iter().any(|n| n.messages.iter().any(|m| m.contains("different sizes"))));
+    // group 2 may not be larger than group 1, and must be two sizes
+    assert!(Dataset { image_size2: vec![128, 64], ..ds.clone() }.problems().iter().any(|p| p.contains("may not be larger")));
+    assert!(Dataset { image_size2: vec![32], ..ds.clone() }.problems().iter().any(|p| p.contains("two numbers")));
+}

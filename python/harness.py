@@ -738,6 +738,12 @@ def fuse_path(path):
     raise SystemExit(f"DATA: {stem} has no file in the second band group's folder ({base2}); both groups need the same file names.")
 
 
+# the second band group at its own size (separate inputs): in the batch tensor it fills the top-left corner of its channels, the rest
+# empty (NaN: left out of the statistics, 0 after normalising); the generated forward cuts it out again
+SIZE2 = tuple(DATASET["image_size2"]) if len(GROUPS) == 2 and len(DATASET.get("image_size2") or []) == 2 else None
+C1 = len(GROUPS[0]["bands"])
+
+
 def read_groups(path, resize=True):
     """every band group of one image as float32 tensors (first group from `path`, the second from its twin file)"""
     import numpy as np
@@ -746,11 +752,11 @@ def read_groups(path, resize=True):
         p = path if k == 0 else fuse_path(path)
         a = read_patch_folder(p, g) if os.path.isdir(p) else pick_bands(read_array(p, g["order"]), g)
         t = torch.from_numpy(np.ascontiguousarray(a))
-        h, w = DATASET["image_size"]
+        h, w = SIZE2 if k == 1 and SIZE2 else DATASET["image_size"]
         if resize and tuple(t.shape[1:]) != (h, w):
             t = nn.functional.interpolate(t[None], size=(h, w), mode="bilinear", align_corners=False, antialias=True)[0]
         out.append(t)
-    if len({tuple(t.shape[1:]) for t in out}) > 1:
+    if len({tuple(t.shape[1:]) for t in out}) > 1 and not (SIZE2 and resize):
         raise SystemExit(f"DATA: {os.path.basename(path)}: the band groups have different sizes {[tuple(t.shape[1:]) for t in out]}; "
                          "export them on the same grid.")
     return out
@@ -759,7 +765,13 @@ def read_groups(path, resize=True):
 def read_bands(path, resize=True):
     """one image (both band groups when fused, stacked) as a float32 tensor (bands, H, W) with the chosen bands, in the chosen order;
     empty pixels (NaN, as Earth Engine writes masked pixels of float images) stay NaN until normalised"""
-    return torch.cat(read_groups(path, resize), 0)
+    groups = read_groups(path, resize)
+    if SIZE2 and resize:
+        h, w = DATASET["image_size"]
+        g2 = torch.full((groups[1].shape[0], h, w), float("nan"))
+        g2[:, :SIZE2[0], :SIZE2[1]] = groups[1]
+        groups[1] = g2
+    return torch.cat(groups, 0)
 
 
 def normalise(x):
@@ -802,8 +814,12 @@ def mask_classes(m, size=None):
 
 
 def flips(x, y=None):
-    """training augmentation for satellite images: flips and quarter turns (no "up"), on the image and its mask together"""
-    turn = AUG.get("rotate") and x.shape[-1] == x.shape[-2]
+    """training augmentation for satellite images: flips and quarter turns (no "up"), on the image and its mask together; with the
+    second group at its own size, on each group's block (the same flips and turns, so both still show the same place)"""
+    if SIZE2:
+        turn = AUG.get("rotate") and x.shape[-1] == x.shape[-2] and SIZE2[0] == SIZE2[1]
+    else:
+        turn = AUG.get("rotate") and x.shape[-1] == x.shape[-2]
     ops = []
     if AUG.get("hflip") and random.random() < 0.5:
         ops.append(lambda t: t.flip(-1))
@@ -812,6 +828,14 @@ def flips(x, y=None):
     if turn:
         k = random.randint(0, 3)
         ops.append(lambda t, k=k: torch.rot90(t, k, (-2, -1)))
+    if SIZE2:
+        a, b = x[:C1], x[C1:, :SIZE2[0], :SIZE2[1]]
+        for op in ops:
+            a, b = op(a), op(b)
+            y = None if y is None else op(y)
+        x = x.clone()
+        x[:C1], x[C1:, :SIZE2[0], :SIZE2[1]] = a, b
+        return x, y
     for op in ops:
         x = op(x)
         y = None if y is None else op(y)
@@ -1923,10 +1947,14 @@ def band_report(ds, sample=48):
             raws.append(ds.raw(i).numpy())
     if not raws:
         return []
-    a = np.concatenate([r.reshape(r.shape[0], -1) for r in raws], 1)
+    if SIZE2:   # the second group's bands: only their own block (the rest of the tensor is padding)
+        rows = [np.concatenate([r[b].reshape(-1) if b < C1 else r[b, :SIZE2[0], :SIZE2[1]].reshape(-1) for r in raws]) for b in range(len(BANDS))]
+    else:
+        a = np.concatenate([r.reshape(r.shape[0], -1) for r in raws], 1)
+        rows = [a[b] for b in range(len(BANDS))]
     out = []
     for b, name in enumerate(BANDS):
-        v = a[b]
+        v = rows[b]
         ok = np.isfinite(v)
         f = v[ok]
         out.append({"band": name, "min": float(f.min()) if f.size else None, "max": float(f.max()) if f.size else None,

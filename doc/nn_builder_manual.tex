@@ -743,6 +743,15 @@ Fusion works for classification, multi-label (BigEarthNet: S1 and S2 per patch) 
 second group's scene files in its folder with the same names). With two groups the test data are 10\,\% of the images (no separate test
 folder).
 
+\paragraph{Each group at its own size.} Resizing the second group to the first group's grid invents pixels (Sentinel-1 at 20\,m blown up
+to 10\,m) or throws them away. Tick \ui{its own image size} under the second band group and give its size, e.g.\ $32\times32$ next to
+Sentinel-2's $64\times64$: each group is then resized only to its own size and reaches the network as an input of its own. That needs
+mid fusion: one Input per group (\ui{Bands} 1 and 2), each with its own branch, joined where their sizes match (here after a $2\times2$
+pool or a stride 2 on the Sentinel-2 branch); an Input for all bands is refused, as the groups cannot be stacked. The second group may
+not be larger than the first (make the sharper sensor group 1), and scenes keep one grid. Flips and quarter turns are applied to both
+groups alike, and the band statistics are measured on each group's own pixels. (Inside, the second group fills the top-left corner of
+its channels in the batch tensor and the generated code cuts it out: the Code tab shows \texttt{x[:, 4:, :32, :32]}.)
+
 \paragraph{The export script.} Under \ui{Get Sentinel-1/2 data from Google Earth Engine} the Dataset tab writes a script that exports
 exactly what the tab expects: the ticked bands in their order, from the chosen dates, with clouds masked (Sentinel-2 SR: the scene
 classification band; with B10: the top-of-atmosphere collection and its QA60 band) or the median of Sentinel-1 IW scenes with VV and VH.

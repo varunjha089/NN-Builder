@@ -235,6 +235,16 @@ def own_files(root):
     print(f"fusion: S2 4 bands + S1 2 bands (20×20 resized), mid fusion, per-band mean {[round(m, 1) for m in st['mean']]}, "
           f"test accuracy {done['test_acc']}")
 
+    # the same data with Sentinel-1 at its own size: the S1 statistics leave the padding out, the network gets 16×16 radar
+    ev = run(os.path.join(root, "fusion_sizes"), data, "fusion_sizes")
+    st = json.load(open(os.path.join(root, "fusion_sizes", "band_stats.json")))
+    assert all(-25 < m < -5 for m in st["mean"][4:]), f"the padding must not count in the S1 statistics: {st}"
+    assert next(e for e in ev if e["event"] == "check")["batch"][1:] == [6, 32, 32]
+    assert "x[:, 4:, :16, :16]" in open(os.path.join(root, "fusion_sizes", "train.py")).read()
+    done = next(e for e in ev if e["event"] == "done")
+    assert done["test_acc"] >= 0.9, f"fusion at own sizes: the radar input must reach the network: {done}"
+    print(f"fusion_sizes: S2 4 bands at 32×32 + S1 2 bands at 16×16 (separate inputs), test accuracy {done['test_acc']}")
+
     make_multilabel(os.path.join(root, "own", "ml"))
     ev = run(os.path.join(root, "multilabel"), data, "multilabel")
     assert any(e["event"] == "warning" and "not in the dataset" in e.get("message", "") for e in ev), "the missing row is reported"

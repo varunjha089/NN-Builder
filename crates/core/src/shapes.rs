@@ -251,10 +251,12 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
         let mut r = NodeResult { id: id.to_string(), kind: node.kind.clone(), title: model::title(&node.kind).into(), status: "ok".into(), ..Default::default() };
         let blocked = srcs.iter().any(|s| results.get(s).map(|x| x.out.is_none()).unwrap_or(true));
         if node.kind == "input" {
-            match ds.group_channels(group_of(node)) {
-                Some(c) if !input_shape.is_empty() => {
-                    let mut shp = input_shape.clone();
-                    shp[0] = c;
+            match ds.group_shape(group_of(node)) {
+                Some(_) if group_of(node) == 0 && ds.separate_inputs() => {
+                    err(&mut r, "The band groups have different sizes (Dataset tab: the second group's own size), so they cannot be stacked: \
+                        give this Input band group 1 and add an Input for band group 2, each with its own branch.");
+                }
+                Some(shp) if !input_shape.is_empty() => {
                     r.out = Some(shp);
                 }
                 _ if group_of(node) == 0 => r.out = Some(input_shape.clone()),
