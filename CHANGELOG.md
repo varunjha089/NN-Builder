@@ -3,6 +3,34 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 06_11_26_22_06_13
+
+**TEST_APP.md: the window, GPU and real-data tests done on 6 November (15 Kaggle runs), with the results log and the bugs they found** (`4dbed3b`)
+
+## 06_11_26_22_05_26
+
+**Results: detection runs no longer show the classification sample section under their box pictures** (`92449c4`)
+
+## 06_11_26_21_20_19
+
+**Several GPUs: rank 0 closes the process group and the parent ends workers a minute after rank 0 (a run on Kaggle's T4 x2 trained in 28 s, then never exited); P2P stays on (it was not the cause)** (`2315eaf`)
+
+## 06_11_26_21_13_57
+
+**Several GPUs: NCCL peer-to-peer off by default (the first broadcast hung on Kaggle's T4 x2), 1-hour worker timeout; docs: Kaggle can give two T4s** (`e1457cf`)
+
+## 06_11_26_21_04_05
+
+**Kaggle poll errors: a plain note that is cleared when Kaggle answers again (a moment without network left an error on a finished run)** (`7a9e3a2`)
+
+## 06_11_26_20_48_28
+
+**Design: block summaries show sinusoidal / no positions and LoRA ranks** (`3410297`)
+
+## 06_11_26_20_39_48
+
+**ImageNet weights with LoRA: the adapters do not count against the 80 % match (ViT-B/16 with LoRA refused to load); CI checks it** (`a881031`)
+
 ## 06_11_26_20_13_57
 
 **Docs: manual overview of everything it builds, Results per task, troubleshooting; README feature list; TEST_APP.md checklist for testing by hand** (`adb7eaa`)
