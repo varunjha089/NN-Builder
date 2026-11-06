@@ -270,7 +270,7 @@ def loss_math():
     torch.manual_seed(0)
 
     def env(task, loss, gamma=2.0, w=None):
-        ns = {"torch": torch, "nn": nn, "MULTILABEL": task == "multilabel", "SEG": task == "segment", "REGRESS": False, "LOSS": loss, "GAMMA": gamma,
+        ns = {"torch": torch, "nn": nn, "MULTILABEL": task == "multilabel", "SEG": task == "segment", "REGRESS": False, "MULTITASK": False, "HEADS": [], "LOSS": loss, "GAMMA": gamma,
               "LOSS_WEIGHT": w}
         exec(part, ns)
         return ns["loss_of"]
@@ -297,7 +297,7 @@ def loss_math():
     assert torch.allclose(env("multilabel", "focal", 0.0)(ml, t), F.binary_cross_entropy_with_logits(ml, t.float()), atol=1e-6)
     assert env("multilabel", "dice")(t.float() * 100 - 50, t) < 1e-2
     assert env("segment", "dice", w=w)(seg, m) != env("segment", "dice")(seg, m), "class weights reach Dice"
-    reg = {"torch": torch, "nn": nn, "MULTILABEL": False, "SEG": False, "REGRESS": True, "LOSS_WEIGHT": None, "GAMMA": 2.0}
+    reg = {"torch": torch, "nn": nn, "MULTILABEL": False, "SEG": False, "REGRESS": True, "MULTITASK": False, "HEADS": [], "LOSS_WEIGHT": None, "GAMMA": 2.0}
     p, t = torch.randn(10, 2), torch.randn(10, 2) * 5 + 20
     for loss, ref in (("", F.mse_loss), ("mse", F.mse_loss), ("l1", F.l1_loss), ("huber", F.huber_loss)):
         ns = dict(reg, LOSS=loss)
