@@ -118,8 +118,9 @@ export const api = {
   localCsv: (dir: string, csv: string) => invoke<{ columns: string[]; rows: number; file_column: string; label_column: string | null; classes: string[]; counts: number[] }>("local_csv", { dir, csv }),
   pickFolder: (title: string) => invoke<string | null>("pick_folder", { title }),
   targets: () => invoke<{ name: string; kind: string; prepared?: boolean }[]>("targets"),
-  runStart: (target: string, gpu: string, copyTokens: boolean) => invoke<void>("run_start", { target, gpu, copyTokens }),
-  runs: () => invoke<{ id: string; target: string; kind: string; created: string; dataset: string; status: string; test_acc: number | null; seed: number; group: string }[]>("runs_list"),
+  runStart: (target: string, gpu: string, copyTokens: boolean, check = false) => invoke<void>("run_start", { target, gpu, copyTokens, check }),
+  runs: () => invoke<{ id: string; target: string; kind: string; created: string; dataset: string; status: string; test_acc: number | null; seed: number; group: string;
+    check?: boolean; warnings?: number | null }[]>("runs_list"),
   runStatus: (id: string, since: number) => invoke<RunStatus>("run_status", { id, since }),
   runStop: (id: string) => invoke<string>("run_stop", { id }),
   runFetch: (id: string) => invoke<void>("run_fetch", { id }),

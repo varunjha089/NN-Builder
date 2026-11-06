@@ -248,6 +248,24 @@ def own_files(root):
     print(f"segfiles: images + masks, pixel accuracy {done['test_acc']}, mean IoU {done['miou']}")
 
 
+def check_data(root):
+    """Check data: no training, a report that sees the linear Sentinel-1 values and counts the classes, and the one-batch check"""
+    root = os.path.abspath(root)
+    ev = run(os.path.join(root, "check"), os.path.join(root, "data"), "check")
+    assert not any(e["event"] == "epoch" for e in ev), "a data check must not train"
+    rep = next(e for e in ev if e["event"] == "data_report")
+    assert rep["counts"] == [108, 108] or sum(rep["counts"]) == rep["sizes"]["train"], rep
+    assert any("linear backscatter" in w for w in rep["warnings"]), rep["warnings"]
+    assert [b["band"] for b in rep["bands"]] == ["VV", "VH"] and rep["bands"][0]["min"] >= 0, rep["bands"]
+    assert any(e["event"] == "check" for e in ev), "the one-batch check ran"
+    done = next(e for e in ev if e["event"] == "done")
+    assert done["check_only"] and done["warnings"] >= 1, done
+    res = json.load(open(os.path.join(root, "check", "results.json")))
+    assert res["check_only"] and len(res["samples"]) == 12 and len(res["samples"][0]["image"]) == 3, res.keys()
+    print(f"check: no training; counts {rep['counts']}, warnings {rep['warnings']}")
+
+
 if __name__ == "__main__":
     main(sys.argv[1])
     own_files(sys.argv[1])
+    check_data(sys.argv[1])

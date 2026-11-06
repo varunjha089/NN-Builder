@@ -71,6 +71,9 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
 
   const kind = targets.find((t) => t.name === target)?.kind ?? "kaggle";
   const set = (p: Partial<TrainSettings>) => setTrain({ ...train, ...p });
+  const checkData = async () => {
+    try { await api.runStart(target, gpu, copyTokens, true); startJob(); toast(`Checking the data on ${target} …`); } catch (e) { toast(errText(e)); }
+  };
   const start = async () => {
     try {
       if (seeds > 1) await api.runStartSeeds(target, gpu, copyTokens, seeds); else await api.runStart(target, gpu, copyTokens);
@@ -207,6 +210,8 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
           <option value={5}>5 (seeds {train.seed}–{train.seed + 4})</option></select></label>
         {seeds > 1 && kind !== "kaggle" && <span className="muted small">The runs start together on the machine and share its GPU.</span>}
         {seeds > 1 && kind === "kaggle" && <span className="muted small">One Kaggle notebook per seed; Kaggle may queue some of them.</span>}
+        <button onClick={checkData} disabled={!ok} title="Load the data on the machine, report it (images per class, bands, empty pixels, what looks wrong)
+and check one batch through the network, without training: a few minutes instead of a wasted GPU hour">Check data on {target}</button>
         {!ok && <span className="st-error">Fix the design and the dataset first.</span>}</p>
 
       {status && <div className="card">
@@ -280,8 +285,10 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
         {runs.map((r) => <tr key={r.id} className={`click ${r.id === runId ? "sel" : ""}`} onClick={() => openRun(r.id)}>
           <td onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={picked.includes(r.id)}
             onChange={(e) => setPicked(e.target.checked ? [...picked, r.id] : picked.filter((x) => x !== r.id))} /></td>
-          <td>{r.id}{r.group && <span className="muted small" title="started together with other seeds"> · group</span>}</td><td>{r.target}</td>
-          <td>{r.dataset}</td><td className="num">{r.seed}</td><td>{r.status}</td><td className="num">{r.test_acc != null ? `${(r.test_acc * 100).toFixed(2)}%` : ""}</td></tr>)}
+          <td>{r.id}{r.group && <span className="muted small" title="started together with other seeds"> · group</span>}{r.check && <span className="muted small"> · data check</span>}</td><td>{r.target}</td>
+          <td>{r.dataset}</td><td className="num">{r.seed}</td><td>{r.status}</td><td className="num">{r.check
+            ? (r.warnings == null ? "" : r.warnings ? <span className="st-warn">{r.warnings} to look at</span> : <span className="st-ok">looks right</span>)
+            : r.test_acc != null ? `${(r.test_acc * 100).toFixed(2)}%` : ""}</td></tr>)}
         {!runs.length && <tr><td className="muted">No runs yet.</td></tr>}
       </tbody></table>
       {runs.some((r) => r.group) && <p className="row small"><span className="muted">Select a group of seeds:</span>

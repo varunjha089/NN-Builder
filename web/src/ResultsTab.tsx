@@ -15,6 +15,7 @@ export function ResultsTab({ runId }: { runId: string | null }) {
   if (err || !r) return <div className="page"><p className="muted">Run {runId}: {err || "loading…"}</p></div>;
   const classes: string[] = r.classes ?? [];
   const conf: number[][] = r.confusion ?? [];
+  if (r.check_only) return <DataReport runId={runId} r={r} />;
   const maxv = Math.max(1, ...conf.flat());
   return (
     <div className="page">
@@ -138,4 +139,38 @@ function CamImg({ img, cam, size }: { img: number[][][]; cam: number[][]; size: 
   }, [img, cam]);
   const H = img[0]?.length ?? 1;
   return <canvas ref={ref} className="pix" style={{ width: size, height: size * (H / (img[0]?.[0]?.length ?? 1)) }} />;
+}
+
+/** a Check data run: what the run would train on, and what looks wrong */
+function DataReport({ runId, r }: { runId: string; r: any }) {
+  const rep = r.data_report ?? {};
+  const classes: string[] = r.classes ?? [];
+  const counts: number[] = rep.counts ?? [];
+  const most = Math.max(1, ...counts);
+  const num = (v: number | null) => (v == null ? "–" : Math.abs(v) >= 1000 || (v !== 0 && Math.abs(v) < 0.01) ? v.toExponential(2) : v.toFixed(2));
+  return <div className="page">
+    <h2>Data check {runId}</h2>
+    <p className="muted">The data as the run on the training machine loads it, before any training. One batch went through the network and every
+      layer had the shape the design shows.</p>
+    {rep.warnings?.length ? <>{rep.warnings.map((w: string) => <div key={w} className="msg warn">{w}</div>)}</>
+      : <div className="msg info">Nothing looks wrong.</div>}
+    <div className="row cards">
+      {Object.entries(rep.sizes ?? {}).map(([k, v]) => <div key={k} className="card"><div className="muted">{k}</div><div className="big">{Number(v).toLocaleString()}</div></div>)}
+    </div>
+    <h3>Training {rep.count_unit ?? "images"} per class{rep.counts_exact === false ? " (from a sample)" : ""}</h3>
+    <table className="grid"><tbody>
+      {counts.map((n, i) => <tr key={i}><td>{classes[i]}</td><td className="num">{n.toLocaleString()}</td>
+        <td><span style={{ display: "inline-block", height: 8, width: `${(160 * n) / most}px`, background: n ? "var(--accent)" : "var(--err, #c53030)" }} /></td></tr>)}
+    </tbody></table>
+    {rep.bands?.length > 0 && <><h3>Bands (raw values in the files, from a sample of training images)</h3>
+      <table className="grid"><tbody>
+        <tr><th>Band</th><th className="num">min</th><th className="num">max</th><th className="num">mean</th><th className="num">spread</th><th className="num">empty</th><th className="num">zero</th></tr>
+        {rep.bands.map((b: any) => <tr key={b.band}><td>{b.band}</td><td className="num">{num(b.min)}</td><td className="num">{num(b.max)}</td><td className="num">{num(b.mean)}</td>
+          <td className="num">{num(b.std)}</td><td className="num">{(b.empty * 100).toFixed(1)}%</td><td className="num">{(b.zero * 100).toFixed(1)}%</td></tr>)}
+      </tbody></table></>}
+    {r.samples?.length > 0 && <><h3>Test images as the network gets them{r.data_report?.bands?.length ? " (shown as composites)" : ""}</h3><div className="thumbs">
+      {r.samples.map((s: any, i: number) => <div key={i} className="thumb"><Img img={s.image} scale={Math.max(1, Math.round(64 / s.image[0].length))} />
+        <div className="small">{Array.isArray(s.label) ? s.label.map((k: number) => classes[k]).join(", ") || "no class" : s.label == null ? "" : classes[s.label]}</div></div>)}
+    </div></>}
+  </div>;
 }

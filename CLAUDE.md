@@ -93,6 +93,11 @@ crates/core/src/
                            per-block search: 3,507 blocks analysed in ~21 ms); Design.tsx reuses unchanged React Flow nodes. Limits:
                            shapes::limits() per kind (filters 65,536, heads 512); a value outside is an error, never clamped silently.
                            Help menu: Documentation opens the bundled manual PDF (tauri.conf.json bundle.resources).
+                           Check data: runs::start_check (id "<time>-check", RunInfo.check, epochs 0) sets TrainSettings.check_only
+                           for that run only (never saved); harness check_only(): data_report (sizes, class_counts via labels_of or a
+                           sample, band_report of raw values, warnings), one_batch_check, 12 samples, results.json check_only, "done"
+                           with warnings; Train tab "Check data on …", Runs "data check", ResultsTab DataReport. CI: ci_multiband_check
+                           check_data (S1 left linear must be flagged, no epoch events).
                            Kaggle runs: data in /tmp/nnb_data (not /kaggle/working, the notebook output), checkpoint removed at the
                            end, kaggle_output deleted after metrics/results/model/log are copied; the run card shows the last check.
   dataset.rs               Multispectral / radar: bands, band_order, sensor (s2 | s1 | other), s1_db; SENTINEL2_BANDS (EuroSAT order),

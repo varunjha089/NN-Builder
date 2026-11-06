@@ -1172,6 +1172,129 @@ def export_model(model, example):
 
 
 # ---------------------------------------------------------------- training
+# ---------------------------------------------------------------- check data (no training)
+def labels_of(ds):
+    """the labels of a dataset without reading its images, where the dataset keeps them (else None)"""
+    from torch.utils.data import Subset
+    if isinstance(ds, Subset):
+        inner = labels_of(ds.dataset)
+        return None if inner is None else [inner[i] for i in ds.indices]
+    if isinstance(ds, BandFolder):
+        return [l for _, l in ds.files]
+    if isinstance(ds, LabelFiles):
+        return [y for _, y in ds.items]
+    if isinstance(ds, HFImages):
+        return list(ds.ds[DATASET["hf_label_col"]])
+    for attr in ("targets", "labels"):
+        if isinstance(getattr(ds, attr, None), (list, tuple)) or torch.is_tensor(getattr(ds, attr, None)):
+            return [int(v) for v in getattr(ds, attr)]
+    return None
+
+
+def class_counts(ds, sample=64):
+    """images per class (multi-label: images having each class; segmentation: pixels per class in up to `sample` items)"""
+    k = len(CLASSES)
+    if SEG:
+        counts = torch.zeros(k, dtype=torch.long)
+        for i in random.Random(0).sample(range(len(ds)), min(sample, len(ds))):
+            y = ds[i][1]
+            counts += torch.bincount(y[y >= 0].flatten(), minlength=k)[:k]
+        return [int(c) for c in counts], True
+    labels = labels_of(ds)
+    exact = labels is not None
+    if labels is None:
+        labels = [ds[i][1] for i in random.Random(0).sample(range(len(ds)), min(500, len(ds)))]
+    counts = [0] * k
+    for y in labels:
+        if MULTILABEL:
+            for c in range(k):
+                counts[c] += int(float(y[c]) > 0.5)
+        elif isinstance(y, str):
+            counts[CLASSES.index(y)] += 1
+        elif 0 <= int(y) < k:
+            counts[int(y)] += 1
+    return counts, exact
+
+
+def band_report(ds, sample=48):
+    """per band of the raw files (before normalising): range, mean, spread and empty pixels, from up to `sample` training images"""
+    import numpy as np
+    files = [p for p, _ in ds.files] if isinstance(ds, BandFolder) else [p for p, _ in ds.items] if isinstance(ds, LabelFiles) else \
+        [p for p, _ in ds.pairs] if isinstance(ds, BandPairs) else None
+    raws = []
+    if files is not None:
+        for p in random.Random(1).sample(files, min(sample, len(files))):
+            raws.append(read_bands(p).numpy())
+    elif isinstance(ds, SceneTiles):
+        for i in random.Random(1).sample(range(len(ds)), min(sample, len(ds))):
+            raws.append(ds.raw(i).numpy())
+    if not raws:
+        return []
+    a = np.concatenate([r.reshape(r.shape[0], -1) for r in raws], 1)
+    out = []
+    for b, name in enumerate(BANDS):
+        v = a[b]
+        ok = np.isfinite(v)
+        f = v[ok]
+        out.append({"band": name, "min": float(f.min()) if f.size else None, "max": float(f.max()) if f.size else None,
+                    "mean": float(f.mean()) if f.size else None, "std": float(f.std()) if f.size else None,
+                    "empty": round(float(1 - ok.mean()), 4), "zero": round(float((f == 0).mean()) if f.size else 0.0, 4)})
+    return out
+
+
+def data_report(train, val, test):
+    """what the run would train on, and what looks wrong"""
+    from torch.utils.data import Subset
+    base = train.dataset if isinstance(train, Subset) else train
+    counts, exact = class_counts(train)
+    rep = {"sizes": {"train": len(train), "validation": len(val) if val is not None else 0, "test": len(test)},
+           "counts": counts, "counts_exact": exact, "count_unit": "pixels (sampled)" if SEG else "images", "bands": [], "warnings": []}
+    w = rep["warnings"]
+    if MULTI:
+        rep["bands"] = band_report(base)
+        groups = [(g, n) for g in GROUPS for n in g["bands"]]
+        for (g, _), b in zip(groups, rep["bands"]):
+            if b["min"] is None or b["empty"] >= 0.999:
+                w.append(f"band {b['band']} is empty in every image checked")
+            elif b["std"] is not None and b["std"] < 1e-6:
+                w.append(f"band {b['band']} has the same value everywhere ({b['min']:g}): the band order in the Dataset tab may be wrong")
+            elif b["empty"] > 0.2:
+                w.append(f"band {b['band']}: {b['empty']:.0%} of the pixels are empty (NaN)")
+            if g["sensor"] == "s1" and b["min"] is not None:
+                if b["min"] >= 0 and not g["db"]:
+                    w.append(f"{b['band']} looks like linear backscatter (no negative values): tick 'convert to decibels'")
+            if g["sensor"] == "s2" and b["max"] is not None and b["max"] > 20000:
+                w.append(f"{b['band']} reaches {b['max']:.0f}: Sentinel-2 reflectance is usually 0-10000; check the band order or scaling")
+    present = [c for c in counts if c > 0]
+    missing = [CLASSES[i] for i, c in enumerate(counts) if c == 0]
+    if missing:
+        w.append(f"no {'pixels' if SEG else 'images'} of {', '.join(missing[:6])}{' …' if len(missing) > 6 else ''} in the training data checked")
+    if present and max(present) > 3 * min(present):
+        w.append(f"unbalanced: the largest class has {max(present) / min(present):.1f}× the {rep['count_unit']} of the smallest")
+    if len(train) < 10 * len(CLASSES):
+        w.append(f"only {len(train)} training images for {len(CLASSES)} classes")
+    return rep
+
+
+def check_only(model, train, val, test, first_batch, device):
+    """Check data: load the data, report it, run the one-batch shape check, show a few images; no training"""
+    emit("info", message="checking the data only (no training)")
+    rep = data_report(train, val, test)
+    emit("data_report", **rep)
+    one_batch_check(model, first_batch, device)
+    res = {"task": TASK, "check_only": True, "classes": CLASSES, "data_report": rep, "samples": []}
+    if MULTI or not SEG:
+        stats_m, stats_s = stats() or (None, None)
+        for i in random.Random(2).sample(range(len(test)), min(12, len(test))):
+            x, y = test[i]
+            img = composite(x) if MULTI else (x * torch.tensor(stats_s).view(-1, 1, 1) + torch.tensor(stats_m).view(-1, 1, 1)).clamp(0, 1)
+            label = [c for c in range(len(CLASSES)) if float(y[c]) > 0.5] if MULTILABEL else None if SEG else int(y)
+            res["samples"].append({"image": small(img, 64), "label": label})
+    with open(os.path.join(OUT, "results.json"), "w", encoding="utf-8") as f:
+        json.dump(res, f)
+    emit("done", check_only=True, warnings=len(rep["warnings"]))
+
+
 def main():
     from torch.utils.data import DataLoader
     global CKPT_NOW
@@ -1332,6 +1455,9 @@ def main():
                  "label_smoothing": smoothing, "grad_clip": clip}, amp=amp, augmentation={k: v for k, v in AUG.items() if v},
          precision=precision, channels_last=channels_last, workers=workers, save_memory=bool(getattr(model, "save_memory", False)),
          auto_split=auto_split)
+    if cfg.get("check_only"):
+        check_only(model, train, val, test, loader(1), device)
+        return
     if pos["epoch"] == 0 and pos["step"] == 0:
         one_batch_check(model, loader(1), device)
     every = max(1, steps // 20)

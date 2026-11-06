@@ -883,6 +883,23 @@ Above the Train button the tab says what is still missing for the chosen target 
 GPU memory the training needs (16 bytes per parameter plus the layer outputs at the chosen batch size), compared with the target's GPU
 (Kaggle and EC2 g4dn: 16 GB; an SSH machine: as \ui{Prepare} found it). It warns when the design is likely not to fit.
 
+\subsection{Check data before training}
+\label{sec:check-data}
+\ui{Check data on \ldots}, next to the Train button, starts a short run on the same target that loads the data exactly as training would,
+reports it, and sends one batch through the network, but does not train: minutes instead of a GPU hour lost to a wrong band order or a
+bad labels file. The run is listed as a \emph{data check} (``looks right'', or how many things to look at), and the Results tab shows:
+\begin{itemize}[nosep]
+  \item the number of training, validation and test images, and the training images per class (pixels per class for segmentation,
+        counted on a sample), with a bar per class;
+  \item for satellite images, every band's raw values in the files (minimum, maximum, mean, spread, empty and zero pixels) from a
+        sample of training images;
+  \item twelve test images as the network receives them (composites for satellite images) with their labels;
+  \item warnings: a band that is empty or constant (often a wrong band order), many empty pixels, Sentinel-1 in linear units without
+        \ui{convert to decibels}, Sentinel-2 values far above 10\,000, a class without any images, strongly unbalanced classes, very few
+        images, rows of a labels CSV without a file, and anything the data loading itself reported.
+\end{itemize}
+Nothing is saved in the project's settings: the next \ui{Train on \ldots} trains as usual.
+
 \subsection{Following a run}
 \ui{Train on \ldots} starts a background task whose log appears at the bottom right. The run card then shows the state (starting,
 running with the epoch, interrupted, done, stopped, crashed, failed), the GPU, the training set size, the loss curves (per batch, training

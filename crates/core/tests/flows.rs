@@ -193,6 +193,22 @@ fn remote_and_kaggle_runs() {
     assert!(std::fs::read_to_string(b.join("hosts.log")).unwrap().contains("student@gpu01.example.edu"));
     assert!(runs::listing(&pr)[0]["test_acc"].as_f64() == Some(0.9));
 
+    // ---- Check data on the same machine: a run marked as a check, whose train.py only loads and reports the data
+    std::thread::sleep(Duration::from_millis(1100));
+    let id = runs::start_check(&pr, "college", "", &Creds::default(), false, &log).unwrap_or_else(|e| panic!("{e}\n{:?}", lines.lock().unwrap()));
+    assert!(id.ends_with("-check"), "{id}");
+    let d = pr.runs_dir().join(&id);
+    assert!(runs::info(&d).check && runs::info(&d).epochs == 0);
+    assert!(std::fs::read_to_string(d.join("train.py")).unwrap().contains("\"check_only\": True"));
+    assert!(!std::fs::read_to_string(pr.dir.join("train.json")).unwrap_or_default().contains("check_only"), "never saved in the project");
+    for _ in 0..40 {
+        std::thread::sleep(Duration::from_millis(1100));
+        if !["starting", "running"].contains(&runs::status(&pr, &id, 0, &Creds::default()).unwrap().state.as_str()) {
+            break;
+        }
+    }
+    assert_eq!(runs::listing(&pr).iter().find(|r| r["id"] == id.as_str()).unwrap()["check"], true);
+
     // ---- the same machine launching with tmux (when tmux is installed here): the run path must be quoted right
     if std::process::Command::new("tmux").arg("-V").output().map(|o| o.status.success()).unwrap_or(false) {
         let mut m2 = m.clone();

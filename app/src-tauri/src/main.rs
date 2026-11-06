@@ -697,14 +697,15 @@ async fn targets() -> R<Value> {
 }
 
 #[tauri::command]
-async fn run_start(st: State<'_, App>, target: String, gpu: String, copy_tokens: bool) -> R<()> {
+async fn run_start(st: State<'_, App>, target: String, gpu: String, copy_tokens: bool, check: Option<bool>) -> R<()> {
     let p = project(&st)?;
     if p.is_draft() {
         return Err("Save the demo first (File → Save Project… ⌘S): runs are kept with a saved project.".into());
     }
     runs::preflight(&target, &creds()).map_err(e)?;
-    let ok = st.jobs.start(&format!("Train on {target}"), move |log: Log| {
-        let id = runs::start(&p, &target, gpu.trim(), &creds(), copy_tokens, &log).map_err(e)?;
+    let check = check.unwrap_or(false);
+    let ok = st.jobs.start(&format!("{} on {target}", if check { "Check data" } else { "Train" }), move |log: Log| {
+        let id = if check { runs::start_check(&p, &target, gpu.trim(), &creds(), copy_tokens, &log) } else { runs::start(&p, &target, gpu.trim(), &creds(), copy_tokens, &log) }.map_err(e)?;
         Ok(format!("RUN {id}"))
     });
     if ok { Ok(()) } else { Err("Another task is running.".into()) }

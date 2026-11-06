@@ -88,6 +88,9 @@ pub struct RunInfo {
     /// Stop was pressed while the machine did not answer: stop it (and do not resume it) as soon as it answers
     #[serde(default)]
     pub cancel: bool,
+    /// a Check data run (data report and one-batch check, no training)
+    #[serde(default)]
+    pub check: bool,
     /// the random seed of this run, and the group of runs started together with different seeds ("" = a single run)
     #[serde(default)]
     pub seed: u64,
@@ -165,6 +168,15 @@ pub fn start(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_tokens: 
     start_seeded(pr, target, gpu, creds, copy_tokens, log, None, "")
 }
 
+/// Check data: a short run on the target that loads the data, reports it (files per class, bands, empty pixels, what looks wrong) and
+/// runs the one-batch shape check, without training
+pub fn start_check(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_tokens: bool, log: &Log) -> Result<String> {
+    start_seeded(pr, target, gpu, creds, copy_tokens, log, None, CHECK)
+}
+
+/// the group name that marks a Check data run inside start_seeded
+const CHECK: &str = "\u{0}check";
+
 /// start runs of the same design and settings with seeds base, base+1, ... (one group), to report a mean and its spread; returns the ids
 pub fn start_seeds(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_tokens: bool, count: usize, log: &Log) -> Result<Vec<String>> {
     let base = pr.train().seed;
@@ -183,6 +195,9 @@ fn start_seeded(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_token
     if let Some(s) = seed {
         t.seed = s;
     }
+    let check = group == CHECK;
+    let group = if check { "" } else { group };
+    t.check_only = check;
     let a = shapes::analyze(&g, &ds);
     if !a.ok {
         bail!("The design has problems (red blocks or the Dataset tab). Fix them before training.");
@@ -195,11 +210,17 @@ fn start_seeded(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_token
     if !group.is_empty() {
         id = format!("{id}-s{}", t.seed);
     }
+    if check {
+        id = format!("{id}-check");
+    }
     let d = pr.runs_dir().join(&id);
     if d.exists() {
         bail!("A run was started this second; try again.");
     }
     let title = format!("nnb {} {}", pr.name(), id);
+    if check {
+        log("Check data: the run only loads the data, reports it and checks one batch (no training).".into());
+    }
     let script = codegen::train_script(&g, &ds, &a, &t, &title)?;
     std::fs::create_dir_all(&d)?;
     std::fs::write(d.join("train.py"), &script)?;
@@ -213,7 +234,7 @@ fn start_seeded(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_token
         _ => format!("kaggle:{}", ds.kaggle_slug),
     };
     let mut info = RunInfo { id: id.clone(), target: target.into(), created: chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(), status: "starting".into(),
-        epochs: t.epochs, dataset: ds_label, seed: t.seed, group: group.into(), ..Default::default() };
+        epochs: if check { 0 } else { t.epochs }, dataset: ds_label, seed: t.seed, group: group.into(), check, ..Default::default() };
     if target == KAGGLE {
         info.kind = "kaggle".into();
         save(&d, &info)?;
@@ -1021,9 +1042,12 @@ pub fn listing(pr: &Project) -> Vec<Value> {
     dirs.reverse();
     for d in dirs {
         let i = info(&d);
-        let acc = read_events(&d, 0).iter().rev().find_map(|e| e["test_acc"].as_f64());
+        let ev = read_events(&d, 0);
+        let acc = ev.iter().rev().find_map(|e| e["test_acc"].as_f64());
+        // Check data: how many things looked wrong
+        let warnings = ev.iter().rev().find(|e| e["event"] == "done").and_then(|e| e["warnings"].as_u64());
         out.push(serde_json::json!({"id": i.id, "target": i.target, "kind": i.kind, "created": i.created, "dataset": i.dataset, "status": i.status,
-            "test_acc": acc, "seed": i.seed, "group": i.group}));
+            "test_acc": acc, "seed": i.seed, "group": i.group, "check": i.check, "warnings": warnings}));
     }
     out
 }
