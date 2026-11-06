@@ -308,6 +308,44 @@ def loss_math():
     print("losses: focal (γ 0 = CE / BCE, weights), Dice (perfect = 0), Dice + CE, unlabelled pixels left out")
 
 
+def make_multitask(root):
+    """two class folders of two-band images; labels.csv adds biomass = 50 + 20·mean(b1), height = 2 + 4·mean(b2) and wet = whether
+    mean(b2) > 0; one row names an unknown wet class (left out)"""
+    rng = np.random.default_rng(14)
+    rows = ["file,biomass,height,wet"]
+    for cls in ("forest", "water"):
+        os.makedirs(os.path.join(root, cls), exist_ok=True)
+        for i in range(200):
+            level = rng.uniform(-1, 1, size=2)
+            a = (rng.normal(0, 0.3, size=(2, 16, 16)) + level[:, None, None]).astype(np.float32)
+            a[0] += 1.5 if cls == "forest" else -1.5
+            np.save(os.path.join(root, cls, f"{i}.npy"), a)
+            m = a.reshape(2, -1).mean(1)
+            rows.append(f"{cls}/{i},{50 + 20 * m[0]:.4f},{2 + 4 * m[1]:.4f},{'wet' if m[1] > 0 else 'dry'}")
+    rows.append("forest/0,1,1,flooded")
+    open(os.path.join(root, "labels.csv"), "w").write("\n".join(rows) + "\n")
+
+
+def multitask(root):
+    """three outputs learnt at once: the main class, two numbers (R²) and a second class; each scored on its own"""
+    root = os.path.abspath(root)
+    make_multitask(os.path.join(root, "own", "mt"))
+    ev = run(os.path.join(root, "multitask"), os.path.join(root, "data"), "multitask")
+    assert any(e["event"] == "warning" and "unknown" in e["message"] for e in ev), "the row with an unknown class is reported"
+    tg = next(e for e in ev if e["event"] == "targets" and e.get("head") == "biomass")
+    assert tg["targets"] == ["biomass", "height"] and 30 < tg["mean"][0] < 70, tg
+    ep = [e for e in ev if e["event"] == "epoch"]
+    assert all([h["name"] for h in e["heads"]] == ["biomass", "wet"] for e in ep), ep[-1]
+    done = next(e for e in ev if e["event"] == "done")
+    res = json.load(open(os.path.join(root, "multitask", "results.json")))
+    heads = {h["name"]: h for h in res["heads"]}
+    assert done["test_acc"] >= 0.9, done
+    assert heads["biomass"]["metric"] == "R²" and heads["biomass"]["score"] >= 0.7 and len(heads["biomass"]["per_target"]) == 2, heads["biomass"]
+    assert heads["wet"]["metric"] == "accuracy" and heads["wet"]["score"] >= 0.85, heads["wet"]
+    assert [h["name"] for h in done["heads"]] == ["biomass", "wet"]
+    print(f"multitask: class accuracy {done['test_acc']}, biomass/height R² {heads['biomass']['score']:.3f}, wet accuracy {heads['wet']['score']:.3f}")
+
+
 def custom_blocks(root):
     """the design's own PyTorch classes train like any block, the custom loss is used, and a wrong '# out:' line stops the run at the
     one-batch check with a message naming the block"""
@@ -513,6 +551,7 @@ if __name__ == "__main__":
     imbalanced(sys.argv[1])
     regress(sys.argv[1])
     custom_blocks(sys.argv[1])
+    multitask(sys.argv[1])
     cloud(sys.argv[1])
     ben(sys.argv[1])
     pretrained_ms(sys.argv[1])

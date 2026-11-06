@@ -351,10 +351,21 @@ LABEL token_pool [cls | mean]
 
 \subsubsection*{\texttt{output}, \texttt{seg\_output}}
 \begin{Verbatim}[fontsize=\small]
-LABEL output | seg_output
+LABEL output [HEAD] | seg_output
 \end{Verbatim}
-No values: \texttt{output} gives one score per class of the dataset (classification); \texttt{seg\_output} one score per class for every
-pixel (segmentation; it must be at the size of the masks). Exactly one, as the last block.
+\texttt{output} gives one score per class of the dataset (classification); \texttt{seg\_output} one score per class for every pixel
+(segmentation; it must be at the size of the masks). A network has one of them, at the end of its path, unless the Dataset tab lists
+\emph{extra outputs} (multi-task): then each has its own \texttt{output} with its number, \texttt{HEAD} (also \texttt{head=}; default 0,
+the main task):
+\begin{verbatim}
+1 input
+2 conv 32 3x3
+3 global_pool
+4 output                   # the main task: its classes
+5 dense 32 <- 3
+6 output 1                 # extra output 1 (e.g. biomass and height: two numbers)
+7 output 2 <- 3            # extra output 2 (e.g. dry / wet)
+\end{verbatim}
 
 \subsubsection*{\texttt{custom} --- your own PyTorch class}
 \label{sec:custom-text}

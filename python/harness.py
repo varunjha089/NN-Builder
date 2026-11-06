@@ -28,6 +28,63 @@ MULTILABEL = TASK == "multilabel"   # any number of classes per image: one sigmo
 # one number per target. The network learns the targets standardised with the training data's mean and spread (TARGET_MEAN / _STD);
 # scores (R², MAE, RMSE) are in the targets' own units
 REGRESS = TASK == "regress"
+# several outputs (multi-task): extra targets next to the main task, each with its own Output block (head 1, 2, ...). A label is then a
+# tuple (main, head 1, ...) and the network returns a tuple in the same order; everything that is not about the extra heads works on
+# the main part (main_y / main_out)
+HEADS = DATASET.get("heads") or []
+MULTITASK = bool(HEADS)
+HEAD_STATS = {}      # regression heads: k -> (mean, std) of their targets on the training data
+HEAD_SCORES = None   # the extra heads' scores of the last evaluation
+
+
+def main_y(y):
+    return y[0] if MULTITASK and isinstance(y, (tuple, list)) else y
+
+
+def main_out(o):
+    return o[0] if isinstance(o, (tuple, list)) else o
+
+
+def y_to(y, device, **kw):
+    return tuple(t.to(device, **kw) for t in y) if isinstance(y, (tuple, list)) else y.to(device, **kw)
+
+
+def y_split(y, parts):
+    return list(zip(*[t.tensor_split(parts) for t in y])) if isinstance(y, (tuple, list)) else y.tensor_split(parts)
+
+
+def y_head(row, k):
+    """head k's target from a row (a dict of the table's or the Hugging Face dataset's values)"""
+    h = HEADS[k - 1]
+    try:
+        if h["task"] == "regress":
+            return torch.tensor([float(row[c]) for c in h["columns"]], dtype=torch.float32)
+        names = {n: i for i, n in enumerate(h["classes"])}
+        if h["task"] == "classify":
+            v = row[h["columns"][0]]
+            return int(names[str(v).strip()]) if str(v).strip() in names else int(float(v))
+        t = torch.zeros(len(h["classes"]))
+        if h["columns"]:
+            v = row[h["columns"][0]]
+            ks = [names[c] if isinstance(c, str) and c in names else int(c) for c in v] if isinstance(v, (list, tuple)) else split_labels(str(v), names)
+        else:
+            ks = [i for i, c in enumerate(h["classes"]) if str(row[c]).strip() not in ("", "0", "0.0", "false", "False")]
+        for i in ks:
+            t[i] = 1.0
+        return t
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None
+
+
+def with_heads(y, row):
+    """the main label, and the extra heads' targets when the network has several outputs (a Hugging Face row)"""
+    if not MULTITASK:
+        return y
+    extra = [y_head(row, k) for k in range(1, len(HEADS) + 1)]
+    if any(e is None for e in extra):
+        bad = HEADS[[e is None for e in extra].index(True)]
+        raise SystemExit(f"DATA: a row has no usable value for the output {bad['name']!r} (columns {bad['columns'] or bad['classes']}).")
+    return (y, *extra)
 # multispectral / radar images (Sentinel-2, Sentinel-1, …): arrays of any number of bands from GeoTIFF or .npy files, not PIL pictures.
 # Fusion: a second band group (e.g. Sentinel-1 next to Sentinel-2) from files with the same names in another folder, stacked after the
 # first group's bands; the network's Input blocks may take one group each (the generated forward slices the channels).
@@ -283,16 +340,16 @@ class HFImages(torch.utils.data.Dataset):
     def __getitem__(self, i):
         row = self.ds[i]
         if REGRESS:
-            return self.tfm(to_pil(row[DATASET["hf_image_col"]])), hf_targets(row)
+            return self.tfm(to_pil(row[DATASET["hf_image_col"]])), with_heads(hf_targets(row), row)
         label = row[DATASET["hf_label_col"]]
         if MULTILABEL:
             y = torch.zeros(len(CLASSES))
             for v in (label if isinstance(label, (list, tuple)) else [label]):
                 y[self.names[v] if isinstance(v, str) else int(v)] = 1.0
-            return self.tfm(to_pil(row[DATASET["hf_image_col"]])), y
+            return self.tfm(to_pil(row[DATASET["hf_image_col"]])), with_heads(y, row)
         if isinstance(label, str):
             label = self.names[label]
-        return self.tfm(to_pil(row[DATASET["hf_image_col"]])), int(label)
+        return self.tfm(to_pil(row[DATASET["hf_image_col"]])), with_heads(int(label), row)
 
 
 def hf_targets(row):
@@ -368,7 +425,7 @@ class HFBands(torch.utils.data.Dataset):
         if self.train:
             x, y2 = flips(x, y if SEG else None)
             y = y2 if SEG else y
-        return x, y
+        return x, with_heads(y, row)
 
 
 class HFPairs:
@@ -928,7 +985,7 @@ def label_rows(root):
         raise SystemExit(f"DATA: the labels table has no column {', '.join(c for c in CLASSES if c not in head)} (columns: {', '.join(head)}).")
     lcol = None if len(onehot) == len(CLASSES) else next((i for i, h in enumerate(low) if h in LABEL_COLS and i not in skip),
                                                           next((i for i in range(len(head)) if i not in skip), None))
-    if lcol is None and len(onehot) != len(CLASSES):
+    if lcol is None and len(onehot) != len(CLASSES) and not (MULTITASK and TASK == "classify"):
         raise SystemExit("DATA: the labels table needs a file column and a labels column (or one 0/1 column per class).")
     train_dir = kaggle_folder(root, DATASET["kaggle_train_dir"]) if DATASET.get("kaggle_train_dir") else None
     bases = [os.path.dirname(path)] + ([train_dir] if train_dir else []) + [root]
@@ -939,7 +996,9 @@ def label_rows(root):
         if not r or len(r) <= fcol or not str(r[fcol]).strip():
             continue
         y = torch.zeros(len(CLASSES))
-        if REGRESS:
+        if MULTITASK and TASK == "classify":
+            y = None   # the class: from label_column, or the image's folder (found below)
+        elif REGRESS:
             try:
                 y = torch.tensor([float(r[onehot[k]]) for k in range(len(CLASSES))], dtype=torch.float32)
             except (TypeError, ValueError, IndexError):
@@ -966,6 +1025,19 @@ def label_rows(root):
         if p is None:
             missing += 1
             continue
+        if MULTITASK:
+            cells = {head[i]: r[i] for i in range(min(len(head), len(r)))}
+            if y is None:
+                cls = str(cells.get(DATASET["label_column"], "")).strip() if DATASET.get("label_column") else os.path.basename(os.path.dirname(p))
+                if cls not in names:
+                    no_number += 1
+                    continue
+                y = names[cls]
+            extra = [y_head(cells, k) for k in range(1, len(HEADS) + 1)]
+            if any(e is None for e in extra):
+                no_number += 1
+                continue
+            y = (y, *extra)
         if ucol is not None and len(FUSE) == 2:
             if fuse_index is None:
                 fuse_index = folder_index(FUSE[1])
@@ -979,9 +1051,13 @@ def label_rows(root):
     if missing:
         emit("warning", message=f"{missing} rows of {os.path.basename(path)} name files that are not in the dataset (left out)")
     if no_number:
-        emit("warning", message=f"{no_number} rows of {os.path.basename(path)} have an empty or non-numeric target (left out)")
+        emit("warning", message=f"{no_number} rows of {os.path.basename(path)} have an empty, unknown or non-numeric target (left out)")
     if len(items) < 2:
         raise SystemExit(f"DATA: {os.path.basename(path)}: no row names an image that is in the dataset (looked in {', '.join(bases)}).")
+    if MULTITASK:
+        emit("info", message=f"{len(items)} images with labels for the main task and {len(HEADS)} extra output(s): "
+             + ", ".join(h["name"] for h in HEADS))
+        return items
     if REGRESS:
         ys = torch.stack([it[1] for it in items])
         emit("info", message=f"{len(items)} images with targets; " + ", ".join(
@@ -1218,7 +1294,7 @@ def load_data(cfg):
             tr, te = [pairs[i] for i in tr_i], [pairs[i] for i in te_i]
             multiband_stats(tr, cfg["seed"])
             train, test, train_eval = BandPairs(tr, True), BandPairs(te, False), BandPairs(tr, False)
-    elif MULTILABEL or REGRESS:
+    elif MULTILABEL or REGRESS or MULTITASK:
         root = data_root()
         if MULTI:
             set_fuse(root, os.path.dirname(os.path.join(root, DATASET["labels_csv"])) if not DATASET.get("kaggle_train_dir")
@@ -1288,6 +1364,81 @@ GAMMA = float(TRAIN.get("focal_gamma") or 2.0)
 
 
 def loss_of(out, y, smoothing=0.0):
+    """the training loss: the main task's, plus each extra output's times its weight (several outputs)"""
+    if not MULTITASK:
+        return loss_one(out, y, smoothing)
+    total = loss_one(out[0], y[0], smoothing)
+    for k, h in enumerate(HEADS, 1):
+        total = total + float(h.get("weight", 1.0)) * head_loss(k, out[k].float(), y[k])
+    return total
+
+
+def head_loss(k, out, y):
+    """an extra output's loss: cross-entropy (or focal), binary cross-entropy, or MSE / L1 / Huber on its standardised targets"""
+    h = HEADS[k - 1]
+    if h["task"] == "classify":
+        ce = nn.functional.cross_entropy(out, y, reduction="none")
+        if h.get("loss") == "focal":
+            pt = out.log_softmax(1).gather(1, y.unsqueeze(1)).squeeze(1).exp()
+            ce = (1 - pt) ** 2 * ce
+        return ce.mean()
+    if h["task"] == "multilabel":
+        return nn.functional.binary_cross_entropy_with_logits(out, y.float())
+    mean, std = HEAD_STATS.get(k, (None, None))
+    z = y.float() if mean is None else (y.float() - mean.to(y.device)) / std.to(y.device)
+    if h.get("loss") == "l1":
+        return nn.functional.l1_loss(out, z)
+    if h.get("loss") == "huber":
+        return nn.functional.huber_loss(out, z, delta=1.0)
+    return nn.functional.mse_loss(out, z)
+
+
+def head_targets(ds, k):
+    """head k's targets of a dataset, without reading images where the dataset keeps them"""
+    from torch.utils.data import Subset
+    if isinstance(ds, Subset):
+        inner = head_targets(ds.dataset, k)
+        return [inner[i] for i in ds.indices]
+    if isinstance(ds, LabelFiles):
+        return [y[k] for _, y in ds.items]
+    if isinstance(ds, (HFImages, HFBands)):
+        cols = {c: list(ds.ds[c]) for c in (HEADS[k - 1]["columns"] or HEADS[k - 1]["classes"])}
+        return [y_head({c: v[i] for c, v in cols.items()}, k) for i in range(len(ds))]
+    return [ds[i][1][k] for i in random.Random(0).sample(range(len(ds)), min(2000, len(ds)))]
+
+
+def head_stats(train):
+    """regression heads: mean and spread of their targets on the training data (the network learns them standardised)"""
+    for k, h in enumerate(HEADS, 1):
+        if h["task"] != "regress":
+            continue
+        ys = torch.stack([torch.as_tensor(v, dtype=torch.float32).reshape(-1) for v in head_targets(train, k)]).double()
+        mean, std = ys.mean(0), ys.std(0, unbiased=False) if len(ys) > 1 else torch.ones(ys.shape[1], dtype=torch.float64)
+        std = torch.where(std > 1e-12, std, torch.ones_like(std))
+        HEAD_STATS[k] = (mean.float(), std.float())
+        emit("targets", head=h["name"], targets=h["columns"], mean=[round(float(v), 6) for v in mean], std=[round(float(v), 6) for v in std], n=len(ys))
+
+
+def head_scores(outs, ys):
+    """each extra output's scores on a whole evaluation: accuracy, micro F1 + mAP, or R² / MAE / RMSE in the targets' units"""
+    res = []
+    for k, h in enumerate(HEADS, 1):
+        o, y = torch.cat(outs[k]), torch.cat(ys[k])
+        d = {"name": h["name"], "task": h["task"]}
+        if h["task"] == "classify":
+            d.update(metric="accuracy", score=float((o.argmax(1) == y).float().mean()) if len(y) else 0.0)
+        elif h["task"] == "multilabel":
+            sc = multilabel_scores(torch.sigmoid(o), y, 0.5)
+            d.update(metric="micro F1", score=sc["micro_f1"], map=sc["map"], macro_f1=sc["macro_f1"])
+        else:
+            mean, std = HEAD_STATS.get(k, (torch.zeros(o.shape[1]), torch.ones(o.shape[1])))
+            sc = regression_scores(o * std + mean, y.float(), h["columns"])
+            d.update(metric="R²", score=sc["r2"], mae=sc["mae"], rmse=sc["rmse"], per_target=sc["per_target"])
+        res.append(d)
+    return res
+
+
+def loss_one(out, y, smoothing=0.0):
     """cross-entropy (one class per image / pixel), or binary cross-entropy per class for multi-label (smoothing pulls the targets
     towards 0.5); weighted by class when the Train tab asks for it. Focal: each term times (1 - p_true)^γ, so the easy, already-right
     images / pixels count little. Dice (segmentation, multi-label): 1 - the mean over classes of 2|P∩T| / (|P| + |T|) on the batch's
@@ -1357,7 +1508,7 @@ def target_stats(train):
     global TARGET_MEAN, TARGET_STD
     labels = labels_of(train)
     if labels is None:
-        labels = [train[i][1] for i in random.Random(0).sample(range(len(train)), min(2000, len(train)))]
+        labels = [main_y(train[i][1]) for i in random.Random(0).sample(range(len(train)), min(2000, len(train)))]
     ys = torch.stack([torch.as_tensor(v, dtype=torch.float32).reshape(-1) for v in labels]).double()
     mean, std = ys.mean(0), ys.std(0, unbiased=False) if len(ys) > 1 else torch.ones(ys.shape[1], dtype=torch.float64)
     std = torch.where(std > 1e-12, std, torch.ones_like(std))
@@ -1366,16 +1517,17 @@ def target_stats(train):
          min=[round(float(v), 6) for v in ys.min(0)[0]], max=[round(float(v), 6) for v in ys.max(0)[0]], n=len(ys))
 
 
-def regression_scores(pred, true):
+def regression_scores(pred, true, names=None):
     """per target: MAE, RMSE, R² (1 - residual / total sum of squares; 0 = no better than always predicting the mean), the mean of
     each over the targets, and up to 1000 (truth, prediction) points per target for the scatter plot"""
-    k = len(CLASSES)
+    names = CLASSES if names is None else names
+    k = len(names)
     per = []
     for c in range(k):
         p, t = pred[:, c].double(), true[:, c].double()
         err = p - t
         ss_tot = float(((t - t.mean()) ** 2).sum()) if len(t) else 0.0
-        per.append({"target": CLASSES[c], "mae": float(err.abs().mean()) if len(t) else 0.0,
+        per.append({"target": names[c], "mae": float(err.abs().mean()) if len(t) else 0.0,
                     "rmse": float((err ** 2).mean().sqrt()) if len(t) else 0.0,
                     "r2": 1.0 - float((err ** 2).sum()) / ss_tot if ss_tot > 0 else 0.0,
                     "mean": float(t.mean()) if len(t) else 0.0})
@@ -1426,8 +1578,8 @@ def tune_thresholds(model, data, device, batch=128):
     probs, ys = [], []
     with torch.no_grad():
         for x, y in DataLoader(data, batch_size=batch, shuffle=False):
-            probs.append(torch.sigmoid(model(x.to(device)).float()).cpu())
-            ys.append(y > 0.5)
+            probs.append(torch.sigmoid(main_out(model(x.to(device))).float()).cpu())
+            ys.append(main_y(y) > 0.5)
     p, y = torch.cat(probs), torch.cat(ys)
     grid = [round(0.05 * i, 2) for i in range(1, 20)]
     best = []
@@ -1443,9 +1595,10 @@ def tune_thresholds(model, data, device, batch=128):
         json.dump({"classes": CLASSES, "thresholds": best}, f)
 
 
-def multilabel_scores(prob, y):
-    """micro / macro F1 at 0.5, mean average precision, exact match, and per class precision / recall / F1 / AP / support"""
-    pred, y = prob >= (0.5 if THRESH is None else THRESH.view(1, -1)), y > 0.5
+def multilabel_scores(prob, y, th=None):
+    """micro / macro F1 at 0.5 (or the tuned thresholds), mean average precision, exact match, and per class precision / recall / F1 /
+    AP / support; th: a fixed threshold instead (an extra output)"""
+    pred, y = prob >= (th if th is not None else 0.5 if THRESH is None else THRESH.view(1, -1)), y > 0.5
     tp, fp, fn = (pred & y).sum(0).float(), (pred & ~y).sum(0).float(), (~pred & y).sum(0).float()
     f1 = 2 * tp / (2 * tp + fp + fn).clamp_min(1)
     micro = float(2 * tp.sum() / (2 * tp.sum() + fp.sum() + fn.sum()).clamp_min(1))
@@ -1473,16 +1626,22 @@ def one_batch_check(model, loader, device):
     seen = {}
     hooks = [getattr(model, name).register_forward_hook(lambda m, i, o, name=name: seen.__setitem__(name, list(o.shape[1:])))
              for name, _, _ in LAYERS]
-    x, y = next(iter(loader))
-    x, y = x[:2].to(device), y[:2].to(device)  # two images check every shape; a full batch might not fit before the split is known
+    x, yall = next(iter(loader))
+    # two images check every shape; a full batch might not fit before the split is known
+    x, yall = x[:2].to(device), y_to(tuple(t[:2] for t in yall) if isinstance(yall, (tuple, list)) else yall[:2], device)
+    y = main_y(yall)
     if list(x.shape[1:]) != EXPECTED["input"]:
         raise SystemExit(f"CHECK: the images are {list(x.shape[1:])}, but the design's Input is {EXPECTED['input']}.")
-    out = model(x)
+    outs = model(x)
+    if MULTITASK and not (isinstance(outs, (tuple, list)) and len(outs) == len(HEADS) + 1):
+        raise SystemExit(f"CHECK: the network gives {len(outs) if isinstance(outs, (tuple, list)) else 1} output(s), but the dataset has "
+                         f"{len(HEADS) + 1} (the main task and {len(HEADS)} extra).")
+    out = main_out(outs)
     if SEG and list(y.shape[1:]) != list(out.shape[2:]):
         raise SystemExit(f"CHECK: the masks are {list(y.shape[1:])}, but the network outputs {list(out.shape[2:])}.")
     if (MULTILABEL or REGRESS) and list(y.shape) != list(out.shape):
         raise SystemExit(f"CHECK: the {'targets' if REGRESS else 'labels'} are {list(y.shape[1:])} per image, but the network outputs {list(out.shape[1:])}.")
-    loss_of(out, y).backward()
+    loss_of(outs, yall).backward()
     model.zero_grad(set_to_none=True)
     for h in hooks:
         h.remove()
@@ -1504,25 +1663,34 @@ def evaluate(model, loader, device):
     loss_sum, n_items, cm = 0.0, 0, torch.zeros(k * k, dtype=torch.long)
     top5 = 0 if (not SEG and not MULTILABEL and not REGRESS and k > 5) else None
     probs, targets = [], []
+    global HEAD_SCORES
+    h_out, h_y = {k: [] for k in range(1, len(HEADS) + 1)}, {k: [] for k in range(1, len(HEADS) + 1)}
     with torch.no_grad():
-        for x, y in loader:
+        for x, yall in loader:
             if INTERRUPT:
                 raise Interrupted()
-            x, y = x.to(device), y.to(device)
-            out = model(x).float()
+            x, yall = x.to(device), y_to(yall, device)
+            outs = model(x)
+            out, y = main_out(outs).float(), main_y(yall)
+            for k in h_out:
+                h_out[k].append(outs[k].float().cpu())
+                h_y[k].append(yall[k].cpu())
+            if MULTITASK and not SEG:
+                # the validation loss is the whole training loss (every output), as in training
+                loss_sum += loss_of(outs, yall).item() * len(y)
             if REGRESS:
-                loss_sum += loss_of(out, y).item() * len(y)
+                loss_sum += 0 if MULTITASK else loss_of(out, y).item() * len(y)
                 n_items += len(y)
                 probs.append(to_units(out).cpu())
                 targets.append(y.float().cpu())
                 continue
             if MULTILABEL:
-                loss_sum += loss_of(out, y).item() * len(y)
+                loss_sum += 0 if MULTITASK else loss_of(out, y).item() * len(y)
                 n_items += len(y)
                 probs.append(torch.sigmoid(out).cpu())
                 targets.append(y.cpu())
                 continue
-            if not SEG or bool((y >= 0).any()):  # a batch with no labelled pixel has no loss
+            if not MULTITASK and (not SEG or bool((y >= 0).any())):  # a batch with no labelled pixel has no loss
                 loss_sum += nn.functional.cross_entropy(out, y).item() * len(y)
             n_items += len(y)
             pred = out.argmax(1)
@@ -1530,6 +1698,7 @@ def evaluate(model, loader, device):
             cm += torch.bincount((y[keep] * k + pred[keep]).flatten().cpu(), minlength=k * k)
             if top5 is not None:
                 top5 += int((out.topk(5, dim=1).indices == y.unsqueeze(1)).any(1).sum())
+    HEAD_SCORES = head_scores(h_out, h_y) if MULTITASK else None
     if REGRESS:
         # (loss, R² in the accuracy's place, the scores in the confusion matrix's place, MAE in mean IoU's place)
         sc = regression_scores(torch.cat(probs), torch.cat(targets)) if probs else regression_scores(torch.zeros(0, k), torch.zeros(0, k))
@@ -1569,7 +1738,7 @@ def grad_cam(model, xs):
         hooks.append(mod.register_forward_hook(lambda m, i, o, name=name: acts.__setitem__(name, o) if torch.is_tensor(o) and o.dim() == 4 else None))
     with torch.enable_grad():
         xs = xs.clone().requires_grad_(True)
-        out = model(xs).float()
+        out = main_out(model(xs)).float()
         last = [n for n, _, _ in LAYERS if n in acts]
         for h in hooks:
             h.remove()
@@ -1605,7 +1774,7 @@ def pictures(model, test, device):
     idx = list(range(min(8 if SEG else 16, len(test))))
     xs = torch.stack([test[i][0] for i in idx]).to(device)
     with torch.no_grad():
-        out = model(xs).float()
+        out = main_out(model(xs)).float()
     for h in hooks:
         h.remove()
     for name, label, conv in LAYERS:
@@ -1620,23 +1789,23 @@ def pictures(model, test, device):
         img = look(test[i][0])
         if SEG:
             pred = out[j].argmax(0).cpu()
-            truth = test[i][1].clamp_min(0)
+            truth = main_y(test[i][1]).clamp_min(0)
             res["samples"].append({"image": small(img, 64), "truth": small((truth.float() / k).unsqueeze(0), 64),
                                    "pred": small((pred.float() / k).unsqueeze(0), 64),
                                    "pixel_acc": round(float((pred == truth).float().mean()), 3)})
         elif REGRESS:
             pred = to_units(out[j]).cpu()
-            res["samples"].append({"image": small(img), "target": [round(float(v), 5) for v in test[i][1]],
+            res["samples"].append({"image": small(img), "target": [round(float(v), 5) for v in main_y(test[i][1])],
                                    "value": [round(float(v), 5) for v in pred]})
         elif MULTILABEL:
             prob = torch.sigmoid(out[j]).cpu()
-            res["samples"].append({"image": small(img), "labels": [k for k in range(len(CLASSES)) if test[i][1][k] > 0.5],
+            res["samples"].append({"image": small(img), "labels": [k for k in range(len(CLASSES)) if main_y(test[i][1])[k] > 0.5],
                                    "preds": [k for k in range(len(CLASSES)) if prob[k] >= (0.5 if THRESH is None else float(THRESH[k]))],
                                    "probs": [round(float(v), 3) for v in prob]})
         else:
             prob = torch.softmax(out[j], 0).cpu()
             p = int(prob.argmax())
-            res["samples"].append({"image": small(img), "label": int(test[i][1]), "pred": p, "prob": round(float(prob[p]), 3)})
+            res["samples"].append({"image": small(img), "label": int(main_y(test[i][1])), "pred": p, "prob": round(float(prob[p]), 3)})
     if not SEG and not MULTILABEL and not REGRESS:
         try:
             cam = grad_cam(model, xs)
@@ -1651,9 +1820,10 @@ def pictures(model, test, device):
         with torch.no_grad():
             for start in range(0, min(len(test), 2000), 128):
                 batch = [test[i] for i in range(start, min(start + 128, len(test), 2000))]
-                o = model(torch.stack([b[0] for b in batch]).to(device)).float()
+                o = main_out(model(torch.stack([b[0] for b in batch]).to(device))).float()
                 pr = torch.softmax(o, 1).cpu()
                 for b, (x, y) in enumerate(batch):
+                    y = main_y(y)
                     p = int(pr[b].argmax())
                     if p != int(y):
                         mistakes.append({"image": small(look(x)), "label": int(y), "pred": p, "prob": round(float(pr[b][p]), 3),
@@ -1699,7 +1869,7 @@ def labels_of(ds):
     if isinstance(ds, BandFolder):
         return [l for _, l in ds.files]
     if isinstance(ds, LabelFiles):
-        return [y for _, y in ds.items]
+        return [main_y(y) for _, y in ds.items]
     if isinstance(ds, (HFImages, HFBands)) and REGRESS:
         cols = [list(ds.ds[c]) for c in CLASSES]
         return [[float(v) for v in row] for row in zip(*cols)]
@@ -1723,7 +1893,7 @@ def class_counts(ds, sample=64):
     labels = labels_of(ds)
     exact = labels is not None
     if labels is None:
-        labels = [ds[i][1] for i in random.Random(0).sample(range(len(ds)), min(500, len(ds)))]
+        labels = [main_y(ds[i][1]) for i in random.Random(0).sample(range(len(ds)), min(500, len(ds)))]
     counts = [0] * k
     for y in labels:
         if MULTILABEL and isinstance(y, (list, tuple)):   # a Hugging Face list of classes
@@ -1794,7 +1964,7 @@ def data_report(train, val, test):
     if REGRESS:
         labels = labels_of(train)
         if labels is None:
-            labels = [train[i][1] for i in random.Random(0).sample(range(len(train)), min(500, len(train)))]
+            labels = [main_y(train[i][1]) for i in random.Random(0).sample(range(len(train)), min(500, len(train)))]
         ys = torch.stack([torch.as_tensor(v, dtype=torch.float32).reshape(-1) for v in labels]).double()
         rep["targets"] = [{"target": c, "min": float(ys[:, k].min()), "max": float(ys[:, k].max()), "mean": float(ys[:, k].mean()),
                            "std": float(ys[:, k].std(unbiased=False))} for k, c in enumerate(CLASSES)]
@@ -1826,6 +1996,7 @@ def check_only(model, train, val, test, first_batch, device):
         stats_m, stats_s = stats() or (None, None)
         for i in random.Random(2).sample(range(len(test)), min(12, len(test))):
             x, y = test[i]
+            y = main_y(y)
             img = composite(x) if MULTI else (x * torch.tensor(stats_s).view(-1, 1, 1) + torch.tensor(stats_m).view(-1, 1, 1)).clamp(0, 1)
             label = ([round(float(v), 5) for v in y] if REGRESS else [c for c in range(len(CLASSES)) if float(y[c]) > 0.5] if MULTILABEL
                      else None if SEG else int(y))
@@ -2005,6 +2176,8 @@ def main():
         target_stats(train)
     elif cfg.get("class_weights") in ("inverse", "sqrt"):
         class_weights(train, cfg["class_weights"])
+    if MULTITASK:
+        head_stats(train)
     if pos["epoch"] == 0 and pos["step"] == 0:
         one_batch_check(model, loader(1), device)
     every = max(1, steps // 20)
@@ -2021,7 +2194,8 @@ def main():
             for step, (x, y) in enumerate(loader(epoch, pos["step"]), pos["step"] + 1):
                 waited += time.time() - mark
                 x = x.to(device, non_blocking=True, memory_format=torch.channels_last) if channels_last and x.dim() == 4 else x.to(device, non_blocking=True)
-                y = y.to(device, non_blocking=True)
+                yall = y_to(y, device, non_blocking=True)
+                y = main_y(yall)   # several outputs: the main task's labels (sizes, accuracy); the loss gets them all
                 lr_now = lr_at((epoch - 1) * steps + step - 1)
                 for g in opt.param_groups:
                     g["lr"] = lr_now
@@ -2031,12 +2205,14 @@ def main():
                     try:
                         opt.zero_grad(set_to_none=True)
                         batch_loss, batch_correct = 0.0, 0
-                        for xs, ys in zip(x.tensor_split(split["parts"]), y.tensor_split(split["parts"])):
+                        for xs, ys_all in zip(x.tensor_split(split["parts"]), y_split(yall, split["parts"])):
+                            ys = main_y(ys_all)
                             if TEST_OOM_ABOVE and len(ys) > TEST_OOM_ABOVE:
                                 raise OOM("CUDA out of memory (simulated for the test)")
                             with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp):
-                                out = model(xs)
-                                loss = loss_of(out, ys, smoothing) * (len(ys) / len(y))
+                                outs = model(xs)
+                                out = main_out(outs)
+                                loss = loss_of(outs, ys_all, smoothing) * (len(ys) / len(y))
                                 if SEG and not bool((ys >= 0).any()):
                                     loss = out.float().sum() * 0.0  # no labelled pixel in this piece: nothing to learn (and no NaN)
                             scaler.scale(loss).backward()
@@ -2051,7 +2227,7 @@ def main():
                                                  "switch on \"save memory\" in the Train tab, or a GPU with more memory.")
                             raise
                     # out of memory (handled outside `except`, so that the failed attempt's tensors are freed): twice as many pieces
-                    out = loss = None
+                    out = outs = loss = None
                     opt.zero_grad(set_to_none=True)
                     if device.type == "cuda":
                         torch.cuda.empty_cache()
@@ -2103,6 +2279,8 @@ def main():
                 del ev["train_acc"]   # no running R² while training
             if val_top5 is not None:
                 ev["val_top5"] = round(val_top5, 5)
+            if HEAD_SCORES:
+                ev["heads"] = [{"name": h["name"], "metric": h["metric"], "score": round(h["score"], 5)} for h in HEAD_SCORES]
             emit("epoch", **ev)
             # best epoch so far (lower validation loss, or higher validation accuracy / mIoU); its weights are kept in best_model.pt
             value = {"val_loss": val_loss, "val_acc": val_acc, "val_miou": miou}.get(monitor, val_loss)
@@ -2156,6 +2334,8 @@ def main():
         res.update(confusion)   # micro_f1 (= test_acc), macro_f1, map, exact, per_class
         if THRESH is not None:
             res["thresholds"] = [float(t) for t in THRESH]
+    if HEAD_SCORES:
+        res["heads"] = HEAD_SCORES
     if LOSS:
         res["loss"] = {"kind": LOSS, "gamma": GAMMA} if LOSS == "focal" else {"kind": LOSS}
     if LOSS_WEIGHT is not None:
@@ -2173,6 +2353,7 @@ def main():
          **({"test_map": round(confusion["map"], 5), "test_macro_f1": round(confusion["macro_f1"], 5), "test_exact": round(confusion["exact"], 5)}
             if MULTILABEL else {}),
          **({"test_mae": round(confusion["mae"], 6), "test_rmse": round(confusion["rmse"], 6)} if REGRESS else {}),
+         **({"heads": [{"name": h["name"], "metric": h["metric"], "score": round(h["score"], 5)} for h in HEAD_SCORES]} if HEAD_SCORES else {}),
          **({"best_epoch": es["best_epoch"]} if early else {}), **({"test_top5": round(test_top5, 5)} if test_top5 is not None else {}))
     if ON_KAGGLE:
         # a Kaggle run is never resumed: the checkpoint would only make the output the app downloads bigger

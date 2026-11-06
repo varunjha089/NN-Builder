@@ -87,7 +87,9 @@ escape hatch, 2-D only, supervised only, one GPU. The steps below, in this order
    output shape (formula in the input shape); shapes trusts the declaration, codegen pastes the code into the model class, the
    one-batch check on the GPU machine compares the real shape with the declared one. Also a custom loss (a function of logits and
    targets). Saved in the .nnb and the text language; no Python ever runs on the Mac.
-4. **Several inputs and outputs:** more than one Input (each bound to a data source or band group; inputs of different sizes, e.g.
+4. **Several inputs and outputs:** *Several outputs done 2026-11-06 (multi-task heads from the labels table / HF columns, one
+   Output per head, per-head loss and weight, per-head scores; CI-tested, not yet on real data). Left: inputs of different sizes or
+   sources (Part B), segmentation + extra outputs, per-head class weights.* The plan: more than one Input (each bound to a data source or band group; inputs of different sizes, e.g.
    10 m S2 and 20 m bands, or S1 and S2 at their own sizes) and more than one Output (multi-task heads, each with its task, loss
    and weight, and its own scores in Results); shapes, codegen, text language, harness (a batch becomes a dict of tensors).
 5. **Weight sharing:** a block that reuses another block's weights (or a whole branch: Siamese / twin networks); with step 4 this

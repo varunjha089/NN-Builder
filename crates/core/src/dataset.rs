@@ -98,6 +98,14 @@ pub struct Dataset {
     /// column per class. Hugging Face: the label column is a list of class labels.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub labels_csv: String,
+    /// several outputs (multi-task): extra targets next to the main task, each read from columns of the labels table (Hugging Face:
+    /// of the dataset's rows) and given to the Output block with the same `head` number (1, 2, ...); the main task is head 0
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub heads: Vec<Head>,
+    /// with extra targets and the main task "classify": the labels table's column with each image's class (empty = the name of the
+    /// folder the image is in)
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub label_column: String,
     /// fusion (e.g. Sentinel-1 + Sentinel-2): a second band group, read from `fuse_dir` (a folder with the same relative file names,
     /// any extension; scenes: the second image folder) and stacked after the first group's bands. Input blocks with group 1 / 2 take
     /// one group each (mid fusion); an Input with group 0 takes both (early fusion).
@@ -193,6 +201,39 @@ pub const BUILTINS: &[Builtin] = &[
     },
 ];
 
+/// one extra output of a multi-task network (Dataset::heads)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct Head {
+    /// shown in the results and on the Output block, e.g. "biomass"
+    pub name: String,
+    /// "classify" (one class from a column) | "multilabel" (a column of class lists, or one 0/1 column per class) | "regress" (numbers)
+    pub task: String,
+    /// the table's columns: classify / multilabel: the labels column (multilabel with none: the classes are 0/1 columns); regress:
+    /// the numeric columns, one number each
+    #[serde(default)]
+    pub columns: Vec<String>,
+    /// classify / multilabel: the class names (in order); regress: unused (the columns name the numbers)
+    #[serde(default)]
+    pub classes: Vec<String>,
+    /// "" = the task's usual loss (cross-entropy, binary cross-entropy, MSE) | "focal" (classify) | "l1" | "huber" (regress)
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub loss: String,
+    /// this head's share of the total loss (the main task counts 1)
+    #[serde(default = "one")]
+    pub weight: f64,
+}
+
+fn one() -> f64 {
+    1.0
+}
+
+impl Head {
+    /// the number of values the head's Output gives: one score per class, or one number per target column
+    pub fn size(&self) -> usize {
+        if self.task == "regress" { self.columns.len() } else { self.classes.len() }
+    }
+}
+
 impl Default for Dataset {
     fn default() -> Self {
         Dataset {
@@ -228,6 +269,8 @@ impl Default for Dataset {
             scene_test_image: String::new(),
             scene_test_label: String::new(),
             labels_csv: String::new(),
+            heads: vec![],
+            label_column: String::new(),
             bands2: vec![],
             band_order2: vec![],
             sensor2: String::new(),
@@ -238,6 +281,79 @@ impl Default for Dataset {
 }
 
 impl Dataset {
+    /// the number of values Output block `head` gives (0 = the main task's classes or targets; None = no such head)
+    pub fn head_size(&self, head: usize) -> Option<usize> {
+        if head == 0 { Some(self.class_names().len()) } else { self.heads.get(head - 1).map(|h| h.size()) }
+    }
+
+    fn head_problems(&self) -> Vec<String> {
+        let mut p = vec![];
+        let ok_col = |s: &str| !s.is_empty() && s.len() <= 128 && !s.contains(['"', '\\', '\n', '\r']);
+        if !matches!(self.source.as_str(), "kaggle" | "local" | "huggingface") {
+            p.push("Extra outputs read their targets from a labels table (own files or Kaggle) or from Hugging Face columns.".into());
+        }
+        if matches!(self.source.as_str(), "kaggle" | "local") && self.labels_csv.is_empty() {
+            p.push("Extra outputs: give the labels table (CSV) that has their columns.".into());
+        }
+        if self.task == "segment" {
+            p.push("Extra outputs are for one value per image: a segmentation network has its single per-pixel output.".into());
+        }
+        if self.heads.len() > 8 {
+            p.push("At most 8 extra outputs.".into());
+        }
+        if !self.label_column.is_empty() && !ok_col(&self.label_column) {
+            p.push("The class column's name may not contain quotes or backslashes.".into());
+        }
+        for (i, h) in self.heads.iter().enumerate() {
+            let name = if h.name.trim().is_empty() { format!("output {}", i + 1) } else { h.name.clone() };
+            if h.name.trim().is_empty() || h.name.len() > 40 || !ok_col(&h.name) {
+                p.push(format!("Extra output {}: give it a short name (no quotes).", i + 1));
+            }
+            if self.heads[..i].iter().any(|o| o.name == h.name) {
+                p.push(format!("Two extra outputs are called {name}."));
+            }
+            if !h.columns.iter().all(|c| ok_col(c)) {
+                p.push(format!("{name}: a column name may not contain quotes or backslashes."));
+            }
+            match h.task.as_str() {
+                "classify" => {
+                    if h.columns.len() != 1 {
+                        p.push(format!("{name}: give the one column with the class of each image."));
+                    }
+                    if h.classes.len() < 2 {
+                        p.push(format!("{name}: give its class names (at least two)."));
+                    }
+                }
+                "multilabel" => {
+                    if h.columns.len() > 1 {
+                        p.push(format!("{name}: give one labels column, or none when the classes are 0/1 columns."));
+                    }
+                    if h.classes.is_empty() {
+                        p.push(format!("{name}: give its class names."));
+                    }
+                }
+                "regress" => {
+                    if h.columns.is_empty() {
+                        p.push(format!("{name}: give the column(s) with the numbers to predict."));
+                    }
+                }
+                _ => p.push(format!("{name}: choose its task (classes, several classes, or numbers).")),
+            }
+            let losses: &[&str] = match h.task.as_str() {
+                "classify" => &["", "focal"],
+                "regress" => &["", "mse", "l1", "huber"],
+                _ => &[""],
+            };
+            if !losses.contains(&h.loss.as_str()) {
+                p.push(format!("{name}: the loss '{}' is not for this task.", h.loss));
+            }
+            if !(h.weight.is_finite() && (0.0..=100.0).contains(&h.weight)) {
+                p.push(format!("{name}: its weight must be from 0 to 100."));
+            }
+        }
+        p
+    }
+
     pub fn builtin_info(&self) -> Option<&'static Builtin> {
         BUILTINS.iter().find(|b| b.key == self.builtin)
     }
@@ -376,6 +492,9 @@ impl Dataset {
                 "kaggle" | "local" if !ok_id(&self.labels_csv) => p.push("The labels file may contain letters, digits and - _ . / only.".into()),
                 _ => {}
             }
+        }
+        if !self.heads.is_empty() {
+            p.extend(self.head_problems());
         }
         if self.task == "segment" {
             match self.source.as_str() {

@@ -364,7 +364,8 @@ fn modules(n: &Node, a: &Analysis, classes: usize) -> Vec<String> {
             m.push(format!("nn.Linear(in_features={}, out_features={})", inp.last().unwrap(), int(p, "units", 128, 1, 1 << 20)));
             m.extend(act(activation(p, "activation")).map(String::from));
         }
-        "output" => m.push(format!("nn.Linear(in_features={}, out_features={classes})", inp[0])),
+        // its head's classes or targets (the main task, or an extra output of a multi-task network)
+        "output" => m.push(format!("nn.Linear(in_features={}, out_features={})", inp[0], r.out.as_ref().map(|o| o[0]).unwrap_or(classes))),
         // the design's own class, given the input shape (its code is pasted above class Net)
         "custom" => m.push(format!("{}({})", p.get("class").and_then(|v| v.as_str()).unwrap_or(""),
             inp.iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", "))),
@@ -429,6 +430,7 @@ fn model_code_opts(g: &Graph, a: &Analysis, save_memory: bool) -> Result<String>
     let result_of: std::collections::HashMap<&str, &crate::shapes::NodeResult> = a.nodes.iter().map(|r| (r.id.as_str(), r)).collect();
     let line_inputs: Vec<Vec<usize>> = order.iter().map(|id| ins_of.get(id).unwrap_or(&none).iter().filter_map(|s| pos.get(s).copied()).collect()).collect();
     let mut result_pos = order.len();
+    let mut heads_out: Vec<(usize, String)> = vec![];
     for (i, id) in order.iter().enumerate() {
         let n = node_of[id];
         let r = result_of[id];
@@ -473,9 +475,16 @@ fn model_code_opts(g: &Graph, a: &Analysis, save_memory: bool) -> Result<String>
             }
         }
         if n.kind == "output" || n.kind == "seg_output" {
+            let head = n.params.get("head").and_then(|h| h.as_u64()).unwrap_or(0) as usize;
+            heads_out.push((head, v.clone()));
             result_var = v.clone();
             result_pos = i;
         }
+    }
+    // several outputs (multi-task): forward returns them as a tuple, the main task first, then the extra outputs in order
+    if heads_out.len() > 1 {
+        heads_out.sort();
+        result_var = format!("({})", heads_out.iter().map(|(_, v)| v.as_str()).collect::<Vec<_>>().join(", "));
     }
     let mut s = String::new();
     if g.nodes.iter().any(|n| order.contains(&n.id.as_str()) && matches!(n.kind.as_str(), "to_tokens" | "cls_pos" | "attention" | "token_pool")) {
@@ -486,7 +495,8 @@ fn model_code_opts(g: &Graph, a: &Analysis, save_memory: bool) -> Result<String>
         s += g.python.trim_end();
         s += "\n# ---- end of the design's own code\n\n\n";
     }
-    let cuts = if save_memory { checkpoint_cuts(&line_inputs, result_pos) } else { vec![] };
+    // (save memory cuts the forward where one tensor crosses: with several outputs the parts would have to return several)
+    let cuts = if save_memory && heads_out.len() <= 1 { checkpoint_cuts(&line_inputs, result_pos) } else { vec![] };
     if save_memory {
         s += "import torch.utils.checkpoint\n\n\n";
     }

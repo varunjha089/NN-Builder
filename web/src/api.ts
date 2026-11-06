@@ -15,10 +15,14 @@ export interface NodeResult {
 }
 export interface Analysis {
   input: number[]; classes: number; nodes: NodeResult[]; edges: Record<string, number[]>; total_params: number; total_macs: number; problems: string[]; ok: boolean;
+  head_names?: string[];
 }
 
 export type LocalScan = { files: number; bytes: number; complete: boolean; tifs: number; npys: number; folders: { folder: string; classes: string[]; counts?: number[] }[];
   dirs: string[]; top: string[]; csvs: string[]; tif: { file: string; width: number; height: number; bands: number; bits: number; float: boolean; names: string[] } | null };
+
+/** an extra output of a multi-task network: its targets from columns of the labels table */
+export interface Head { name: string; task: "classify" | "multilabel" | "regress"; columns: string[]; classes: string[]; loss?: string; weight: number }
 
 export interface Dataset {
   source: "builtin" | "huggingface" | "kaggle" | "local"; task: "classify" | "multilabel" | "segment" | "regress"; resize: boolean; builtin: string; hf_mask_col: string; kaggle_mask_dir: string;
@@ -30,7 +34,7 @@ export interface Dataset {
   local_dir?: string; local_on_machine?: boolean; cloud_url?: string; layout?: "" | "scene"; scene_image?: string; scene_label?: string;
   scene_split?: "" | "strip" | "files"; scene_test_image?: string; scene_test_label?: string;
   /** multi-label: the CSV with each image's classes; fusion: a second band group from files with the same names in fuse_dir */
-  labels_csv?: string; bands2?: string[]; band_order2?: string[]; sensor2?: "" | "s2" | "s1" | "other"; s1_db2?: boolean; fuse_dir?: string;
+  labels_csv?: string; heads?: Head[]; label_column?: string; bands2?: string[]; band_order2?: string[]; sensor2?: "" | "s2" | "s1" | "other"; s1_db2?: boolean; fuse_dir?: string;
 }
 
 export interface TrainSettings {

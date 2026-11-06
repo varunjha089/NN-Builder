@@ -1,7 +1,7 @@
 // Where the data comes from. Only metadata is read here (Hugging Face datasets-server, Kaggle file list): the data itself is downloaded
 // on the GPU machine when a run starts.
 import { useEffect, useState } from "react";
-import { api, errText, type AppState, type Dataset, type LocalScan } from "./api";
+import { api, errText, type AppState, type Dataset, type Head, type LocalScan } from "./api";
 
 export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; ds: Dataset; setDs: (d: Dataset) => void; problems: string[]; toast: (m: string) => void }) {
   const [hf, setHf] = useState<Awaited<ReturnType<typeof api.hfInfo>> | null>(null);
@@ -122,6 +122,7 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
       </>}
 
       {ds.source === "local" && <LocalBox ds={ds} up={up} toast={toast} />}
+      {ds.source !== "builtin" && ds.task !== "segment" && <HeadsBox ds={ds} up={up} />}
 
       {(ds.source !== "builtin" || ds.resize) && <div className="form">
         <label>Image height<input type="number" min={8} max={1024} value={ds.image_size[0]} onChange={(e) => up({ image_size: [Number(e.target.value), ds.image_size[1]] })} /></label>
@@ -503,6 +504,42 @@ function LabelsCsv({ ds, up, scan, toast }: { ds: Dataset; up: (p: Partial<Datas
 
 /** fusion: a second band group (e.g. Sentinel-1 next to Sentinel-2) from files with the same names in another folder, stacked after the
  *  first group's bands; Input blocks can take one group each (Design: an Input's "Bands") */
+/** several outputs (multi-task): extra targets next to the main task, each from columns of the labels table (Hugging Face: of the rows),
+ *  each given to the Output block with the same number */
+function HeadsBox({ ds, up }: { ds: Dataset; up: (p: Partial<Dataset>) => void }) {
+  const heads = ds.heads ?? [];
+  const set = (i: number, p: Partial<Head>) => up({ heads: heads.map((h, j) => (j === i ? { ...h, ...p } : h)) });
+  const list = (s: string) => s.split(/[,\n]/).map((x) => x.trim()).filter((x) => x);
+  const table = ds.source !== "huggingface";
+  return <div className="aug" style={{ margin: "8px 0" }}>
+    <strong>Extra outputs (multi-task)</strong> <span className="muted small">(more things to predict from the same images, e.g. the class and the biomass)</span>
+    {heads.length > 0 && table && ds.task === "classify" && <div className="form">
+      <label>Labels table (CSV, TSV or Parquet)<input value={ds.labels_csv ?? ""} onChange={(e) => up({ labels_csv: e.target.value.trim() })} placeholder="e.g. labels.csv" /></label>
+      <label>Main task's class column<input value={ds.label_column ?? ""} onChange={(e) => up({ label_column: e.target.value })} placeholder="empty = the image's folder" /></label>
+    </div>}
+    {heads.map((h, i) => <div key={i} className="form" style={{ borderTop: "1px solid var(--line)", paddingTop: 6 }}>
+      <label>Output {i + 1}: name<input value={h.name} onChange={(e) => set(i, { name: e.target.value })} placeholder="e.g. biomass" /></label>
+      <label>Predicts<select value={h.task} onChange={(e) => set(i, { task: e.target.value as Head["task"], loss: "" })}>
+        <option value="classify">one class</option><option value="multilabel">several classes</option><option value="regress">numbers</option></select></label>
+      <label>{h.task === "regress" ? "Number column(s), comma-separated" : h.task === "multilabel" ? "Labels column (empty: one 0/1 column per class)" : "Class column"}
+        <input value={h.columns.join(", ")} onChange={(e) => set(i, { columns: list(e.target.value) })} placeholder={h.task === "regress" ? "e.g. biomass, height" : "e.g. land_use"} /></label>
+      {h.task !== "regress" && <label>Classes, comma-separated (in label order)<input value={h.classes.join(", ")} onChange={(e) => set(i, { classes: list(e.target.value) })} placeholder="e.g. dry, wet" /></label>}
+      <label>Loss<select value={h.loss ?? ""} onChange={(e) => set(i, { loss: e.target.value })}>
+        {h.task === "regress" ? <><option value="">MSE</option><option value="l1">L1</option><option value="huber">Huber</option></>
+          : h.task === "classify" ? <><option value="">cross-entropy</option><option value="focal">focal</option></> : <option value="">binary cross-entropy</option>}</select></label>
+      <label>Weight in the total loss<input type="number" min={0} max={100} step={0.1} value={h.weight} onChange={(e) => set(i, { weight: Number(e.target.value) })} /></label>
+      <button className="small" onClick={() => up({ heads: heads.filter((_, j) => j !== i) })}>Remove</button>
+    </div>)}
+    <p className="row small"><button className="small" disabled={heads.length >= 8}
+      onClick={() => up({ heads: [...heads, { name: "", task: "regress", columns: [], classes: [], loss: "", weight: 1 }] })}>Add an extra output</button>
+      {heads.length > 0 && <span className="muted">In the Design tab, give each one an Output block (“Output for”: {heads.map((h, i) => `${i + 1} ${h.name || "…"}`).join(", ")}).</span>}</p>
+    {heads.length > 0 && <p className="muted small">The total loss is the main task's plus each extra output's times its weight. Numbers are learnt
+      standardised and scored in their own units (R², MAE, RMSE); classes by accuracy, several classes by micro F1 and mAP. {table
+        ? "Each row of the labels table names an image (a file column); rows without a usable value for an output are left out."
+        : "The values come from these columns of the Hugging Face rows."} The main task's score still decides early stopping and the best epoch.</p>}
+  </div>;
+}
+
 function SecondGroup({ ds, up }: { ds: Dataset; up: (p: Partial<Dataset>) => void }) {
   const on = (ds.bands2?.length ?? 0) > 0 || !!ds.sensor2;
   const order = ds.band_order2 ?? [], chosen = ds.bands2 ?? [];

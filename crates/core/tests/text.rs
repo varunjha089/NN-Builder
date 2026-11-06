@@ -677,3 +677,12 @@ fn custom_blocks_and_python_section() {
     assert!(err("python \"\"\"\n\"\"\"\npython \"\"\"\n\"\"\"\n1 input\n").message.contains("only one"));
     assert!(err("1 input\n2 custom 3\n").message.contains("number"));
 }
+
+#[test]
+fn output_head_number() {
+    let g = build("1 input\n2 global_pool\n3 output\n4 output 2 <- 2\n5 output head=1 <- 2\n");
+    assert_eq!(by_label(&g, "4").params["head"], json!(2));
+    assert_eq!(by_label(&g, "5").params["head"], json!(1));
+    let printed = print(&g).0;
+    assert!(printed.contains("3 output\n") && printed.contains("output 2 <- 2") && printed.contains("output 1 <- 2"), "{printed}");
+}

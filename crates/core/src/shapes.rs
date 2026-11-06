@@ -47,6 +47,8 @@ pub struct Analysis {
     pub total_macs: u64,
     pub problems: Vec<String>,
     pub ok: bool,
+    /// the dataset's extra outputs (multi-task), for the Output block's head choice: head k = head_names[k - 1]
+    pub head_names: Vec<String>,
 }
 
 impl Analysis {
@@ -234,6 +236,14 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
     let mut rfs: HashMap<&str, ([usize; 2], [usize; 2])> = HashMap::new();
     let is_out = |k: &str| k == "output" || k == "seg_output";
     let n_out = order.iter().filter(|id| node_of.get(*id).map(|n| is_out(&n.kind)).unwrap_or(false)).count();
+    // several outputs (multi-task): one Output per head, head 0 = the main task
+    let head_of = |n: &Node| n.params.get("head").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let mut per_head: HashMap<usize, usize> = HashMap::new();
+    for id in &order {
+        if let Some(n) = node_of.get(id).filter(|n| is_out(&n.kind)) {
+            *per_head.entry(head_of(n)).or_default() += 1;
+        }
+    }
     let mut total = 0u64;
     for id in &order {
         let node = node_of[id];
@@ -267,7 +277,11 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
                     err(&mut r, &m);
                     None
                 }
-                None => step(node, &mut r, classes, rf_in, &mut rfs, &py),
+                None => {
+                    // an Output block gives as many values as its head has classes / targets
+                    let k = if node.kind == "output" { ds.head_size(head_of(node)).unwrap_or(0) } else { classes };
+                    step(node, &mut r, k, rf_in, &mut rfs, &py)
+                }
             };
             if r.status != "error" {
                 r.out = out;
@@ -294,8 +308,15 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
                     }
                 }
             }
-            if n_out > 1 {
-                err(&mut r, "There is more than one Output block.");
+            let head = head_of(node);
+            if node.kind == "output" && head > ds.heads.len() {
+                err(&mut r, &format!("This Output is for output {head}, but the Dataset tab has {} extra output{}.", ds.heads.len(),
+                    if ds.heads.len() == 1 { "" } else { "s" }));
+                r.out = None;
+            } else if per_head.get(&head).copied().unwrap_or(0) > 1 {
+                err(&mut r, &if ds.heads.is_empty() { "There is more than one Output block.".to_string() } else {
+                    format!("There is more than one Output block for {}.", if head == 0 { "the main task".to_string() } else { ds.heads[head - 1].name.clone() })
+                });
                 r.out = None;
             }
             if has_any_output.contains(id) {
@@ -309,6 +330,14 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
             total += r.params;
         }
         results.insert(id, r);
+    }
+    for (k, h) in ds.heads.iter().enumerate() {
+        if n_out > 0 && !per_head.contains_key(&(k + 1)) {
+            problems.push(format!("The Dataset tab has an extra output \"{}\": add an Output block for it (Output: head {}).", h.name, k + 1));
+        }
+    }
+    if n_out > 0 && !per_head.contains_key(&0) {
+        problems.push("Add an Output block for the main task (Output: head 0).".into());
     }
     if inputs.len() == 1 && n_out == 0 {
         problems.push(if ds.task == "segment" {
@@ -349,7 +378,8 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
     if classes < need {
         problems.push(if need == 1 { "The dataset has no target columns yet (Dataset tab).".into() } else { "The dataset has no classes yet (Dataset tab).".into() });
     }
-    Analysis { input: input_shape, classes, nodes, edges: edge_shapes, total_params: total, total_macs, problems, ok: ok && classes >= need }
+    Analysis { input: input_shape, classes, nodes, edges: edge_shapes, total_params: total, total_macs, problems, ok: ok && classes >= need,
+        head_names: ds.heads.iter().map(|h| h.name.clone()).collect() }
 }
 
 /// multiply-accumulates of one layer for one image, from its weights and its input / output size

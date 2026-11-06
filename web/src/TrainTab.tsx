@@ -332,7 +332,9 @@ and check one batch through the network, without training: a few minutes instead
           { name: "train", color: "#2f6fde", pts: ep.map((e) => [e.epoch, e.train_acc]) },
           { name: ep.some((e) => e.val_map != null) ? "validation micro F1" : "validation", color: "#e76f51", pts: ep.map((e) => [e.epoch, e.val_acc]) },
           { name: "validation mAP", color: "#8e44ad", pts: ep.filter((e) => e.val_map != null).map((e) => [e.epoch, e.val_map]) },
-          { name: "validation mIoU", color: "#2a9d8f", pts: ep.filter((e) => e.val_miou != null).map((e) => [e.epoch, e.val_miou]) }]} />}
+          { name: "validation mIoU", color: "#2a9d8f", pts: ep.filter((e) => e.val_miou != null).map((e) => [e.epoch, e.val_miou]) },
+          ...((ep[ep.length - 1]?.heads ?? []) as { name: string; metric: string }[]).map((h, k) => ({ name: `${h.name} (${h.metric})`,
+            color: ["#8e44ad", "#d35400", "#16a085", "#7f8c8d"][k % 4], pts: ep.filter((e) => e.heads?.[k]).map((e) => [e.epoch, e.heads[k].score] as [number, number]) }))]} />}
         <details><summary>Log</summary><pre className="log">{status.log.join("\n")}</pre></details>
       </div>}
 

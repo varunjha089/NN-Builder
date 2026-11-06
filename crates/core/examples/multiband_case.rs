@@ -4,7 +4,7 @@
 //! <data>/local/<key>), Sentinel-1 already in dB, a split scene + label image (segmentation tiles) and multiband images + masks.
 //!     cargo run -p nnb-core --example multiband_case -- <folder>
 use nnb_core::codegen::{train_script, TrainSettings};
-use nnb_core::dataset::{Dataset, SENTINEL1_BANDS, SENTINEL2_BANDS, SENTINEL2_GEE};
+use nnb_core::dataset::{Dataset, Head, SENTINEL1_BANDS, SENTINEL2_BANDS, SENTINEL2_GEE};
 use nnb_core::shapes::analyze;
 
 fn main() {
@@ -103,6 +103,24 @@ fn main() {
             std::fs::create_dir_all(&d).unwrap();
             std::fs::write(format!("{d}/train.py"), train_script(&g, &ds, &a, &t, name).unwrap()).unwrap();
         }
+    }
+    // several outputs: the class from the image's folder, plus biomass and height (regression, Huber) and dry / wet (a class) from
+    // labels.csv, each with its own Output block
+    {
+        let ds = Dataset { source: "local".into(), local_dir: format!("{dir}/own/mt"), local_on_machine: true, labels_csv: "labels.csv".into(),
+            image_size: [16, 16], sensor: "other".into(), band_order: s(&["b1", "b2"]), bands: s(&["b1", "b2"]), classes: s(&["forest", "water"]),
+            heads: vec![
+                Head { name: "biomass".into(), task: "regress".into(), columns: s(&["biomass", "height"]), loss: "huber".into(), weight: 0.5, ..Default::default() },
+                Head { name: "wet".into(), task: "classify".into(), columns: s(&["wet"]), classes: s(&["dry", "wet"]), weight: 1.0, ..Default::default() },
+            ], ..Default::default() };
+        let g = nnb_core::dsl::apply("net \"multi-task ci\"\n1 input\n2 conv 16 3x3\n3 maxpool 2x2\n4 conv 32 3x3\n5 global_pool\n6 output\n\
+            7 output 1 <- 5\n8 output 2 <- 5\n", &Default::default()).unwrap();
+        let a = analyze(&g, &ds);
+        assert!(a.ok && ds.problems().is_empty(), "multitask: {:?} {:?}", a.problems, ds.problems());
+        let t = TrainSettings { epochs: 12, batch_size: 16, amp: false, val_fraction: 0.1, aug_hflip: true, ..Default::default() }.clean();
+        let d = format!("{dir}/multitask");
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(format!("{d}/train.py"), train_script(&g, &ds, &a, &t, "multitask").unwrap()).unwrap();
     }
     for (name, ds) in cases {
         assert!(ds.problems().is_empty(), "{name}: {:?}", ds.problems());

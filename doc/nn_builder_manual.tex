@@ -705,6 +705,27 @@ sample images with both numbers. \file{model.pt} outputs the standardised number
 target's mean and standard deviation (value $=$ output $\times$ std $+$ mean). Flips and rotations are fine for quantities that do not
 depend on direction. A number for every pixel (a canopy height map) is not supported yet.
 
+\subsection{Several outputs (multi-task)}
+\label{sec:multitask}
+One network can predict several things about the same image at once: the land-cover class \emph{and} the biomass, or the crop type
+\emph{and} whether the field is irrigated. The shared layers then learn features useful for all of them, which often helps the smaller
+tasks. In the Dataset tab, \ui{Extra outputs (multi-task)} $\rightarrow$ \ui{Add an extra output}, for each one:
+\begin{itemize}[nosep]
+  \item a \ui{name} (shown in the results), what it \ui{Predicts} (one class, several classes, or numbers), and its column(s) of the
+        labels table: the class column; the labels column (several classes; empty when they are 0/1 columns); or the number columns;
+  \item for classes, the class names in label order; its \ui{Loss} (cross-entropy or focal; binary cross-entropy; MSE, L1 or Huber); and
+        its \ui{Weight}: the total loss is the main task's plus each extra output's times its weight.
+\end{itemize}
+The values come from the labels table next to the images (own files or Kaggle: the same CSV / TSV / Parquet as for multi-label and
+regression; with the main task \emph{classification} the image's class is its folder, or the \ui{Main task's class column}), or from
+columns of a Hugging Face dataset. Rows without a usable value for an output are left out, with a warning.
+
+In the Design tab each output gets its own Output block: select an Output and choose \ui{Output for} (the main task, 1, 2, \dots; in
+text \texttt{output 1}). Usually they share the body of the network and each has a small branch of its own (a Dense or two) before its
+Output. The network returns all outputs; the run reports the main task as usual (and its score decides early stopping and the best
+epoch) and every extra output in a table: accuracy, micro F1 and mAP, or R$^2$, MAE and RMSE per number, in the numbers' own units. The
+Train tab's chart draws each output's validation score.
+
 \subsection{Sentinel-1 and Sentinel-2 together (fusion)}
 \label{sec:fusion}
 Radar sees through clouds and shows water and structure; optical bands show vegetation and colour. Under \ui{Second band group (fusion)}

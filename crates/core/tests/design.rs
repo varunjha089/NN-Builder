@@ -703,3 +703,49 @@ fn custom_pytorch_blocks() {
     let old: Graph = serde_json::from_str("{\"nodes\": [], \"edges\": []}").unwrap();
     assert!(old.python.is_empty());
 }
+
+#[test]
+fn several_outputs_multi_task() {
+    use nnb_core::dataset::Head;
+    let heads = vec![
+        Head { name: "biomass".into(), task: "regress".into(), columns: vec!["biomass".into(), "height".into()], loss: "huber".into(), weight: 0.5, ..Default::default() },
+        Head { name: "wet".into(), task: "classify".into(), columns: vec!["wet".into()], classes: vec!["dry".into(), "wet".into(), "flooded".into()], weight: 1.0, ..Default::default() },
+    ];
+    let ds = Dataset { source: "local".into(), local_dir: "/data/plots".into(), labels_csv: "labels.csv".into(), classes: vec!["forest".into(), "water".into()],
+        heads: heads.clone(), ..Default::default() };
+    assert!(ds.problems().is_empty(), "{:?}", ds.problems());
+    let text = "1 input\n2 conv 8 3x3\n3 global_pool\n4 output\n5 output 1 <- 3\n6 output 2 <- 3\n";
+    let g = nnb_core::dsl::apply(text, &Graph::default()).unwrap();
+    let a = analyze(&g, &ds);
+    assert!(a.ok, "{:?}", a.problems);
+    let out = |l: &str| a.get(&g.nodes.iter().find(|n| n.label == l).unwrap().id).unwrap().out.clone();
+    assert_eq!((out("4"), out("5"), out("6")), (Some(vec![2]), Some(vec![2]), Some(vec![3])), "each head's own size");
+    let code = train_script(&g, &ds, &a, &TrainSettings::default(), "mt").unwrap();
+    assert!(code.contains("return (t3, t4, t5)") && code.contains("out_features=3"), "{code}");
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("train.py"), &code).unwrap();
+    if let Some(o) = py_compile(&dir.path().join("train.py")) {
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    }
+    // a head without its Output, two Outputs for one head, an Output for a head that does not exist
+    let missing = nnb_core::dsl::apply("1 input\n2 global_pool\n3 output\n4 output 1 <- 2\n", &Graph::default()).unwrap();
+    assert!(analyze(&missing, &ds).problems.iter().any(|p| p.contains("\"wet\"")), "{:?}", analyze(&missing, &ds).problems);
+    let twice = nnb_core::dsl::apply("1 input\n2 global_pool\n3 output\n4 output 1 <- 2\n5 output 1 <- 2\n6 output 2 <- 2\n", &Graph::default()).unwrap();
+    let a2 = analyze(&twice, &ds);
+    assert!(a2.nodes.iter().any(|n| n.messages.iter().any(|m| m.contains("more than one Output block for biomass"))));
+    let beyond = nnb_core::dsl::apply("1 input\n2 global_pool\n3 output\n4 output 3 <- 2\n", &Graph::default()).unwrap();
+    assert!(analyze(&beyond, &ds).nodes.iter().any(|n| n.messages.iter().any(|m| m.contains("2 extra outputs"))));
+    // dataset checks: names, tasks, columns, losses, weights, sources
+    let bad = |h: Head| Dataset { heads: vec![h], ..ds.clone() }.problems();
+    assert!(bad(Head { name: "x".into(), task: "classify".into(), columns: vec!["c".into()], classes: vec!["a".into()], weight: 1.0, ..Default::default() })
+        .iter().any(|p| p.contains("at least two")));
+    assert!(bad(Head { name: "x".into(), task: "regress".into(), weight: 1.0, ..Default::default() }).iter().any(|p| p.contains("numbers to predict")));
+    assert!(bad(Head { name: "x".into(), task: "regress".into(), columns: vec!["v".into()], loss: "focal".into(), weight: 1.0, ..Default::default() })
+        .iter().any(|p| p.contains("not for this task")));
+    assert!(bad(Head { name: "x".into(), task: "regress".into(), columns: vec!["v".into()], weight: 500.0, ..Default::default() }).iter().any(|p| p.contains("weight")));
+    let builtin = Dataset { source: "builtin".into(), heads, ..Default::default() };
+    assert!(builtin.problems().iter().any(|p| p.contains("labels table")));
+    // old designs and datasets load without heads
+    let old: Dataset = serde_json::from_str("{\"source\": \"builtin\"}").unwrap();
+    assert!(old.heads.is_empty() && old.label_column.is_empty());
+}

@@ -120,6 +120,15 @@ crates/core/src/
                            design.rs custom_pytorch_blocks, text.rs custom_blocks_and_python_section, everything.nnb (Unshuffle, run by
                            CI), CI ci_multiband_check custom_blocks (trains SE + Down with a custom loss; a wrong # out: must stop at
                            the check).
+                           Several outputs (multi-task): Dataset.heads (dataset::Head: name, task classify|multilabel|regress, columns,
+                           classes, loss, weight; head_problems) + label_column (classify main task from the table; empty = folder
+                           name); Output param "head" (0 main; shapes per-head sizes via ds.head_size, one Output per head, missing
+                           heads reported; Analysis.head_names); codegen forward returns a tuple in head order (save memory off then);
+                           DSL `output N`. Harness HEADS/MULTITASK: labels are tuples (main_y/main_out/y_to/y_split), y_head per row
+                           (table or HF row, with_heads), head_stats (standardised regression heads), loss_of = main + Σ weight·head_loss,
+                           evaluate total loss + head_scores -> HEAD_SCORES ("heads" in epoch / done / results.json). UI: DatasetTab
+                           HeadsBox, Output inspector "Output for", ResultsTab table, Train chart lines. CI: ci_multiband_check
+                           multitask (class from folders + 2 numbers + a class from labels.csv).
                            Sentinel step finished: scene_split ("" random | strip = eastern tenth, one tile column gap | files =
                            scene_test_image/_label) in harness scene_split(); BigEarthNet layout: read_patch_folder (one GeoTIFF per band,
                            <patch>_<band>.tif, bands resized to the largest), label tables via read_table (CSV/TSV/Parquet, pyarrow on

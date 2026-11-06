@@ -48,6 +48,7 @@ function summary(kind: string, p: Params): string {
     case "attention": return `${p.heads} heads${Number(p.dropout) > 0 ? ` · dropout ${p.dropout}` : ""}`;
     case "token_pool": return p.mode === "mean" ? "mean of tokens" : "class token";
     case "custom": return p.class ? `class ${p.class}` : "choose a class";
+    case "output": return Number(p.head ?? 0) > 0 ? `output ${p.head}` : "";
     default: return "";
   }
 }
@@ -781,7 +782,14 @@ function Inspector({ node, result, analysis, graph, st, setParam, setParams, can
         {node.kind === "layernorm" && <p className="muted">On an image it normalises over (channels, height, width) (GroupNorm with one group); on a vector, over its features.</p>}
         {node.kind === "add" && <p className="muted">Adds two or more branches element by element (a residual connection): their shapes must be equal.</p>}
         {node.kind === "concat" && <p className="muted">Joins branches along channels (images: equal height and width) or features (vectors). The order of the arrows is the order of the channels.</p>}
-        {node.kind === "output" && <p className="muted">One score per class of the dataset ({analysis?.classes ?? "?"}); the loss applies softmax.</p>}
+        {node.kind === "output" && <>
+          {(analysis?.head_names?.length ?? 0) > 0 && <Sel label="Output for" value={String(p.head ?? 0)}
+            options={[["0", "the main task"], ...(analysis?.head_names ?? []).map((n, i): [string, string] => [String(i + 1), `${i + 1}: ${n}`])]}
+            onChange={(v) => setParam("head", Number(v))} />}
+          <p className="muted">{Number(p.head ?? 0) === 0 ? `One score per class of the dataset (${analysis?.classes ?? "?"}); the loss applies softmax.`
+            : `The extra output “${analysis?.head_names?.[Number(p.head) - 1] ?? "?"}” (Dataset tab): its classes or numbers, with its own loss.`}
+            {(analysis?.head_names?.length ?? 0) > 0 && " A multi-task network has one Output per output, usually each after its own small branch (a Dense or two) from a shared body."}</p>
+        </>}
         {node.kind === "seg_output" && <p className="muted">A 1×1 convolution giving a score per class ({analysis?.classes ?? "?"}) for every pixel. Its size must equal the input (the masks).</p>}
         {node.kind === "multiply" && <p className="muted">Multiplies two branches element by element: equal shapes, a one-channel map times an image (an attention gate: the map, after a sigmoid, weights every pixel), or one weight per channel (squeeze-and-excitation).</p>}
         {node.kind === "input" && <>

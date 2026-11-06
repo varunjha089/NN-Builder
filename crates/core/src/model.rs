@@ -93,6 +93,8 @@ pub fn defaults(kind: &str) -> Value {
         "input" => json!({"group": 0}),
         // the name of a class in the design's PyTorch code (Graph::python)
         "custom" => json!({"class": ""}),
+        // which output of a multi-task network: 0 = the main task, 1, 2, ... = the Dataset tab's extra outputs
+        "output" => json!({"head": 0}),
         _ => json!({}),
     }
 }

@@ -68,6 +68,13 @@ export function ResultsTab({ runId }: { runId: string | null }) {
           <Img img={s.image} scale={Math.max(1, Math.round(96 / s.image[0].length))} /><Img img={s.truth} scale={Math.max(1, Math.round(96 / s.truth[0].length))} />
           <Img img={s.pred} scale={Math.max(1, Math.round(96 / s.pred[0].length))} /></div><div>{(s.pixel_acc * 100).toFixed(1)}% of pixels right</div></div>)}
       </div></>}
+      {r.heads?.length > 0 && <><h3>Extra outputs</h3><table className="grid"><tbody>
+        <tr><th>Output</th><th>Predicts</th><th className="num">Score</th><th>Details</th></tr>
+        {r.heads.map((h: any) => <tr key={h.name}><td>{h.name}</td><td>{({ classify: "one class", multilabel: "several classes", regress: "numbers" } as Record<string, string>)[h.task]}</td>
+          <td className="num">{h.metric} {h.task === "regress" ? h.score.toFixed(3) : `${(h.score * 100).toFixed(2)}%`}</td>
+          <td className="small">{h.task === "regress" ? h.per_target.map((t: any) => `${t.target}: R² ${t.r2.toFixed(3)}, MAE ${fmt(t.mae)}, RMSE ${fmt(t.rmse)}`).join("; ")
+            : h.task === "multilabel" ? `mAP ${(h.map * 100).toFixed(1)}%, macro F1 ${(h.macro_f1 * 100).toFixed(1)}%` : ""}</td></tr>)}
+      </tbody></table><p className="muted small">The cards above are the main task's; these are the network's other outputs, on the same test images.</p></>}
       {r.task === "regress" && r.per_target && <>
         <table className="grid"><tbody>
           <tr><th>Target</th><th className="num">mean</th><th className="num">R²</th><th className="num">MAE</th><th className="num">RMSE</th></tr>
