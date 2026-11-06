@@ -2452,9 +2452,9 @@ def main():
         if device.type == "cuda":
             device = torch.device("cuda", RANK)
             torch.cuda.set_device(device)
-        # a long timeout: the other workers wait while rank 0 evaluates
+        # an hour: the other workers wait while rank 0 evaluates; a hang ends after it instead of using the GPU until the time limit
         torch.distributed.init_process_group("nccl" if device.type == "cuda" else "gloo", rank=RANK, world_size=WORLD,
-                                             timeout=datetime.timedelta(hours=3))
+                                             timeout=datetime.timedelta(hours=1))
         if RANK:
             torch.distributed.barrier()   # rank 0 downloads the data and weights first; the others then find them in the cache
     DEVICE = device
@@ -2889,8 +2889,12 @@ def run_parallel(n):
     if not ON_KAGGLE:
         with open(os.path.join(OUT, "py_pid.txt"), "w") as f:
             f.write(str(os.getpid()))
-    procs = [subprocess.Popen([sys.executable, os.path.abspath(__file__)], env={**os.environ, "NNB_RANK": str(r), "NNB_WORLD": str(n),
-             "MASTER_ADDR": "127.0.0.1", "MASTER_PORT": str(port)}) for r in range(n)]
+    env = {**os.environ, "NNB_WORLD": str(n), "MASTER_ADDR": "127.0.0.1", "MASTER_PORT": str(port)}
+    # GPUs without a direct link (Kaggle's T4 x2, most cloud PCIe machines) can hang in NCCL's peer-to-peer transfers (seen on Kaggle:
+    # the first broadcast never returned): exchange through the host instead, a little slower with NVLink but safe. NNB_NCCL_P2P=1 keeps P2P.
+    if os.environ.get("NNB_NCCL_P2P") != "1":
+        env.setdefault("NCCL_P2P_DISABLE", "1")
+    procs = [subprocess.Popen([sys.executable, os.path.abspath(__file__)], env={**env, "NNB_RANK": str(r)}) for r in range(n)]
 
     def forward(signum, frame):
         for p in procs:

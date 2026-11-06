@@ -138,7 +138,7 @@ Each: set the Dataset tab as described, then **Check data on Kaggle** (a few min
 ## 9. Known limits (expected, not bugs)
 
 - The Mac never trains; tests on the Mac only check designs and code.
-- Kaggle's API cannot choose the T4×2 accelerator; a Kaggle run gets one GPU.
+- Kaggle may give a notebook two T4s ("GPU T4 x2"): with GPUs = all, a Kaggle run then trains on both.
 - Not built yet: rotated boxes, COCO JSON, real dates / missing-date masks in time series, FSDP, LoRA on convolutions, per-pixel
   regression (see FUTURE_PLAN.md).
 

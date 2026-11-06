@@ -171,7 +171,8 @@ crates/core/src/
                            Several GPUs: TrainSettings.gpus (1 default, N, 0 = all; clean() ≤ 64; "gpus" in TRAIN). Harness: RANK / WORLD
                            from NNB_RANK / NNB_WORLD; __main__ -> wanted_workers() (NNB_TEST_PROCESSES = CI's CPU processes) -> run_parallel():
                            Popen of train.py per rank (MASTER_ADDR/PORT), the parent writes py_pid.txt and forwards SIGTERM/INT/HUP/USR1/USR2,
-                           exits with rank 0's code. main(): init_process_group (nccl / gloo, 3 h timeout), rank 0 loads data and weights
+                           exits with rank 0's code; workers get NCCL_P2P_DISABLE=1 (P2P hung on Kaggle T4 x2; NNB_NCCL_P2P=1
+                           keeps it). main(): init_process_group (nccl / gloo, 1 h timeout), rank 0 loads data and weights
                            first (barrier), ShardBatches (each rank every WORLD-th image of the one-GPU batch), SyncBatchNorm + DDP after the
                            one-batch check (rank 0), sync_flags (STOP / INTERRUPT / checkpoint due, MAX all-reduce) every step and at the
                            epoch end, sums all-reduced, rank 0 evaluates / checkpoints and broadcasts early stop + plateau lr; emit() and
