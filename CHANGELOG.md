@@ -3,6 +3,10 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 06_11_26_20_13_57
+
+**Docs: manual overview of everything it builds, Results per task, troubleshooting; README feature list; TEST_APP.md checklist for testing by hand** (`adb7eaa`)
+
 ## 06_11_26_20_02_13
 
 **Frozen layers, LoRA adapters, mixture of experts and early exits** (`caafa69`)
