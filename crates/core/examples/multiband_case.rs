@@ -166,6 +166,18 @@ fn main() {
             std::fs::write(format!("{d}/train.py"), train_script(&g, &ds, &a, &t, name).unwrap()).unwrap();
         }
     }
+    // transformer additions, for the behaviour checks in ci_multiband_check (causal masks, rotary positions, sinusoidal positions, RMSNorm)
+    {
+        let ds = Dataset { source: "huggingface".into(), hf_repo: "x/y".into(), image_size: [16, 16], channels: 3, classes: s(&["a", "b"]), ..Default::default() };
+        let g = nnb_core::dsl::apply("1 input\n2 conv 32 2x2 stride 2 valid none\n3 to_tokens\n4 cls_pos sinusoidal\n5 attention heads 4 rotary causal\n\
+            6 conv 48 4x4 stride 4 valid none <- 1\n7 to_tokens\n8 cross_attention heads 4 <- 5, 7\n9 rmsnorm\n10 swiglu 64\n11 concat <- 10, 5\n\
+            12 token_pool mean\n13 output\n", &Default::default()).unwrap();
+        let a = analyze(&g, &ds);
+        assert!(a.ok, "tokens: {:?}", a.problems);
+        let d = format!("{dir}/tokens");
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(format!("{d}/train.py"), train_script(&g, &ds, &a, &TrainSettings::default(), "tokens").unwrap()).unwrap();
+    }
     for (name, ds) in cases {
         assert!(ds.problems().is_empty(), "{name}: {:?}", ds.problems());
         let g = if ds.task == "segment" { &seg } else if name == "fusion" { &mid } else if name == "fusion_sizes" { &mid_sizes } else { &g };

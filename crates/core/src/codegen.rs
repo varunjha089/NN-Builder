@@ -239,26 +239,89 @@ const TOKEN_MODULES: &str = r#"class ToTokens(nn.Module):
 
 
 class ClsPos(nn.Module):
-    """a learnable class token in front (optional) and a learnable position embedding added to every token"""
-    def __init__(self, tokens, dim, cls=True):
+    """a learnable class token in front (optional) and a position embedding added to every token: learnt ("learned", ViT), fixed sines
+    and cosines ("sinusoidal", Vaswani et al.), or none"""
+    def __init__(self, tokens, dim, cls=True, pos="learned"):
         super().__init__()
+        n = tokens + (1 if cls else 0)
         self.cls = nn.Parameter(torch.zeros(1, 1, dim)) if cls else None
-        self.pos = nn.Parameter(torch.randn(1, tokens + (1 if cls else 0), dim) * 0.02)
+        if pos == "learned":
+            self.pos = nn.Parameter(torch.randn(1, n, dim) * 0.02)
+        elif pos == "sinusoidal":
+            import math
+            t = torch.arange(n, dtype=torch.float32)[:, None]
+            f = torch.exp(torch.arange(0, dim, 2, dtype=torch.float32) * (-math.log(10000.0) / dim))
+            pe = torch.zeros(1, n, dim)
+            pe[0, :, 0::2], pe[0, :, 1::2] = torch.sin(t * f), torch.cos(t * f)
+            self.register_buffer("pos", pe, persistent=False)
+        else:
+            self.pos = None
 
     def forward(self, x):
         if self.cls is not None:
             x = torch.cat([self.cls.expand(x.shape[0], -1, -1), x], dim=1)
-        return x + self.pos
+        return x if self.pos is None else x + self.pos
+
+
+def rotate(x):
+    """rotary positions (Su et al., RoFormer): pairs of each head's values turned by an angle that grows with the position"""
+    n, d = x.shape[-2], x.shape[-1]
+    f = 1.0 / (10000.0 ** (torch.arange(0, d, 2, device=x.device, dtype=torch.float32) / d))
+    ang = torch.arange(n, device=x.device, dtype=torch.float32)[:, None] * f
+    cos, sin = ang.cos().to(x.dtype), ang.sin().to(x.dtype)
+    a, b = x[..., 0::2], x[..., 1::2]
+    return torch.stack([a * cos - b * sin, a * sin + b * cos], -1).flatten(-2)
 
 
 class SelfAttention(nn.Module):
-    """multi-head self-attention over the tokens"""
-    def __init__(self, dim, heads, dropout=0.0):
+    """multi-head self-attention over the tokens; causal: each token sees only itself and those before it; rotary: positions as rotations
+    of the queries and keys (then the projections are written out, with the same parameters as nn.MultiheadAttention)"""
+    def __init__(self, dim, heads, dropout=0.0, causal=False, rotary=False):
         super().__init__()
-        self.mha = nn.MultiheadAttention(dim, heads, dropout=dropout, batch_first=True)
+        self.heads, self.causal, self.rotary, self.dropout = heads, causal, rotary, dropout
+        if rotary:
+            self.qkv, self.out = nn.Linear(dim, 3 * dim), nn.Linear(dim, dim)
+        else:
+            self.mha = nn.MultiheadAttention(dim, heads, dropout=dropout, batch_first=True)
 
     def forward(self, x):
-        return self.mha(x, x, x, need_weights=False)[0]
+        if not self.rotary:
+            mask = torch.ones(x.shape[1], x.shape[1], dtype=torch.bool, device=x.device).triu(1) if self.causal else None
+            return self.mha(x, x, x, need_weights=False, attn_mask=mask)[0]
+        b, n, d = x.shape
+        q, k, v = self.qkv(x).view(b, n, 3, self.heads, d // self.heads).permute(2, 0, 3, 1, 4)
+        y = nn.functional.scaled_dot_product_attention(rotate(q), rotate(k), v, dropout_p=self.dropout if self.training else 0.0, is_causal=self.causal)
+        return self.out(y.transpose(1, 2).reshape(b, n, d))
+
+
+class CrossAttention(nn.Module):
+    """multi-head attention from one token sequence (the queries) to another (keys and values)"""
+    def __init__(self, dim, kdim, heads, dropout=0.0):
+        super().__init__()
+        self.mha = nn.MultiheadAttention(dim, heads, dropout=dropout, kdim=kdim, vdim=kdim, batch_first=True)
+
+    def forward(self, q, kv):
+        return self.mha(q, kv, kv, need_weights=False)[0]
+
+
+class RMSNorm(nn.Module):
+    """x / sqrt(mean(x²) + eps) × a learnt scale per value (Zhang & Sennrich; LLaMA): LayerNorm without the mean and the shift"""
+    def __init__(self, dim, eps=1e-6):
+        super().__init__()
+        self.eps, self.weight = eps, nn.Parameter(torch.ones(dim))
+
+    def forward(self, x):
+        return x * torch.rsqrt(x.float().pow(2).mean(-1, keepdim=True) + self.eps).to(x.dtype) * self.weight
+
+
+class SwiGLU(nn.Module):
+    """a gated MLP (Shazeer; LLaMA): W2 (silu(W1 x) * W3 x), back to the input's width, without biases"""
+    def __init__(self, dim, units):
+        super().__init__()
+        self.w1, self.w3, self.w2 = nn.Linear(dim, units, bias=False), nn.Linear(dim, units, bias=False), nn.Linear(units, dim, bias=False)
+
+    def forward(self, x):
+        return self.w2(nn.functional.silu(self.w1(x)) * self.w3(x))
 
 
 class TokenPool(nn.Module):
@@ -420,12 +483,28 @@ fn modules(n: &Node, a: &Analysis, classes: usize) -> Vec<String> {
         "to_tokens" => m.push(format!("ToTokens({:?})", shapes::text(p, "mode", &["patches", "rows"], "patches"))),
         "cls_pos" => {
             let cls = p.get("cls").and_then(|v| v.as_bool()).unwrap_or(true);
-            m.push(format!("ClsPos(tokens={}, dim={}, cls={})", inp[0], inp[1], if cls { "True" } else { "False" }));
+            let pos = shapes::text(p, "pos", &["learned", "sinusoidal", "none"], "learned");
+            m.push(if pos == "learned" { format!("ClsPos(tokens={}, dim={}, cls={})", inp[0], inp[1], if cls { "True" } else { "False" }) } else {
+                format!("ClsPos(tokens={}, dim={}, cls={}, pos={pos:?})", inp[0], inp[1], if cls { "True" } else { "False" })
+            });
         }
         "attention" => {
             let drop = p.get("dropout").and_then(|v| v.as_f64()).unwrap_or(0.0).clamp(0.0, 0.9);
-            m.push(format!("SelfAttention(dim={}, heads={}, dropout={})", inp[1], int(p, "heads", 4, 1, crate::shapes::MAX_HEADS), drop));
+            let flag = |k: &str| p.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+            let extra = match (flag("causal"), flag("rotary")) {
+                (false, false) => String::new(),
+                (c, r) => format!(", causal={}, rotary={}", if c { "True" } else { "False" }, if r { "True" } else { "False" }),
+            };
+            m.push(format!("SelfAttention(dim={}, heads={}, dropout={}{extra})", inp[1], int(p, "heads", 4, 1, crate::shapes::MAX_HEADS), drop));
         }
+        "cross_attention" => {
+            let drop = p.get("dropout").and_then(|v| v.as_f64()).unwrap_or(0.0).clamp(0.0, 0.9);
+            let kv = r.inputs.get(1).cloned().unwrap_or_default();
+            m.push(format!("CrossAttention(dim={}, kdim={}, heads={}, dropout={drop})", inp[1], kv.get(1).copied().unwrap_or(inp[1]),
+                int(p, "heads", 4, 1, crate::shapes::MAX_HEADS)));
+        }
+        "rmsnorm" => m.push(format!("RMSNorm({})", inp.last().copied().unwrap_or(1))),
+        "swiglu" => m.push(format!("SwiGLU({}, {})", inp.last().copied().unwrap_or(1), int(p, "units", 128, 1, 1 << 20))),
         "token_pool" => m.push(format!("TokenPool({:?})", shapes::text(p, "mode", &["cls", "mean", "last"], "cls"))),
         "dropout" => {
             let rate = p.get("rate").and_then(|v| v.as_f64()).unwrap_or(0.25).clamp(0.0, 0.95);
@@ -578,7 +657,7 @@ fn model_code_opts(g: &Graph, a: &Analysis, save_memory: bool) -> Result<String>
         result_var = format!("({})", heads_out.iter().map(|(_, v)| v.as_str()).collect::<Vec<_>>().join(", "));
     }
     let mut s = String::new();
-    if g.nodes.iter().any(|n| order.contains(&n.id.as_str()) && matches!(n.kind.as_str(), "to_tokens" | "cls_pos" | "attention" | "token_pool")) {
+    if g.nodes.iter().any(|n| order.contains(&n.id.as_str()) && matches!(n.kind.as_str(), "to_tokens" | "cls_pos" | "attention" | "token_pool" | "cross_attention" | "rmsnorm" | "swiglu")) {
         s += TOKEN_MODULES;
     }
     if g.nodes.iter().any(|n| order.contains(&n.id.as_str()) && matches!(n.kind.as_str(), "temporal_pool" | "to_sequence" | "lstm" | "gru" | "conv1d")) {

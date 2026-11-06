@@ -439,6 +439,42 @@ def timeseries(root):
     print(f"timeseries: sequence path accuracy {done['test_acc']}; crop map (GeoTIFF date by date) pixel accuracy {done2['test_acc']}, mIoU {done2['miou']}")
 
 
+def transformer_math(root):
+    """the transformer additions do what they say: a causal mask hides later tokens, rotary scores depend only on the distance between
+    tokens, sinusoidal positions are the fixed sines and cosines, RMSNorm gives an RMS of 1, and the whole network trains one step"""
+    import importlib.util
+    import torch
+    spec = importlib.util.spec_from_file_location("tokens_net", os.path.join(os.path.abspath(root), "tokens", "train.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    torch.manual_seed(0)
+    x = torch.randn(2, 10, 32)
+    for rotary in (False, True):
+        att = m.SelfAttention(32, 4, causal=True, rotary=rotary).eval()
+        y = att(x)
+        x2 = x.clone()
+        x2[:, 6:] = torch.randn(2, 4, 32)   # change only the tokens from position 6 on
+        y2 = att(x2)
+        assert torch.allclose(y[:, :6], y2[:, :6], atol=1e-6), f"causal (rotary {rotary}): a token saw a later one"
+        assert not torch.allclose(y[:, 6:], y2[:, 6:]), "the later tokens did change"
+    q = torch.randn(1, 1, 1, 16).expand(1, 1, 12, 16)   # the same query and key at every position
+    k = torch.randn(1, 1, 1, 16).expand(1, 1, 12, 16)
+    s = (m.rotate(q) @ m.rotate(k).transpose(-1, -2))[0, 0]
+    assert torch.allclose(s[:-1, :-1], s[1:, 1:], atol=1e-4), "rotary: the score of positions (i, j) depends on i - j only"
+    pe = m.ClsPos(9, 32, cls=True, pos="sinusoidal").pos
+    assert pe.shape == (1, 10, 32) and torch.allclose(pe[0, 0, 0::2], torch.zeros(16)) and torch.allclose(pe[0, 0, 1::2], torch.ones(16))
+    assert abs(float(pe[0, 3, 0]) - __import__("math").sin(3.0)) < 1e-5
+    r = m.RMSNorm(32)(x)
+    assert torch.allclose(r.pow(2).mean(-1), torch.ones(2, 10), atol=1e-4), "RMSNorm: RMS 1 per token"
+    net = m.Net()
+    out = net(torch.randn(4, 3, 16, 16))
+    out.sum().backward()
+    n = sum(p.numel() for p in net.parameters())
+    assert out.shape == (4, 2) and all(p.grad is not None for p in net.parameters() if p.requires_grad), "every weight gets a gradient"
+    print(f"transformer: causal masks (plain and rotary) hide later tokens, rotary scores depend on distance only, sinusoidal positions, "
+          f"RMSNorm; the cross-attention / SwiGLU network ({n} parameters) runs forward and backward")
+
+
 def custom_blocks(root):
     """the design's own PyTorch classes train like any block, the custom loss is used, and a wrong '# out:' line stops the run at the
     one-batch check with a message naming the block"""
@@ -647,6 +683,7 @@ if __name__ == "__main__":
     multitask(sys.argv[1])
     siamese(sys.argv[1])
     timeseries(sys.argv[1])
+    transformer_math(sys.argv[1])
     cloud(sys.argv[1])
     ben(sys.argv[1])
     pretrained_ms(sys.argv[1])

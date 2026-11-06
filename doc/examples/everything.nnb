@@ -92,7 +92,7 @@ def up(c, k = 2) {
 15 dropout 0.1
 16 repeat depth {
      a ln
-     b attention heads heads drop 0.1
+     b attention heads heads drop 0.1 rotary
      c add <- in, b
      d layernorm
      e dense 32 * 2 gelu
@@ -101,6 +101,10 @@ def up(c, k = 2) {
      h add <- c, g
    }
 17 ln
+# the encoder's tokens ask the embedded patches (cross-attention), then an LLaMA-style norm and gated MLP
+ca cross_attention heads 2 <- 17, 14
+rn rmsnorm
+sw swiglu 64
 18 token_pool cls
 
 # a CNN head on the decoder output, joined with the transformer's vector

@@ -808,3 +808,40 @@ fn siamese_shared_weights() {
     assert!(msg("1 input 1\n2 maxpool 2x2\n3 input 2\n4 shared 2\n5 add <- 2, 4\n6 global_pool\n7 output\n", "4").contains("no weights to share"));
     assert!(msg("1 input 1\n2 conv 8 3x3\n3 input 2\n4 shared 2\n5 shared 4 <- 3\n6 add <- 2, 4\n7 add <- 6, 5\n8 global_pool\n9 output\n", "5").contains("original block"));
 }
+
+#[test]
+fn transformer_additions() {
+    let ds = Dataset { source: "huggingface".into(), hf_repo: "x/y".into(), image_size: [16, 16], channels: 3, classes: vec!["a".into(), "b".into()], ..Default::default() };
+    // 3×16×16 -> 8×8 patches of 32 values (64 tokens); a second, coarser stream of 16 tokens of 48 values
+    let text = "1 input\n2 conv 32 2x2 stride 2 valid none\n3 to_tokens\n4 cls_pos sinusoidal\n5 attention heads 4 rotary causal\n\
+        6 conv 48 4x4 stride 4 valid none <- 1\n7 to_tokens\n8 cross_attention heads 4 <- 5, 7\n9 rmsnorm\n10 swiglu 64\n\
+        11 concat <- 10, 5\n12 token_pool mean\n13 output\n";
+    let g = nnb_core::dsl::apply(text, &Graph::default()).unwrap();
+    let a = analyze(&g, &ds);
+    assert!(a.ok, "{:?}", a.problems);
+    let r = |l: &str| a.get(&g.nodes.iter().find(|n| n.label == l).unwrap().id).unwrap().clone();
+    assert_eq!((r("4").params, r("4").out.clone()), (32, Some(vec![65, 32])), "sinusoidal: only the class token is learnt");
+    assert_eq!(r("5").params, 4 * 32 * 32 + 4 * 32, "rotary attention: the same projections");
+    assert_eq!((r("8").params, r("8").out.clone()), (2 * 32 * 32 + 2 * 48 * 32 + 4 * 32, Some(vec![65, 32])));
+    assert_eq!((r("9").params, r("10").params), (32, 3 * 32 * 64));
+    assert_eq!(r("11").out, Some(vec![130, 32]), "token sequences joined one after the other");
+    let code = train_script(&g, &ds, &a, &TrainSettings::default(), "tx").unwrap();
+    for part in ["ClsPos(tokens=64, dim=32, cls=True, pos=\"sinusoidal\")", "SelfAttention(dim=32, heads=4, dropout=0, causal=True, rotary=True)",
+        "CrossAttention(dim=32, kdim=48, heads=4, dropout=0)", "RMSNorm(32)", "SwiGLU(32, 64)"] {
+        assert!(code.contains(part), "{part} in\n{code}");
+    }
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("train.py"), &code).unwrap();
+    if let Some(o) = py_compile(&dir.path().join("train.py")) {
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    }
+    // problems: odd head width with rotary, cross-attention on an image, concat of tokens of different widths
+    let msg = |t: &str, l: &str| {
+        let g = nnb_core::dsl::apply(t, &Graph::default()).unwrap();
+        let a = analyze(&g, &ds);
+        a.get(&g.nodes.iter().find(|n| n.label == l).unwrap().id).unwrap().messages.join(" ")
+    };
+    assert!(msg("1 input\n2 conv 6 2x2 stride 2\n3 to_tokens\n4 attention heads 2 rotary\n5 token_pool mean\n6 output\n", "4").contains("must be even"));
+    assert!(msg("1 input\n2 conv 8 3x3\n3 conv 8 3x3 <- 1\n4 cross_attention <- 2, 3\n5 global_pool\n6 output\n", "4").contains("token sequences"));
+    assert!(msg("1 input\n2 conv 8 2x2 stride 2\n3 to_tokens\n4 conv 4 2x2 stride 2 <- 1\n5 to_tokens\n6 concat <- 3, 5\n7 token_pool mean\n8 output\n", "6").contains("dimension must match"));
+}

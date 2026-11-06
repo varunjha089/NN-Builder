@@ -671,6 +671,33 @@ def read_array(path, order=None):
 TIME = int(DATASET.get("time_steps") or 0)
 
 
+FILL_NOTE = [False]
+
+
+def fill_dates(t):
+    """a time series (bands, dates, H, W) whose dates are completely empty (all NaN: clouds, no acquisition) gets them from the dates
+    around: the straight line between the nearest earlier and later dates, or the nearest one at the ends"""
+    empty = [bool(torch.isnan(t[:, d]).all()) for d in range(t.shape[1])]
+    if not any(empty):
+        return t
+    have = [d for d, e in enumerate(empty) if not e]
+    if not have:
+        return t
+    if not FILL_NOTE[0]:
+        FILL_NOTE[0] = True
+        emit("info", message="some samples have empty dates (no data at all): they are filled from the dates before and after")
+    t = t.clone()
+    for d in (d for d, e in enumerate(empty) if e):
+        before, after = [x for x in have if x < d], [x for x in have if x > d]
+        if before and after:
+            a, b = before[-1], after[0]
+            w = (d - a) / (b - a)
+            t[:, d] = t[:, a] * (1 - w) + t[:, b] * w
+        else:
+            t[:, d] = t[:, (before or after)[-1 if before else 0]]
+    return t
+
+
 def time_orient(a, order, name="a sample"):
     """a time series as float32 (bands of the files, dates, H, W), from (dates, bands, H, W), (dates, H, W, bands), (bands, dates, H, W),
     or a GeoTIFF whose bands go date by date ((dates·bands, H, W) or (H, W, dates·bands): all bands of date 1, then of date 2, ...)"""
@@ -781,7 +808,7 @@ def read_groups(path, resize=True):
         p = path if k == 0 else fuse_path(path)
         if TIME:
             # (bands, dates, H, W): the chosen bands of every date, each date resized like an image
-            t = torch.from_numpy(np.ascontiguousarray(pick_bands(time_orient(load_raw(p), g["order"], os.path.basename(p)), g)))
+            t = fill_dates(torch.from_numpy(np.ascontiguousarray(pick_bands(time_orient(load_raw(p), g["order"], os.path.basename(p)), g))))
             h, w = DATASET["image_size"]
             if resize and tuple(t.shape[2:]) != (h, w):
                 c, n = t.shape[:2]

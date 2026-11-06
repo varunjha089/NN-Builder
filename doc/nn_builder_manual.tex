@@ -446,7 +446,11 @@ Multiply & see notes & equal shapes; a one-channel map times an image (attention
 To tokens & $(C,H,W)\rightarrow(N,D)$ & \emph{patches}: every pixel of the feature map becomes a token of $C$ values ($N=HW$), used after a patch convolution as in ViT~\cite{dosovitskiy2020vit}; \emph{rows}: every image row is a token\\
 Class token + position & $(N,D)\rightarrow(N{+}1,D)$ & a learnt class token in front, and learnt position embeddings added\\
 Self-attention & $(N,D)\rightarrow(N,D)$ & heads, dropout; multi-head scaled dot-product attention~\cite{vaswani2017attention}\\
-Token pool & $(N,D)\rightarrow(D)$ & the class token, or the mean of all tokens\\
+Token pool & $(N,D)\rightarrow(D)$ & the class token, the mean of all tokens, or the last one (after an LSTM / GRU)\\
+Cross-attention & $(N,D),(M,D_2)\rightarrow(N,D)$ & the first input's tokens attend to the second's (queries; keys and values); heads,
+dropout\\
+RMSNorm & same shape & per token: divided by its root mean square, times a learnt scale (LLaMA)\\
+SwiGLU & same shape & the gated MLP $W_2(\mathrm{silu}(W_1x)\cdot W_3x)$; hidden units\\
 Output & $(n)\rightarrow(K)$ & $K$ = number of classes; softmax/cross-entropy is in the training script\\
 Segmentation output & $(C,H,W)\rightarrow(K,H,W)$ & a 1$\times$1 convolution giving a class score for every pixel; must match the mask size\\
 Conv3D & $(C,T,H,W)\rightarrow(F,T',H',W')$ & a time series: filters, kernel (pixels), dates per window, stride (pixels), padding same
@@ -489,6 +493,18 @@ The loss can be your own as well: \ui{Loss: your own (Python)} in the Train tab 
 (an example for the task is filled in). \texttt{out} is the network's output for a batch and \texttt{y} the labels as the data gives
 them (class numbers; 0/1 per class for multi-label; a class per pixel with $-100$ for unlabelled pixels; the standardised targets for
 regression); it returns one number. The validation loss uses it too.
+
+\subsection{Transformer options: masks, positions, LLaMA-style blocks, cross-attention}
+\label{sec:transformer-extra}
+\ui{Self-attention} has two switches: \ui{causal} (each token sees only itself and the tokens before it, as in a decoder or for a time
+series that must not look ahead) and \ui{rotary positions} (RoPE: the queries and keys are rotated by an angle that grows with the
+position, so attention depends on how far apart two tokens are; use it with \ui{Positions: none} in Class token + position).
+\ui{Positions} can also be fixed sines and cosines (no parameters). \ui{RMSNorm} and \ui{SwiGLU} give LLaMA-style blocks (RMSNorm
+$\rightarrow$ attention $\rightarrow$ Add, RMSNorm $\rightarrow$ SwiGLU $\rightarrow$ Add). \ui{Cross-attention} joins two token streams:
+the first arrow's tokens ask, the second's are looked at, e.g.\ Sentinel-2 patch tokens attending to Sentinel-1 tokens (mid fusion with
+attention instead of Concat), or one date's tokens attending to the others. Concat joins token sequences one after the other. In a
+time series, dates with no data at all (every pixel empty) are filled from the dates before and after, so attention needs no mask for
+them; a token embedding for text is not part of NN Builder (it trains on images).
 
 \subsection{Transformers in NN Builder}
 A transformer works on a \emph{sequence of tokens}, shape $(N, D)$: $N$ tokens of $D$ values. To use one on images:

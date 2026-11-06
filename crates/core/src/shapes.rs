@@ -76,7 +76,8 @@ pub fn limits(kind: &str) -> &'static [(&'static str, i64, i64)] {
         "pool2d" => &[("size", 1, 8), ("stride", 1, 32), ("padding", 0, 4)],
         "upsample" => &[("scale", 2, 8)],
         "groupnorm" => &[("groups", 1, MAX_FILTERS)],
-        "attention" => &[("heads", 1, MAX_HEADS)],
+        "attention" | "cross_attention" => &[("heads", 1, MAX_HEADS)],
+        "swiglu" => &[("units", 1, 1 << 20)],
         "dense" => &[("units", 1, 1 << 20)],
         "conv3d" => &[("filters", 1, MAX_FILTERS), ("kernel", 1, 15), ("tkernel", 1, 15), ("stride", 1, 8)],
         "lstm" | "gru" => &[("units", 1, 1 << 16)],
@@ -89,7 +90,7 @@ pub fn limits(kind: &str) -> &'static [(&'static str, i64, i64)] {
 pub fn float_limits(kind: &str) -> &'static [(&'static str, f64, f64)] {
     match kind {
         "dropout" => &[("rate", 0.0, 0.95)],
-        "attention" => &[("dropout", 0.0, 0.9)],
+        "attention" | "cross_attention" => &[("dropout", 0.0, 0.9)],
         _ => &[],
     }
 }
@@ -433,6 +434,13 @@ fn macs(r: &NodeResult, bias: bool) -> u64 {
             let (n, d) = (out[0] as u64, out[1] as u64);
             4 * n * d * d + 2 * n * n * d
         }
+        // query and output projections 2·N·d², key and value projections 2·M·dk·d, scores and mixing 2·N·M·d
+        "cross_attention" => {
+            let (n, d) = (out[0] as u64, out[1] as u64);
+            let (m, dk) = r.inputs.get(1).map(|s| (s[0] as u64, s[1] as u64)).unwrap_or((0, 0));
+            2 * n * d * d + 2 * m * dk * d + 2 * n * m * d
+        }
+        "swiglu" => r.params * if out.len() == 2 { out[0] as u64 } else { 1 },
         _ => 0,
     }
 }
@@ -451,7 +459,7 @@ fn warn(r: &mut NodeResult, m: &str) {
 
 /// the kinds whose layer has weights another block can share
 pub const SHAREABLE: &[&str] = &["conv2d", "dwconv2d", "convtranspose2d", "dense", "batchnorm", "layernorm", "groupnorm", "attention", "cls_pos",
-    "custom", "output", "seg_output", "conv3d", "lstm", "gru", "conv1d", "temporal_pool"];
+    "custom", "output", "seg_output", "conv3d", "lstm", "gru", "conv1d", "temporal_pool", "rmsnorm", "swiglu"];
 
 /// a Shared-weights block: the shape the shared block's layer gives on this input (which must have the shape that block's input has,
 /// or the weights would not fit); no parameters of its own
@@ -820,7 +828,12 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
                 return None;
             }
             let cls = p.get("cls").and_then(|v| v.as_bool()).unwrap_or(true) as usize;
-            r.params = (cls * x[1] + (x[0] + cls) * x[1]) as u64;
+            let learned = text(p, "pos", &["learned", "sinusoidal", "none"], "learned") == "learned";
+            if text(p, "pos", &["learned", "sinusoidal", "none"], "learned") == "sinusoidal" && !x[1].is_multiple_of(2) {
+                err(r, &format!("Sinusoidal positions pair sines and cosines: the token dimension {} must be even.", x[1]));
+                return None;
+            }
+            r.params = (cls * x[1] + if learned { (x[0] + cls) * x[1] } else { 0 }) as u64;
             vec![x[0] + cls, x[1]]
         }
         "attention" => {
@@ -833,8 +846,47 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
                 err(r, &format!("The token dimension {} must divide evenly by the number of heads {h}.", x[1]));
                 return None;
             }
+            if p.get("rotary").and_then(|v| v.as_bool()).unwrap_or(false) && !(x[1] / h).is_multiple_of(2) {
+                err(r, &format!("Rotary positions rotate pairs of values: each head's width {} / {h} = {} must be even.", x[1], x[1] / h));
+                return None;
+            }
             let d = x[1] as u64;
             r.params = 4 * d * d + 4 * d;
+            x.clone()
+        }
+        "cross_attention" => {
+            if ins.len() != 2 || ins.iter().any(|s| s.len() != 2) {
+                err(r, &if ins.len() != 2 { "Cross-attention takes two inputs: the tokens that ask (first arrow) and the tokens they look at (second).".to_string() } else {
+                    format!("Cross-attention works on token sequences (tokens, dimension), but its inputs are {}.", ins.iter().map(|s| fmt(s)).collect::<Vec<_>>().join(" and "))
+                });
+                return None;
+            }
+            let (q, kv) = (&ins[0], &ins[1]);
+            let h = int(p, "heads", 4, 1, MAX_HEADS);
+            if !q[1].is_multiple_of(h) {
+                err(r, &format!("The asking tokens' dimension {} must divide evenly by the number of heads {h}.", q[1]));
+                return None;
+            }
+            let (d, dk) = (q[1] as u64, kv[1] as u64);
+            // queries d×d, keys and values dk×d each, the output d×d, with their biases
+            r.params = 2 * d * d + 2 * dk * d + 4 * d;
+            q.clone()
+        }
+        "rmsnorm" => {
+            if !(is2 || x.len() == 1) {
+                err(r, &format!("RMSNorm normalises each token (or vector) over its values, but its input is {}: use it on tokens or vectors.", fmt(&x)));
+                return None;
+            }
+            r.params = *x.last().unwrap() as u64;
+            x.clone()
+        }
+        "swiglu" => {
+            if !(is2 || x.len() == 1) {
+                err(r, &format!("SwiGLU is a gated MLP for tokens (or vectors), but its input is {}.", fmt(&x)));
+                return None;
+            }
+            let (d, u) = (*x.last().unwrap() as u64, int(p, "units", 128, 1, 1 << 20) as u64);
+            r.params = 3 * d * u;
             x.clone()
         }
         "token_pool" => {
@@ -924,8 +976,13 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
         }
         "concat" => {
             if is2 {
-                err(r, "Concat on token sequences is not supported yet.");
-                return None;
+                // token sequences are joined one after the other: (N1 + N2, D)
+                if ins.iter().any(|s| s.len() != 2 || s[1] != x[1]) {
+                    err(r, &format!("Concat joins token sequences one after the other, so their dimension must match, but they are {}.",
+                        ins.iter().map(|s| fmt(s)).collect::<Vec<_>>().join(" and ")));
+                    return None;
+                }
+                return Some(vec![ins.iter().map(|s| s[0]).sum(), x[1]]);
             }
             if ins.iter().any(|s| s.len() != x.len()) {
                 err(r, "Concat cannot join an image and a flat vector.");

@@ -104,7 +104,9 @@ escape hatch, 2-D only, supervised only, one GPU. The steps below, in this order
    axis of T×C in one GeoTIFF; Earth Engine script for monthly composites), Conv3d / Conv1d and their pools, temporal attention over
    the date axis per pixel (U-TAE-style) and over tokens (TSViT-style), LSTM / GRU, date encodings; per-pixel crop-type
    segmentation (PASTIS-style) and per-patch classification.
-7. **Transformer additions:** cross-attention (two inputs, needs step 4), attention masks (causal / padding; needed by step 6 for
+7. **Transformer additions:** *Done 2026-11-06 (CI-tested): causal masks, rotary and sinusoidal positions, RMSNorm, SwiGLU,
+   cross-attention, token concat; empty dates of a time series filled from their neighbours. Left: padding masks (sequences of different
+   lengths), token embeddings for text (no text datasets in the app), KV-cache / generation.* The plan: cross-attention (two inputs, needs step 4), attention masks (causal / padding; needed by step 6 for
    missing dates), sinusoidal and rotary positions, RMSNorm, gated MLP (SwiGLU); token embeddings for text.
 8. **Object detection:** an anchor-free head (FCOS / CenterNet style) with box losses and box mAP, box datasets (COCO / YOLO txt),
    boxes drawn in the mistakes gallery; needs steps 2 and 4.

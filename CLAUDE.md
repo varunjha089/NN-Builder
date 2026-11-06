@@ -153,6 +153,12 @@ crates/core/src/
                            per-date resize, normalise any rank, composite = median of the dates, no channels-last with Conv3d. DatasetTab
                            "a time series" + dates; Design palette "Time series". Tests: text.rs timeseries_design (doc/examples/
                            timeseries.nnb, also in dump_cases = CI PyTorch compare), time_series_blocks_in_text; CI ts_seq + ts_seg.
+                           Transformer additions: attention causal / rotary (SelfAttention writes q/k/v out for rotary: same parameters,
+                           rotate()), cls_pos pos learned | sinusoidal | none, kinds cross_attention (two inputs, CrossAttention with kdim),
+                           rmsnorm (RMSNorm), swiglu (SwiGLU, units); concat joins token sequences (N1 + N2, D). DSL causal, rotary/rope,
+                           sinusoidal, nopos, xattn, rms, swiglu N. Harness fill_dates (empty dates of a time series interpolated). CI:
+                           ci_multiband_check transformer_math (imports the generated tokens/train.py: causal, rotary distance-only scores,
+                           sinusoidal values, RMSNorm, forward + backward); everything.nnb has ca / rn / sw and rotary attention.
                            Sentinel step finished: scene_split ("" random | strip = eastern tenth, one tile column gap | files =
                            scene_test_image/_label) in harness scene_split(); BigEarthNet layout: read_patch_folder (one GeoTIFF per band,
                            <patch>_<band>.tif, bands resized to the largest), label tables via read_table (CSV/TSV/Parquet, pyarrow on

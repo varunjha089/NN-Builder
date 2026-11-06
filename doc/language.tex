@@ -331,12 +331,16 @@ No values; the inputs come after \texttt{<-}: \texttt{add <- 2, 5} (same shapes,
 joined in this order; same height and width), \texttt{mul <- 4, 6} (element-wise; a vector of $C$ values may multiply a $(C, H, W)$
 image: an attention gate or squeeze-and-excitation). Two or more inputs.
 
-\subsubsection*{Transformer blocks: \texttt{to\_tokens}, \texttt{cls\_pos}, \texttt{attention}, \texttt{token\_pool}}
+\subsubsection*{Transformer blocks: \texttt{to\_tokens}, \texttt{cls\_pos}, \texttt{attention}, \texttt{cross\_attention}, \texttt{rmsnorm},
+\texttt{swiglu}, \texttt{token\_pool}}
 \begin{Verbatim}[fontsize=\small]
 LABEL to_tokens [patches | rows]
-LABEL cls_pos [cls | nocls]
-LABEL attention [heads] HEADS [drop RATE]
-LABEL token_pool [cls | mean]
+LABEL cls_pos [cls | nocls] [learned | sinusoidal | nopos]
+LABEL attention [heads] HEADS [drop RATE] [causal] [rotary]
+LABEL cross_attention [heads] HEADS [drop RATE] <- ASKING, LOOKED_AT       (also xattn)
+LABEL rmsnorm                                                           (also rms)
+LABEL swiglu HIDDEN
+LABEL token_pool [cls | mean | last]
 \end{Verbatim}
 \begin{verbatim}
 3 to_tokens patches        # (C, H, W) -> H·W tokens of C values;  "rows": H tokens of C·W values
@@ -347,7 +351,28 @@ LABEL token_pool [cls | mean]
 \texttt{to\_tokens}: mode \texttt{patches} / \texttt{rows} (\texttt{mode=}), default patches. \texttt{cls\_pos}: \texttt{cls} /
 \texttt{nocls} (\texttt{cls=true} / \texttt{false}), default cls. \texttt{attention} (also \texttt{attn}): heads, the plain number or
 \texttt{heads 8} (\texttt{heads=}), default 4, range 1--512, must divide the token width; dropout, \texttt{drop 0.1}
-(\texttt{dropout=}), default 0, range 0--0.9. \texttt{token\_pool}: \texttt{cls} / \texttt{mean} (\texttt{mode=}), default cls.
+(\texttt{dropout=}), default 0, range 0--0.9; \texttt{causal}: each token sees only itself and those before it; \texttt{rotary} (also
+\texttt{rope}): rotary positions (RoPE) inside the attention, each head's width must be even. \texttt{cls\_pos}'s positions:
+\texttt{learned} (default), \texttt{sinusoidal} (fixed sines and cosines; even width), \texttt{nopos} (none; \texttt{pos=}).
+\texttt{cross\_attention}: the first input's tokens are the queries, the second's the keys and values (their widths may differ); the
+output has the first input's shape. \texttt{rmsnorm}: per token, LayerNorm without centring (LLaMA). \texttt{swiglu}: the gated MLP
+$W_2(\mathrm{silu}(W_1x)\cdot W_3x)$ with HIDDEN units (\texttt{units=}, default 128), back to the token width. \texttt{token\_pool}:
+\texttt{cls} / \texttt{mean} / \texttt{last} (\texttt{mode=}), default cls. Concat joins token sequences one after the other
+(the same width).
+\begin{verbatim}
+1 input
+2 conv 64 4x4 stride 4 valid none
+3 to_tokens
+4 cls_pos nopos
+5 rmsnorm
+6 attention heads 4 rotary       # a LLaMA-style block: RMSNorm, rotary attention, RMSNorm, SwiGLU
+7 add <- 4, 6
+8 rmsnorm
+9 swiglu 256
+10 add <- 7, 9
+11 token_pool cls
+12 output
+\end{verbatim}
 
 \subsubsection*{\texttt{output}, \texttt{seg\_output}}
 \begin{Verbatim}[fontsize=\small]
@@ -502,6 +527,7 @@ In the layer table, the blocks of one \texttt{repeat}, \texttt{for} or call line
 \subsection{A design that uses everything}
 \file{doc/examples/everything.nnb} in the repository is a hybrid CNN and Transformer written only as text: functions calling functions
 with defaults and named values, a function with two inputs, \texttt{for} with tuples, \texttt{repeat} with \texttt{i}, \texttt{let} and
-every operator, paths into loop passes, a left-out label, comments, and every block kind except the segmentation output, including a Custom block with its \texttt{python} section and a shared-weights twin (92 blocks,
-186\,086 parameters, no warning at $3\times32\times32$). The test suite builds it and every example of this chapter, and GitHub Actions
+every operator, paths into loop passes, a left-out label, comments, and every block kind except the segmentation output and the time-series blocks (those are in
+\file{doc/examples/timeseries.nnb}), including a Custom block with its \texttt{python} section and a shared-weights twin, and cross-attention, RMSNorm, SwiGLU and rotary attention (95 blocks,
+196\,486 parameters, no warning at $3\times32\times32$). The test suite builds it and every example of this chapter, and GitHub Actions
 compares its layers with real PyTorch.

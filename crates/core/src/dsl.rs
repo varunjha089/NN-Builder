@@ -617,6 +617,8 @@ const ALIASES: &[(&str, (&str, &str))] = &[
     ("token_pool", ("token_pool", "")), ("output", ("output", "")), ("seg_output", ("seg_output", "")), ("custom", ("custom", "")),
     ("subtract", ("subtract", "")), ("sub", ("subtract", "")), ("shared", ("shared", "")),
     ("conv3d", ("conv3d", "")), ("temporal_pool", ("temporal_pool", "")), ("tpool", ("temporal_pool", "")),
+    ("cross_attention", ("cross_attention", "")), ("xattn", ("cross_attention", "")), ("rmsnorm", ("rmsnorm", "")), ("rms", ("rmsnorm", "")),
+    ("swiglu", ("swiglu", "")),
     ("to_sequence", ("to_sequence", "")), ("seq", ("to_sequence", "")), ("lstm", ("lstm", "")), ("gru", ("gru", "")), ("conv1d", ("conv1d", "")),
 ];
 
@@ -809,7 +811,7 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
                 (_, "pad") => "padding",
                 (_, "dil") => "dilation",
                 (_, "outpad") => "output_padding",
-                ("attention", "drop") => "dropout",
+                ("attention" | "cross_attention", "drop") => "dropout",
                 (_, other) => other,
             };
             // only the settings this block has (a stray name would be kept but do nothing)
@@ -835,7 +837,8 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
                     ("groupnorm", 1) => "groups",
                     ("pool2d", 1) => "size",
                     ("upsample", 1) => "scale",
-                    ("attention", 1) => "heads",
+                    ("attention" | "cross_attention", 1) => "heads",
+                    ("swiglu", 1) => "units",
                     ("input", 1) => "group",
                     ("output", 1) => "head",
                     ("conv3d", 1) => "filters",
@@ -909,14 +912,23 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
                         ("token_pool", "cls" | "mean") => {
                             p.insert("mode".into(), json!(lw));
                         }
+                        ("cls_pos", "learned" | "sinusoidal") => {
+                            p.insert("pos".into(), json!(lw));
+                        }
+                        ("cls_pos", "nopos") => {
+                            p.insert("pos".into(), json!("none"));
+                        }
+                        ("attention", "causal" | "rotary" | "rope") => {
+                            p.insert(if lw == "causal" { "causal" } else { "rotary" }.into(), json!(true));
+                        }
                         ("cls_pos", "cls" | "nocls") => {
                             p.insert("cls".into(), json!(lw == "cls"));
                         }
-                        ("attention", "heads") => {
+                        ("attention" | "cross_attention", "heads") => {
                             let v = next_val(&mut i, "heads")?;
                             p.insert("heads".into(), to_json("heads", &v));
                         }
-                        ("attention", "drop") => {
+                        ("attention" | "cross_attention", "drop") => {
                             let v = next_val(&mut i, "drop")?;
                             p.insert("dropout".into(), to_json("dropout", &v));
                         }
@@ -941,8 +953,9 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
                                 "upsample" => &["nearest", "bilinear"][..],
                                 "to_tokens" => &["patches", "rows"][..],
                                 "token_pool" => &["cls", "mean"][..],
-                                "cls_pos" => &["cls", "nocls"][..],
-                                "attention" => &["heads", "drop"][..],
+                                "cls_pos" => &["cls", "nocls", "learned", "sinusoidal", "nopos"][..],
+                                "cross_attention" => &["heads", "drop"][..],
+                                "attention" => &["heads", "drop", "causal", "rotary"][..],
                                 _ => &[][..],
                             });
                             // (the word itself is never suggested: it exists, just not for this block)
@@ -1087,7 +1100,15 @@ fn block_text(kind: &str, params: &Map<String, Value>) -> String {
         "activation" => take("fn", String::new(), &mut words),
         "to_tokens" => take("mode", if differs("mode") { fmt_value(&get("mode")) } else { String::new() }, &mut words),
         "token_pool" => take("mode", if differs("mode") { fmt_value(&get("mode")) } else { String::new() }, &mut words),
-        "cls_pos" => take("cls", if get("cls") == json!(false) { "nocls".into() } else { String::new() }, &mut words),
+        "cls_pos" => {
+            take("cls", if get("cls") == json!(false) { "nocls".into() } else { String::new() }, &mut words);
+            take("pos", match get("pos").as_str() { Some("sinusoidal") => "sinusoidal".into(), Some("none") => "nopos".into(), _ => String::new() }, &mut words);
+        }
+        "swiglu" => take("units", fmt_value(&get("units")), &mut words),
+        "cross_attention" => {
+            take("heads", format!("heads {}", fmt_value(&get("heads"))), &mut words);
+            take("dropout", if differs("dropout") { format!("drop {}", fmt_value(&get("dropout"))) } else { String::new() }, &mut words);
+        }
         "input" => take("group", if differs("group") { fmt_value(&get("group")) } else { String::new() }, &mut words),
         "custom" => take("class", get("class").as_str().unwrap_or("").to_string(), &mut words),
         "conv3d" => {
@@ -1119,6 +1140,8 @@ fn block_text(kind: &str, params: &Map<String, Value>) -> String {
         "attention" => {
             take("heads", format!("heads {}", fmt_value(&get("heads"))), &mut words);
             take("dropout", if differs("dropout") { format!("drop {}", fmt_value(&get("dropout"))) } else { String::new() }, &mut words);
+            take("causal", if get("causal") == json!(true) { "causal".into() } else { String::new() }, &mut words);
+            take("rotary", if get("rotary") == json!(true) { "rotary".into() } else { String::new() }, &mut words);
         }
         _ => {}
     }

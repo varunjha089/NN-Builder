@@ -63,6 +63,9 @@ pub const KINDS: &[(&str, &str)] = &[
     ("cls_pos", "Class token + position"),
     ("attention", "Self-attention"),
     ("token_pool", "Token pool"),
+    ("cross_attention", "Cross-attention"),
+    ("rmsnorm", "RMSNorm"),
+    ("swiglu", "SwiGLU (gated MLP)"),
     ("conv3d", "Conv3D (time × space)"),
     ("temporal_pool", "Temporal pool"),
     ("to_sequence", "To sequence"),
@@ -94,8 +97,14 @@ pub fn defaults(kind: &str) -> Value {
         "dense" => json!({"units": 128, "activation": "relu"}),
         "activation" => json!({"fn": "relu"}),
         "to_tokens" => json!({"mode": "patches"}),
-        "cls_pos" => json!({"cls": true}),
-        "attention" => json!({"heads": 4, "dropout": 0.0}),
+        // pos: "learned" (ViT) | "sinusoidal" (fixed, the original Transformer's) | "none" (e.g. with rotary attention)
+        "cls_pos" => json!({"cls": true, "pos": "learned"}),
+        // causal: each token sees only itself and the tokens before it; rotary: positions rotate the queries and keys (RoPE)
+        "attention" => json!({"heads": 4, "dropout": 0.0, "causal": false, "rotary": false}),
+        // the first input's tokens ask (queries), the second input's tokens answer (keys and values)
+        "cross_attention" => json!({"heads": 4, "dropout": 0.0}),
+        // a gated MLP (LLaMA): out = W2 (silu(W1 x) * W3 x), back to the input's width; units = the hidden width
+        "swiglu" => json!({"units": 128}),
         "token_pool" => json!({"mode": "cls"}),
         // time series (channels, dates, height, width): a convolution over dates and pixels; tkernel = dates per window
         "conv3d" => json!({"filters": 16, "kernel": [3, 3], "tkernel": 3, "stride": [1, 1], "padding": "same", "activation": "relu", "bias": true}),
@@ -122,7 +131,7 @@ pub fn defaults(kind: &str) -> Value {
 pub fn arity(kind: &str) -> Option<usize> {
     match kind {
         "input" => Some(0),
-        "add" | "concat" | "multiply" | "subtract" => None,
+        "add" | "concat" | "multiply" | "subtract" | "cross_attention" => None,
         _ => Some(1),
     }
 }

@@ -758,3 +758,18 @@ fn timeseries_design() {
     assert!(msg("1 input\n2 tpool\n3 conv3d 8 3x3\n", "3").contains("needs a time series"));
     assert!(msg("1 input\n2 lstm 8\n", "2").contains("To sequence"));
 }
+
+#[test]
+fn transformer_additions_in_text() {
+    let g = build("1 input\n2 to_tokens\n3 cls_pos sinusoidal\n4 attention 4 causal rotary\n5 xattn heads 2 drop 0.1 <- 4, 3\n6 rms\n7 swiglu 96\n\
+        8 cls_pos nocls nopos\n9 concat <- 7, 8\n10 token_pool mean\n11 output\n");
+    let p = |l: &str| by_label(&g, l).params.clone();
+    assert_eq!(p("3")["pos"], json!("sinusoidal"));
+    assert_eq!((p("4")["causal"].clone(), p("4")["rotary"].clone(), p("4")["heads"].clone()), (json!(true), json!(true), json!(4)));
+    assert_eq!((by_label(&g, "5").kind.as_str(), p("5")["heads"].clone(), p("5")["dropout"].clone()), ("cross_attention", json!(2), json!(0.1)));
+    assert_eq!((by_label(&g, "6").kind.as_str(), p("7")["units"].clone(), p("8")["pos"].clone()), ("rmsnorm", json!(96), json!("none")));
+    let printed = print(&g).0;
+    for l in ["cls_pos sinusoidal", "attention heads 4 causal rotary", "cross_attention heads 2 drop 0.1 <- 4, 3", "rmsnorm", "swiglu 96", "cls_pos nocls nopos"] {
+        assert!(printed.contains(l), "{l} in\n{printed}");
+    }
+}

@@ -14,14 +14,14 @@ export const COLORS: Record<string, string> = {
   batchnorm: "#8e5bb5", layernorm: "#7d4fa3", groupnorm: "#a066c9", repeat: "#0e7490", dropout: "#9c6ac6", flatten: "#9a8c1c", dense: "#4b5bb5", activation: "#6c7a89", add: "#c0392b",
   concat: "#a93226", multiply: "#b03a5b", output: "#2e8b57", seg_output: "#1f7a4d",
   to_tokens: "#0f766e", cls_pos: "#0e7490", attention: "#7c3aed", token_pool: "#0369a1", custom: "#475569", subtract: "#9b2c2c", shared: "#64748b",
-  conv3d: "#b45309", temporal_pool: "#047857", to_sequence: "#0f766e", conv1d: "#c2410c", lstm: "#6d28d9", gru: "#7e22ce",
+  cross_attention: "#6d28d9", rmsnorm: "#86198f", swiglu: "#3730a3", conv3d: "#b45309", temporal_pool: "#047857", to_sequence: "#0f766e", conv1d: "#c2410c", lstm: "#6d28d9", gru: "#7e22ce",
 };
 const GROUPS: [string, string[]][] = [
   ["Image", ["conv2d", "dwconv2d", "pool2d", "global_pool", "flatten"]],
   ["Up-sampling", ["convtranspose2d", "upsample"]],
   ["Dense and outputs", ["dense", "output", "seg_output"]],
   ["Normalise / regularise", ["batchnorm", "layernorm", "groupnorm", "dropout", "activation"]],
-  ["Transformer", ["to_tokens", "cls_pos", "attention", "token_pool"]],
+  ["Transformer", ["to_tokens", "cls_pos", "attention", "cross_attention", "rmsnorm", "swiglu", "token_pool"]],
   ["Time series", ["conv3d", "temporal_pool", "to_sequence", "conv1d", "lstm", "gru"]],
   ["Branches", ["add", "concat", "multiply", "subtract", "shared"]],
   ["Your own", ["custom"]],
@@ -47,7 +47,9 @@ function summary(kind: string, p: Params): string {
     case "activation": return `${p.fn}`;
     case "to_tokens": return p.mode === "rows" ? "rows as tokens" : "pixels/patches as tokens";
     case "cls_pos": return p.cls === false ? "position embedding" : "class token + position embedding";
-    case "attention": return `${p.heads} heads${Number(p.dropout) > 0 ? ` · dropout ${p.dropout}` : ""}`;
+    case "attention": return `${p.heads} heads${Number(p.dropout) > 0 ? ` · dropout ${p.dropout}` : ""}${p.causal ? " · causal" : ""}${p.rotary ? " · rotary" : ""}`;
+    case "cross_attention": return `${p.heads} heads · queries from the first arrow`;
+    case "swiglu": return `${p.units} hidden units`;
     case "token_pool": return p.mode === "mean" ? "mean of tokens" : p.mode === "last" ? "last step" : "class token";
     case "custom": return p.class ? `class ${p.class}` : "choose a class";
     case "output": return Number(p.head ?? 0) > 0 ? `output ${p.head}` : "";
@@ -812,12 +814,27 @@ function Inspector({ node, result, analysis, graph, st, setParam, setParams, can
           <Sel label="Tokens" value={p.mode} options={[["patches", "every pixel (patch) is a token (ViT: after a patch convolution)"], ["rows", "every image row is a token"]]} onChange={(v) => setParam("mode", v)} />
           <p className="muted">(channels, height, width) → patches: (height×width tokens, channels); rows: (height tokens, channels×width).</p>
         </>}
-        {node.kind === "cls_pos" && <label className="chk"><input type="checkbox" checked={p.cls !== false} onChange={(e) => setParam("cls", e.target.checked)} />add a learnable class token in front</label>}
+        {node.kind === "cls_pos" && <>
+          <label className="chk"><input type="checkbox" checked={p.cls !== false} onChange={(e) => setParam("cls", e.target.checked)} />add a learnable class token in front</label>
+          <Sel label="Positions" value={String(p.pos ?? "learned")} options={[["learned", "learnt (ViT)"], ["sinusoidal", "fixed sines and cosines (no parameters)"],
+            ["none", "none (e.g. with rotary attention)"]]} onChange={(v) => setParam("pos", v)} /></>}
         {node.kind === "attention" && <>
           <Num label="Heads" value={p.heads} max={512} onChange={(v) => setParam("heads", v)} />
           <Num label="Dropout" value={p.dropout} min={0} max={0.9} step={0.05} onChange={(v) => setParam("dropout", v)} />
+          <label className="chk"><input type="checkbox" checked={!!p.causal} onChange={(e) => setParam("causal", e.target.checked)} />causal: each token sees only itself and the ones before it</label>
+          <label className="chk"><input type="checkbox" checked={!!p.rotary} onChange={(e) => setParam("rotary", e.target.checked)} />rotary positions (RoPE): positions as rotations of the queries and keys</label>
           <p className="muted">Every token looks at every other token (multi-head self-attention). The token dimension must divide evenly by the number of heads. Parameters: 4·d² + 4·d.</p>
         </>}
+        {node.kind === "cross_attention" && <>
+          <Num label="Heads" value={p.heads} max={512} onChange={(v) => setParam("heads", v)} />
+          <Num label="Dropout" value={p.dropout} min={0} max={0.9} step={0.05} onChange={(v) => setParam("dropout", v)} />
+          <p className="muted">Two inputs: the first arrow's tokens ask (queries) and the second's are looked at (keys and values); the output has the
+            first's shape. E.g. Sentinel-2 tokens looking at Sentinel-1 tokens, or one time step at the others. Parameters: 2·d² + 2·d·d₂ + 4·d.</p></>}
+        {node.kind === "rmsnorm" && <p className="muted">Each token divided by the root of its mean square, times a learnt scale (LLaMA): LayerNorm
+          without centring. Parameters: d.</p>}
+        {node.kind === "swiglu" && <>
+          <Num label="Hidden units" value={p.units} max={1 << 20} onChange={(v) => setParam("units", v)} />
+          <p className="muted">The gated MLP of LLaMA-style transformers: W₂ (silu(W₁x) · W₃x), back to the token width, without biases. Parameters: 3·d·hidden.</p></>}
         {node.kind === "token_pool" && <Sel label="Use" value={p.mode} options={[["cls", "the class token (ViT)"], ["mean", "the mean of all tokens"], ["last", "the last step (after an LSTM / GRU)"]]} onChange={(v) => setParam("mode", v)} />}
         {node.kind === "activation" && <Sel label="Function" value={p.fn} options={acts.filter(([a]) => a !== "none")} onChange={(v) => setParam("fn", v)} />}
         {node.kind === "layernorm" && <p className="muted">On an image it normalises over (channels, height, width) (GroupNorm with one group); on a vector, over its features.</p>}
