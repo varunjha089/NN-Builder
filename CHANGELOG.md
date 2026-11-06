@@ -3,6 +3,14 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 06_11_26_13_01_00
+
+**CI: the loss formula check knows the multi-task globals** (`4945e8b`)
+
+## 06_11_26_12_57_26
+
+**Several outputs (multi-task): extra targets from the labels table, one Output per head, per-head loss, weight and scores** (`a38290e`)
+
 ## 06_11_26_12_35_45
 
 **Version 0.4.0** (`b98bdf4`)
