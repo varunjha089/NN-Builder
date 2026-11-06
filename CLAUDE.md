@@ -176,6 +176,14 @@ crates/core/src/
                            epoch end, sums all-reduced, rank 0 evaluates / checkpoints and broadcasts early stop + plateau lr; emit() and
                            checkpoint() silent on other ranks, which return after training. OOM with DDP: a message (no auto split).
                            Train tab "GPUs". CI: ci_multiband_check parallel (2 gloo processes: one set of events; SIGUSR1 -> 75 -> resume).
+                           Step 9: param "frozen" on any SHAREABLE block (effective keeps it only when true; DSL word frozen; shapes
+                           NodeResult.frozen + Analysis.frozen_params; codegen FROZEN list, harness requires_grad_(False)); "lora" rank on
+                           dense / attention (LoRALinear: base frozen, B·A; SelfAttention explicit projections; params count base + rank·(in+out));
+                           kind moe (MoE: router + experts, top_k, nnb_aux balancing loss × AUX_WEIGHT); kind exit_output (classify only,
+                           from a vector; forward collects exits -> self.nnb_exits, EXIT_WEIGHTS; extra_losses; exit_scores: per-exit accuracy
+                           + stopping at 90 % confidence) -> "exits" in epoch / results; ResultsTab table. DSL: frozen, lora N, moe E top K
+                           hidden U, exit W (kind_word exit / detect). CI: ci_multiband_check adapters (frozen and LoRA base weights unchanged,
+                           adapters learnt, trainable count = app's).
                            Sentinel step finished: scene_split ("" random | strip = eastern tenth, one tile column gap | files =
                            scene_test_image/_label) in harness scene_split(); BigEarthNet layout: read_patch_folder (one GeoTIFF per band,
                            <patch>_<band>.tif, bands resized to the largest), label tables via read_table (CSV/TSV/Parquet, pyarrow on

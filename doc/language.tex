@@ -340,6 +340,9 @@ LABEL attention [heads] HEADS [drop RATE] [causal] [rotary]
 LABEL cross_attention [heads] HEADS [drop RATE] <- ASKING, LOOKED_AT       (also xattn)
 LABEL rmsnorm                                                           (also rms)
 LABEL swiglu HIDDEN
+LABEL moe EXPERTS [top K] [hidden UNITS]
+LABEL exit [WEIGHT]                  an early exit (classification): needs a vector
+... frozen                           any block with weights: not trained;  dense / attention ... lora RANK: a LoRA adapter
 LABEL token_pool [cls | mean | last]
 \end{Verbatim}
 \begin{verbatim}
@@ -529,6 +532,6 @@ In the layer table, the blocks of one \texttt{repeat}, \texttt{for} or call line
 \file{doc/examples/everything.nnb} in the repository is a hybrid CNN and Transformer written only as text: functions calling functions
 with defaults and named values, a function with two inputs, \texttt{for} with tuples, \texttt{repeat} with \texttt{i}, \texttt{let} and
 every operator, paths into loop passes, a left-out label, comments, and every block kind except the segmentation output and the time-series blocks (those are in
-\file{doc/examples/timeseries.nnb}), including a Custom block with its \texttt{python} section and a shared-weights twin, and cross-attention, RMSNorm, SwiGLU and rotary attention (95 blocks,
-196\,486 parameters, no warning at $3\times32\times32$). The test suite builds it and every example of this chapter, and GitHub Actions
+\file{doc/examples/timeseries.nnb}), including a Custom block with its \texttt{python} section and a shared-weights twin, cross-attention, RMSNorm, SwiGLU and rotary attention, a mixture of experts, an early exit, a LoRA adapter and a frozen
+layer (97 blocks, 217\,396 parameters of which 16\,832 frozen, no warning at $3\times32\times32$). The test suite builds it and every example of this chapter, and GitHub Actions
 compares its layers with real PyTorch.

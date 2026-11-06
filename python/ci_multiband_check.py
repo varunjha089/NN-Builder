@@ -579,6 +579,42 @@ def parallel(root):
           f"step {res['step']}, resumed, finished all 8 epochs (test accuracy {done2['test_acc']})")
 
 
+def adapters(root):
+    """frozen layers keep their first weights, LoRA layers keep their own and learn the adapters, the trainable count is the app's
+    (total - frozen), the early exit is trained and scored, and the mixture of experts balances its experts"""
+    import importlib.util
+    import torch
+    root = os.path.abspath(root)
+    folder = os.path.join(root, "adapt")
+    ev = run(folder, os.path.join(root, "data"), "adapt")
+    total, frozen = json.load(open(os.path.join(folder, "app_params.json")))
+    start = next(e for e in ev if e["event"] == "start")
+    assert start["params"] == total - frozen, f"trainable: PyTorch {start['params']}, the app {total} - {frozen}"
+    spec = importlib.util.spec_from_file_location("adapt_net", os.path.join(folder, "train.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    torch.manual_seed(m.TRAIN["seed"])
+    first = m.Net().state_dict()   # the weights the run started from (the same seed, before anything else)
+    trained = torch.load(os.path.join(folder, "model.pt"), map_location="cpu")
+    for name in m.FROZEN:
+        for k, v in trained.items():
+            if k.startswith(name + "."):
+                assert torch.equal(v, first[k]), f"frozen {k} changed"
+    lora = [k for k in trained if k.endswith(".base.weight")]
+    assert lora and all(torch.equal(trained[k], first[k]) for k in lora), "LoRA layers' own weights must stay"
+    assert all(float(trained[k.replace(".base.weight", ".b")].abs().sum()) > 0 for k in lora), "the adapters (B, from zero) learnt"
+    res = json.load(open(os.path.join(folder, "results.json")))
+    ex = res["exits"]
+    assert len(ex["exits"]) == 1 and ex["exits"][0]["accuracy"] >= 0.8 and abs(sum(ex["early"]["share"]) - 1) < 1e-6, ex
+    done = next(e for e in ev if e["event"] == "done")
+    assert done["test_acc"] >= 0.9, done
+    moe = m.MoE(8, 4, 2, 16).train()
+    moe(torch.randn(64, 8))
+    assert moe.nnb_aux is not None and 0.5 < float(moe.nnb_aux) < 4.0, "balancing loss about 1 for an untrained router"
+    print(f"adapters: {frozen} of {total} weights frozen and unchanged, LoRA adapters learnt; early exit accuracy {ex['exits'][0]['accuracy']:.3f}, "
+          f"{ex['early']['share'][0] * 100:.0f}% of the images could leave there (accuracy then {ex['early']['accuracy']:.3f}); test accuracy {done['test_acc']}")
+
+
 def custom_blocks(root):
     """the design's own PyTorch classes train like any block, the custom loss is used, and a wrong '# out:' line stops the run at the
     one-batch check with a message naming the block"""
@@ -790,6 +826,7 @@ if __name__ == "__main__":
     transformer_math(sys.argv[1])
     detection(sys.argv[1])
     parallel(sys.argv[1])
+    adapters(sys.argv[1])
     cloud(sys.argv[1])
     ben(sys.argv[1])
     pretrained_ms(sys.argv[1])

@@ -58,7 +58,7 @@ def up(c, k = 2) {
 }
 
 1 input
-2 conv w 3x3 nobias
+2 conv w 3x3 nobias frozen
 3 bn
 4 relu
 
@@ -105,13 +105,16 @@ def up(c, k = 2) {
 ca cross_attention heads 2 <- 17, 14
 rn rmsnorm
 sw swiglu 64
+mo moe 4 top 2 hidden 32
 18 token_pool cls
 
 # a CNN head on the decoder output, joined with the transformer's vector
 19 avgpool 4x4 <- 11
 sd custom Unshuffle
 20 flatten
-21 dense 16 tanh
+# an early exit from the CNN path (trained with the same labels), a LoRA adapter and a frozen layer
+ex exit 0.3
+21 dense 16 tanh lora 2 <- 20
 # the same Dense again with the same weights (shared), on the same input: their difference |a - b| is 0, which only shows the wiring
 tw shared 21 <- 20
 df subtract abs <- 21, tw

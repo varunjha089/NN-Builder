@@ -75,6 +75,8 @@ pub const KINDS: &[(&str, &str)] = &[
     ("output", "Output"),
     ("seg_output", "Segmentation output"),
     ("detect_output", "Detection output"),
+    ("exit_output", "Early exit"),
+    ("moe", "Mixture of experts"),
     ("custom", "Custom (PyTorch)"),
     ("shared", "Shared weights"),
 ];
@@ -95,13 +97,18 @@ pub fn defaults(kind: &str) -> Value {
         "upsample" => json!({"scale": 2, "mode": "nearest"}),
         "dropout" => json!({"rate": 0.25}),
         "groupnorm" => json!({"groups": 8}),
-        "dense" => json!({"units": 128, "activation": "relu"}),
+        // lora: the rank of a low-rank adapter (0 = none): the layer's own weights are frozen and only the adapter learns
+        "dense" => json!({"units": 128, "activation": "relu", "lora": 0}),
         "activation" => json!({"fn": "relu"}),
         "to_tokens" => json!({"mode": "patches"}),
         // pos: "learned" (ViT) | "sinusoidal" (fixed, the original Transformer's) | "none" (e.g. with rotary attention)
         "cls_pos" => json!({"cls": true, "pos": "learned"}),
         // causal: each token sees only itself and the tokens before it; rotary: positions rotate the queries and keys (RoPE)
-        "attention" => json!({"heads": 4, "dropout": 0.0, "causal": false, "rotary": false}),
+        "attention" => json!({"heads": 4, "dropout": 0.0, "causal": false, "rotary": false, "lora": 0}),
+        // experts: small MLPs (units hidden); a router sends every token to its top_k experts (Switch / Mixtral)
+        "moe" => json!({"experts": 4, "top_k": 2, "units": 128}),
+        // an extra classifier part way through the network, trained with the main task's labels (its loss × weight)
+        "exit_output" => json!({"weight": 0.3}),
         // the first input's tokens ask (queries), the second input's tokens answer (keys and values)
         "cross_attention" => json!({"heads": 4, "dropout": 0.0}),
         // a gated MLP (LLaMA): out = W2 (silu(W1 x) * W3 x), back to the input's width; units = the hidden width

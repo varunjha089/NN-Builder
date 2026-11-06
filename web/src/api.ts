@@ -15,7 +15,7 @@ export interface NodeResult {
 }
 export interface Analysis {
   input: number[]; classes: number; nodes: NodeResult[]; edges: Record<string, number[]>; total_params: number; total_macs: number; problems: string[]; ok: boolean;
-  head_names?: string[];
+  head_names?: string[]; frozen_params?: number;
 }
 
 export type LocalScan = { files: number; bytes: number; complete: boolean; tifs: number; npys: number; folders: { folder: string; classes: string[]; counts?: number[] }[];

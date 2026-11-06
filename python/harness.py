@@ -1707,6 +1707,39 @@ LOSS = TRAIN.get("loss") or ""            # "" (cross-entropy / BCE; regression:
 GAMMA = float(TRAIN.get("focal_gamma") or 2.0)
 
 
+AUX_WEIGHT = 0.01   # the mixture-of-experts load-balancing loss's share (Switch Transformer)
+EXIT_SCORES = None  # the early exits' scores of the last evaluation
+
+
+def extra_losses(model, y):
+    """added to the training loss: each early exit's cross-entropy × its weight, and the experts' load-balancing losses"""
+    total = 0.0
+    for w, e in zip(EXIT_WEIGHTS, getattr(model, "nnb_exits", None) or []):
+        total = total + w * nn.functional.cross_entropy(e.float(), y)
+    for m in model.modules():
+        if getattr(m, "nnb_aux", None) is not None:
+            total = total + AUX_WEIGHT * m.nnb_aux
+    return total
+
+
+def exit_scores(exit_logits, final_logits, y, threshold=0.9):
+    """each early exit's accuracy, and what stopping early would give: every image leaves at the first exit that is at least `threshold`
+    sure (else at the end): the accuracy then and the share of images leaving at each exit"""
+    probs = [torch.softmax(e, 1) for e in exit_logits] + [torch.softmax(final_logits, 1)]
+    n = len(y)
+    left = torch.ones(n, dtype=torch.bool)
+    pred = torch.zeros(n, dtype=torch.long)
+    share = []
+    for i, p in enumerate(probs):
+        conf, cls = p.max(1)
+        go = left & ((conf >= threshold) if i < len(probs) - 1 else torch.ones(n, dtype=torch.bool))
+        pred[go], left = cls[go], left & ~go
+        share.append(float(go.float().mean()) if n else 0.0)
+    return {"exits": [{"exit": i + 1, "weight": EXIT_WEIGHTS[i], "accuracy": float((e.argmax(1) == y).float().mean()) if n else 0.0}
+                      for i, e in enumerate(exit_logits)],
+            "early": {"threshold": threshold, "accuracy": float((pred == y).float().mean()) if n else 0.0, "share": share}}
+
+
 def loss_of(out, y, smoothing=0.0):
     """the training loss: the main task's, plus each extra output's times its weight (several outputs)"""
     if DETECT:
@@ -2011,8 +2044,9 @@ def evaluate(model, loader, device):
     loss_sum, n_items, cm = 0.0, 0, torch.zeros(k * k, dtype=torch.long)
     top5 = 0 if (not SEG and not MULTILABEL and not REGRESS and not DETECT and k > 5) else None
     probs, targets = [], []
-    global HEAD_SCORES
+    global HEAD_SCORES, EXIT_SCORES
     h_out, h_y = {k: [] for k in range(1, len(HEADS) + 1)}, {k: [] for k in range(1, len(HEADS) + 1)}
+    ex_out, fin_out, ex_y = [[] for _ in EXIT_WEIGHTS], [], []
     with torch.no_grad():
         for x, yall in loader:
             if INTERRUPT:
@@ -2020,6 +2054,11 @@ def evaluate(model, loader, device):
             x, yall = x.to(device), y_to(yall, device)
             outs = model(x)
             out, y = main_out(outs).float(), main_y(yall)
+            if EXIT_WEIGHTS and not SEG:
+                for i, e in enumerate(getattr(model, "nnb_exits", None) or []):
+                    ex_out[i].append(e.float().cpu())
+                fin_out.append(out.cpu())
+                ex_y.append(y.cpu())
             for k in h_out:
                 h_out[k].append(outs[k].float().cpu())
                 h_y[k].append(yall[k].cpu())
@@ -2053,6 +2092,7 @@ def evaluate(model, loader, device):
             if top5 is not None:
                 top5 += int((out.topk(5, dim=1).indices == y.unsqueeze(1)).any(1).sum())
     HEAD_SCORES = head_scores(h_out, h_y) if MULTITASK else None
+    EXIT_SCORES = exit_scores([torch.cat(e) for e in ex_out], torch.cat(fin_out), torch.cat(ex_y)) if EXIT_WEIGHTS and fin_out else None
     if DETECT:
         # (loss, mAP@0.5 in the accuracy's place, the scores in the confusion matrix's place, mAP@0.5:0.95 in mean IoU's place)
         sc = det_scores(probs, targets)
@@ -2427,6 +2467,15 @@ def main():
             for k, prm in model.named_parameters():
                 prm.requires_grad = k not in names
             emit("info", message=f"training only {sum(p.numel() for p in model.parameters() if p.requires_grad):,} parameters (the backbone is frozen)")
+    # frozen blocks (Design: frozen), and LoRA layers' own weights, are not trained (also after ImageNet weights were loaded)
+    for name in FROZEN:
+        getattr(model, name).requires_grad_(False)
+    for m in model.modules():
+        if hasattr(m, "base") and hasattr(m, "a") and hasattr(m, "b"):
+            m.base.requires_grad_(False)
+    if FROZEN or any(hasattr(m, "base") and hasattr(m, "a") for m in model.modules()):
+        emit("info", message=f"frozen: {sum(p.numel() for p in model.parameters() if not p.requires_grad):,} weights are not trained "
+             f"({len(FROZEN)} frozen block(s), LoRA layers' own weights)")
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     train, val, test = load_data(cfg)
     if WORLD > 1 and RANK == 0:
@@ -2623,7 +2672,10 @@ def main():
                             with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp):
                                 outs = net(xs)
                                 out = main_out(outs)
-                                loss = loss_of(outs, ys_all, smoothing) * (len(ys) / len(y))
+                                loss = loss_of(outs, ys_all, smoothing)
+                                if EXIT_WEIGHTS or any(getattr(m, "nnb_aux", None) is not None for m in model.modules()):
+                                    loss = loss + extra_losses(model, ys)
+                                loss = loss * (len(ys) / len(y))
                                 if SEG and not bool((ys >= 0).any()):
                                     loss = out.float().sum() * 0.0  # no labelled pixel in this piece: nothing to learn (and no NaN)
                             scaler.scale(loss).backward()
@@ -2706,6 +2758,8 @@ def main():
                     del ev["train_acc"]
                 if val_top5 is not None:
                     ev["val_top5"] = round(val_top5, 5)
+                if EXIT_SCORES:
+                    ev["exits"] = [round(e["accuracy"], 5) for e in EXIT_SCORES["exits"]]
                 if HEAD_SCORES:
                     ev["heads"] = [{"name": h["name"], "metric": h["metric"], "score": round(h["score"], 5)} for h in HEAD_SCORES]
                 emit("epoch", **ev)
@@ -2781,6 +2835,8 @@ def main():
             res["thresholds"] = [float(t) for t in THRESH]
     if HEAD_SCORES:
         res["heads"] = HEAD_SCORES
+    if EXIT_SCORES:
+        res["exits"] = EXIT_SCORES
     if LOSS:
         res["loss"] = {"kind": LOSS, "gamma": GAMMA} if LOSS == "focal" else {"kind": LOSS}
     if LOSS_WEIGHT is not None:

@@ -192,6 +192,21 @@ fn main() {
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(format!("{d}/train.py"), train_script(&g, &ds, &a, &t, "detect").unwrap()).unwrap();
     }
+    // frozen layers, LoRA, a mixture of experts and an early exit, trained (frozen weights must stay, adapters must learn)
+    {
+        let ds = Dataset { source: "kaggle".into(), kaggle_slug: "ci/sentinel2".into(), image_size: [32, 32], sensor: "s2".into(),
+            band_order: s(SENTINEL2_BANDS), bands: s(&["B02", "B03", "B04", "B08", "B11", "B12"]), classes: s(&["forest", "water"]), ..Default::default() };
+        let g = nnb_core::dsl::apply("net \"adapters ci\"\n1 input\n2 conv 16 3x3 frozen\n3 maxpool 2x2\n4 conv 32 3x3\n5 global_pool\n6 exit 0.3\n\
+            7 conv 32 2x2 stride 2 valid <- 4\n8 to_tokens\n9 attention heads 4 lora 4\n10 moe 4 top 2 hidden 32\n11 token_pool mean\n12 dense 32 lora 4\n\
+            13 output\n", &Default::default()).unwrap();
+        let a = analyze(&g, &ds);
+        assert!(a.ok, "adapt: {:?}", a.problems);
+        let t = TrainSettings { epochs: 6, batch_size: 16, amp: false, aug_hflip: true, ..Default::default() }.clean();
+        let d = format!("{dir}/adapt");
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(format!("{d}/train.py"), train_script(&g, &ds, &a, &t, "adapt").unwrap()).unwrap();
+        std::fs::write(format!("{d}/app_params.json"), format!("[{}, {}]", a.total_params, a.frozen_params)).unwrap();
+    }
     // several GPUs (CI: two CPU processes with gloo, NNB_TEST_PROCESSES=2): a whole run, and one interrupted by a spot notice and resumed
     {
         let ds = Dataset { source: "kaggle".into(), kaggle_slug: "ci/sentinel2".into(), image_size: [32, 32], sensor: "s2".into(),

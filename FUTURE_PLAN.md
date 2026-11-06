@@ -117,7 +117,9 @@ escape hatch, 2-D only, supervised only, one GPU. The steps below, in this order
    models too big for one), automatic batch split with several GPUs, several machines, choosing Kaggle's T4×2 (not possible through the
    API).* The plan: DistributedDataParallel / FSDP on machines with several GPUs (college server, multi-GPU EC2), for the large
    ViTs and long time series.
-10. **Fine-tuning and dynamic structures:** LoRA / adapters on pretrained backbones, freezing by layer group; mixture-of-experts layers
+10. **Fine-tuning and dynamic structures:** *Done 2026-11-06 (CI-tested): frozen layers, LoRA on Dense and Self-attention, mixture of
+    experts, early exits with confidence stopping in the results. Left: LoRA on convolutions, adapters (bottleneck) blocks, expert
+    parallelism across GPUs, exits that really stop at inference (exported model).* The plan: LoRA / adapters on pretrained backbones, freezing by layer group; mixture-of-experts layers
     (top-k routing), early-exit heads.
 
 **Left out on purpose:** diffusion models, GANs, VAEs, LLM pretraining and self-supervised pretraining (MAE, DINO, CLIP). Each needs its

@@ -14,14 +14,14 @@ export const COLORS: Record<string, string> = {
   batchnorm: "#8e5bb5", layernorm: "#7d4fa3", groupnorm: "#a066c9", repeat: "#0e7490", dropout: "#9c6ac6", flatten: "#9a8c1c", dense: "#4b5bb5", activation: "#6c7a89", add: "#c0392b",
   concat: "#a93226", multiply: "#b03a5b", output: "#2e8b57", seg_output: "#1f7a4d", detect_output: "#166534",
   to_tokens: "#0f766e", cls_pos: "#0e7490", attention: "#7c3aed", token_pool: "#0369a1", custom: "#475569", subtract: "#9b2c2c", shared: "#64748b",
-  cross_attention: "#6d28d9", rmsnorm: "#86198f", swiglu: "#3730a3", conv3d: "#b45309", temporal_pool: "#047857", to_sequence: "#0f766e", conv1d: "#c2410c", lstm: "#6d28d9", gru: "#7e22ce",
+  exit_output: "#4d7c0f", moe: "#9d174d", cross_attention: "#6d28d9", rmsnorm: "#86198f", swiglu: "#3730a3", conv3d: "#b45309", temporal_pool: "#047857", to_sequence: "#0f766e", conv1d: "#c2410c", lstm: "#6d28d9", gru: "#7e22ce",
 };
 const GROUPS: [string, string[]][] = [
   ["Image", ["conv2d", "dwconv2d", "pool2d", "global_pool", "flatten"]],
   ["Up-sampling", ["convtranspose2d", "upsample"]],
-  ["Dense and outputs", ["dense", "output", "seg_output", "detect_output"]],
+  ["Dense and outputs", ["dense", "output", "seg_output", "detect_output", "exit_output"]],
   ["Normalise / regularise", ["batchnorm", "layernorm", "groupnorm", "dropout", "activation"]],
-  ["Transformer", ["to_tokens", "cls_pos", "attention", "cross_attention", "rmsnorm", "swiglu", "token_pool"]],
+  ["Transformer", ["to_tokens", "cls_pos", "attention", "cross_attention", "rmsnorm", "swiglu", "moe", "token_pool"]],
   ["Time series", ["conv3d", "temporal_pool", "to_sequence", "conv1d", "lstm", "gru"]],
   ["Branches", ["add", "concat", "multiply", "subtract", "shared"]],
   ["Your own", ["custom"]],
@@ -50,6 +50,8 @@ function summary(kind: string, p: Params): string {
     case "attention": return `${p.heads} heads${Number(p.dropout) > 0 ? ` · dropout ${p.dropout}` : ""}${p.causal ? " · causal" : ""}${p.rotary ? " · rotary" : ""}`;
     case "cross_attention": return `${p.heads} heads · queries from the first arrow`;
     case "swiglu": return `${p.units} hidden units`;
+    case "moe": return `${p.experts} experts · top ${p.top_k} · ${p.units} hidden`;
+    case "exit_output": return `early exit · loss × ${p.weight}`;
     case "token_pool": return p.mode === "mean" ? "mean of tokens" : p.mode === "last" ? "last step" : "class token";
     case "custom": return p.class ? `class ${p.class}` : "choose a class";
     case "output": return Number(p.head ?? 0) > 0 ? `output ${p.head}` : "";
@@ -441,7 +443,7 @@ export function Design({ st, graph, setGraph, analysis, persist, focus, toast, r
 }
 
 // ---------------------------------------------------------------- inspector
-const SHARE_KINDS = ["conv2d", "dwconv2d", "convtranspose2d", "dense", "batchnorm", "layernorm", "groupnorm", "attention", "cls_pos", "custom", "output", "seg_output"];
+const SHARE_KINDS = ["moe", "rmsnorm", "swiglu", "conv3d", "lstm", "gru", "conv1d", "temporal_pool", "conv2d", "dwconv2d", "convtranspose2d", "dense", "batchnorm", "layernorm", "groupnorm", "attention", "cls_pos", "custom", "output", "seg_output"];
 const EXAMPLE_CLASS = `class SE(nn.Module):
     """squeeze-and-excitation (Hu et al. 2018): one weight per channel, from the channel means"""
     # out: c, h, w
@@ -743,7 +745,7 @@ function Inspector({ node, result, analysis, graph, st, setParam, setParams, can
     return (
       <div className="inspector">
         <h3>Design</h3>
-        {analysis && <p><strong>{analysis.total_params.toLocaleString()}</strong> trainable parameters · input {fmt(analysis.input)} · {analysis.classes} classes
+        {analysis && <p><strong>{analysis.total_params.toLocaleString()}</strong> parameters{analysis.frozen_params ? ` (${(analysis.total_params - analysis.frozen_params).toLocaleString()} trained, ${analysis.frozen_params.toLocaleString()} frozen)` : ""} · input {fmt(analysis.input)} · {analysis.classes} classes
           {analysis.total_macs > 0 && <> · <span title="multiply-accumulate operations for one image (convolutions, dense layers, attention)">
             {analysis.total_macs >= 1e9 ? `${(analysis.total_macs / 1e9).toFixed(2)} G` : `${(analysis.total_macs / 1e6).toFixed(1)} M`} MACs per image</span></>}</p>}
         {analysis?.problems.map((p) => <div key={p} className="msg error">{p}</div>)}
@@ -809,7 +811,22 @@ function Inspector({ node, result, analysis, graph, st, setParam, setParams, can
         {node.kind === "dense" && <>
           <Num label="Units" value={p.units} max={1 << 20} onChange={(v) => setParam("units", v)} />
           <Sel label="Activation" value={p.activation} options={acts} onChange={(v) => setParam("activation", v)} />
+          <Num label="LoRA rank (0 = off)" value={p.lora ?? 0} min={0} max={1024} onChange={(v) => setParam("lora", v)} />
+          {Number(p.lora) > 0 && <p className="muted small">LoRA: this layer's own weights stay frozen (e.g. loaded ImageNet weights); a low-rank change
+            B·A of rank {String(p.lora)} is learnt instead: far fewer weights to train.</p>}
         </>}
+        {node.kind === "moe" && <>
+          <Num label="Experts" value={p.experts} min={1} max={256} onChange={(v) => setParam("experts", v)} />
+          <Num label="Experts per token (top k)" value={p.top_k} min={1} max={256} onChange={(v) => setParam("top_k", v)} />
+          <Num label="Hidden units per expert" value={p.units} max={1 << 20} onChange={(v) => setParam("units", v)} />
+          <p className="muted">A router scores the experts for every token; its top k experts (two-layer MLPs) process it, mixed by the router's
+            weights (Switch, Mixtral). More weights at about the cost of k experts per token; a small load-balancing loss keeps all experts in use.</p></>}
+        {node.kind === "exit_output" && <>
+          <Num label="Share of the loss" value={p.weight} min={0} max={10} step={0.1} onChange={(v) => setParam("weight", v)} />
+          <p className="muted">An extra classifier part way through the network (from a vector: after Global pool): trained with the same labels,
+            it lets confident images stop early. Results report each exit's accuracy and what stopping at 90 % confidence would give.</p></>}
+        {SHARE_KINDS.includes(node.kind) && node.kind !== "output" && node.kind !== "seg_output" && <label className="chk"><input type="checkbox" checked={!!p.frozen}
+          onChange={(e) => setParam("frozen", e.target.checked)} />frozen: keep this layer's weights as they are (not trained)</label>}
         {node.kind === "to_tokens" && <>
           <Sel label="Tokens" value={p.mode} options={[["patches", "every pixel (patch) is a token (ViT: after a patch convolution)"], ["rows", "every image row is a token"]]} onChange={(v) => setParam("mode", v)} />
           <p className="muted">(channels, height, width) → patches: (height×width tokens, channels); rows: (height tokens, channels×width).</p>
@@ -819,6 +836,7 @@ function Inspector({ node, result, analysis, graph, st, setParam, setParams, can
           <Sel label="Positions" value={String(p.pos ?? "learned")} options={[["learned", "learnt (ViT)"], ["sinusoidal", "fixed sines and cosines (no parameters)"],
             ["none", "none (e.g. with rotary attention)"]]} onChange={(v) => setParam("pos", v)} /></>}
         {node.kind === "attention" && <>
+          <Num label="LoRA rank (0 = off)" value={p.lora ?? 0} min={0} max={1024} onChange={(v) => setParam("lora", v)} />
           <Num label="Heads" value={p.heads} max={512} onChange={(v) => setParam("heads", v)} />
           <Num label="Dropout" value={p.dropout} min={0} max={0.9} step={0.05} onChange={(v) => setParam("dropout", v)} />
           <label className="chk"><input type="checkbox" checked={!!p.causal} onChange={(e) => setParam("causal", e.target.checked)} />causal: each token sees only itself and the ones before it</label>

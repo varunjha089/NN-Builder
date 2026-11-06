@@ -773,3 +773,20 @@ fn transformer_additions_in_text() {
         assert!(printed.contains(l), "{l} in\n{printed}");
     }
 }
+
+#[test]
+fn adapters_experts_exits_in_text() {
+    let g = build("1 input\n2 conv 8 3x3 frozen\n3 global_pool\n4 exit 0.4\n5 dense 16 lora 4 <- 3\n6 output\n");
+    assert_eq!(by_label(&g, "2").params["frozen"], json!(true));
+    assert_eq!((by_label(&g, "4").kind.as_str(), by_label(&g, "4").params["weight"].clone()), ("exit_output", json!(0.4)));
+    assert_eq!(by_label(&g, "5").params["lora"], json!(4));
+    let t = build("1 input\n2 conv 8 2x2 stride 2\n3 to_tokens\n4 moe 8 top 1 hidden 32\n5 attention heads 2 lora 2 frozen\n6 token_pool mean\n7 output\n");
+    assert_eq!((by_label(&t, "4").params["experts"].clone(), by_label(&t, "4").params["top_k"].clone(), by_label(&t, "4").params["units"].clone()),
+        (json!(8), json!(1), json!(32)));
+    let printed = print(&g).0 + &print(&t).0;
+    for l in ["conv 8 3x3 frozen", "exit 0.4", "dense 16 lora 4", "moe 8 top 1 hidden 32", "attention heads 2 lora 2 frozen"] {
+        assert!(printed.contains(l), "{l} in\n{printed}");
+    }
+    // frozen only where there are weights
+    assert!(err("1 input\n2 maxpool 2x2 frozen\n").message.contains("frozen"));
+}

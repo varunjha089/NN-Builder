@@ -285,21 +285,26 @@ def rotate(x):
 class SelfAttention(nn.Module):
     """multi-head self-attention over the tokens; causal: each token sees only itself and those before it; rotary: positions as rotations
     of the queries and keys (then the projections are written out, with the same parameters as nn.MultiheadAttention)"""
-    def __init__(self, dim, heads, dropout=0.0, causal=False, rotary=False):
+    def __init__(self, dim, heads, dropout=0.0, causal=False, rotary=False, lora=0):
         super().__init__()
         self.heads, self.causal, self.rotary, self.dropout = heads, causal, rotary, dropout
-        if rotary:
+        self.explicit = rotary or lora > 0
+        if lora:   # low-rank adapters on both projections (LoRALinear: the projections' own weights frozen)
+            self.qkv, self.out = LoRALinear(dim, 3 * dim, lora), LoRALinear(dim, dim, lora)
+        elif rotary:
             self.qkv, self.out = nn.Linear(dim, 3 * dim), nn.Linear(dim, dim)
         else:
             self.mha = nn.MultiheadAttention(dim, heads, dropout=dropout, batch_first=True)
 
     def forward(self, x):
-        if not self.rotary:
+        if not self.explicit:
             mask = torch.ones(x.shape[1], x.shape[1], dtype=torch.bool, device=x.device).triu(1) if self.causal else None
             return self.mha(x, x, x, need_weights=False, attn_mask=mask)[0]
         b, n, d = x.shape
         q, k, v = self.qkv(x).view(b, n, 3, self.heads, d // self.heads).permute(2, 0, 3, 1, 4)
-        y = nn.functional.scaled_dot_product_attention(rotate(q), rotate(k), v, dropout_p=self.dropout if self.training else 0.0, is_causal=self.causal)
+        if self.rotary:
+            q, k = rotate(q), rotate(k)
+        y = nn.functional.scaled_dot_product_attention(q, k, v, dropout_p=self.dropout if self.training else 0.0, is_causal=self.causal)
         return self.out(y.transpose(1, 2).reshape(b, n, d))
 
 
@@ -386,6 +391,52 @@ class Conv1dSteps(nn.Module):
 
     def forward(self, x):
         return self.conv(x.transpose(1, 2)).transpose(1, 2)
+
+
+"#;
+
+const ADAPT_MODULES: &str = r#"class LoRALinear(nn.Module):
+    """a linear layer with a low-rank adapter (LoRA, Hu et al. 2021): its own weights are frozen; the change is B·A with A (rank × in) and
+    B (out × rank), B starting at zero, so training starts from the layer as it is"""
+    def __init__(self, features, units, rank, alpha=None):
+        super().__init__()
+        self.base = nn.Linear(features, units)
+        self.base.requires_grad_(False)
+        self.a = nn.Parameter(torch.randn(rank, features) / rank ** 0.5)
+        self.b = nn.Parameter(torch.zeros(units, rank))
+        self.scale = (alpha or rank) / rank
+
+    def forward(self, x):
+        return self.base(x) + (x @ self.a.t() @ self.b.t()) * self.scale
+
+
+class MoE(nn.Module):
+    """a mixture of experts (Shazeer et al.; Switch, Mixtral): a router scores the experts for every token, the top_k experts (two-layer
+    MLPs) process it and their outputs are mixed by the router's weights; a load-balancing loss (Switch Transformer) is kept in
+    self.nnb_aux for training"""
+    def __init__(self, dim, experts, top_k, units):
+        super().__init__()
+        self.top_k = top_k
+        self.router = nn.Linear(dim, experts)
+        self.experts = nn.ModuleList(nn.Sequential(nn.Linear(dim, units), nn.GELU(), nn.Linear(units, dim)) for _ in range(experts))
+        self.nnb_aux = None
+
+    def forward(self, x):
+        shape = x.shape
+        t = x.reshape(-1, shape[-1])
+        probs = torch.softmax(self.router(t).float(), -1)
+        w, idx = probs.topk(self.top_k, -1)
+        w = (w / w.sum(-1, keepdim=True)).to(x.dtype)
+        y = torch.zeros_like(t)
+        for e, expert in enumerate(self.experts):
+            hit = (idx == e)
+            rows = hit.any(-1).nonzero().flatten()
+            if len(rows):
+                y[rows] += expert(t[rows]) * (w * hit)[rows].sum(-1, keepdim=True)
+        # the share of tokens each expert gets (top 1) times its mean router probability, summed and × experts: 1 when balanced
+        share = nn.functional.one_hot(idx[:, 0], probs.shape[-1]).float().mean(0)
+        self.nnb_aux = (share * probs.mean(0)).sum() * probs.shape[-1] if self.training else None
+        return y.reshape(shape)
 
 
 "#;
@@ -515,10 +566,14 @@ fn modules(n: &Node, a: &Analysis, classes: usize) -> Vec<String> {
         "attention" => {
             let drop = p.get("dropout").and_then(|v| v.as_f64()).unwrap_or(0.0).clamp(0.0, 0.9);
             let flag = |k: &str| p.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
-            let extra = match (flag("causal"), flag("rotary")) {
+            let lora = int(p, "lora", 0, 0, 1024);
+            let mut extra = match (flag("causal"), flag("rotary")) {
                 (false, false) => String::new(),
                 (c, r) => format!(", causal={}, rotary={}", if c { "True" } else { "False" }, if r { "True" } else { "False" }),
             };
+            if lora > 0 {
+                extra += &format!(", lora={lora}");
+            }
             m.push(format!("SelfAttention(dim={}, heads={}, dropout={}{extra})", inp[1], int(p, "heads", 4, 1, crate::shapes::MAX_HEADS), drop));
         }
         "cross_attention" => {
@@ -537,7 +592,10 @@ fn modules(n: &Node, a: &Analysis, classes: usize) -> Vec<String> {
         "flatten" => m.push("nn.Flatten()".into()),
         "activation" => m.push(act(activation(p, "fn")).unwrap_or("nn.Identity()").into()),
         "dense" => {
-            m.push(format!("nn.Linear(in_features={}, out_features={})", inp.last().unwrap(), int(p, "units", 128, 1, 1 << 20)));
+            let lora = int(p, "lora", 0, 0, 1024);
+            m.push(if lora > 0 { format!("LoRALinear({}, {}, {lora})", inp.last().unwrap(), int(p, "units", 128, 1, 1 << 20)) } else {
+                format!("nn.Linear(in_features={}, out_features={})", inp.last().unwrap(), int(p, "units", 128, 1, 1 << 20))
+            });
             m.extend(act(activation(p, "activation")).map(String::from));
         }
         // its head's classes or targets (the main task, or an extra output of a multi-task network)
@@ -547,6 +605,8 @@ fn modules(n: &Node, a: &Analysis, classes: usize) -> Vec<String> {
             inp.iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", "))),
         "seg_output" => m.push(format!("nn.Conv2d(in_channels={}, out_channels={classes}, kernel_size=1)", inp[0])),
         "detect_output" => m.push(format!("DetectHead({}, {})", inp[0], r.out.as_ref().map(|o| o[0] - 4).unwrap_or(classes))),
+        "exit_output" => m.push(format!("nn.Linear(in_features={}, out_features={classes})", inp[0])),
+        "moe" => m.push(format!("MoE({}, {}, {}, {})", inp.last().unwrap(), int(p, "experts", 4, 1, 256), int(p, "top_k", 2, 1, 256), int(p, "units", 128, 1, 1 << 20))),
         _ => {}
     }
     m
@@ -609,6 +669,8 @@ fn model_code_opts(g: &Graph, a: &Analysis, save_memory: bool) -> Result<String>
     let mut result_pos = order.len();
     let mut heads_out: Vec<(usize, String)> = vec![];
     let mut module_of: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
+    let mut exit_weights: Vec<f64> = vec![];
+    let mut frozen: Vec<String> = vec![];
     for (i, id) in order.iter().enumerate() {
         let n = node_of[id];
         let r = result_of[id];
@@ -665,6 +727,14 @@ fn model_code_opts(g: &Graph, a: &Analysis, save_memory: bool) -> Result<String>
                 init.push(if mods.len() == 1 { format!("        self.{name} = {}", mods[0]) } else { format!("        self.{name} = nn.Sequential(\n            {},\n        )", mods.join(",\n            ")) });
                 fwd.push(format!("        {v} = self.{name}({})", ins.join(", ")));
                 module_of.insert(n.id.as_str(), name.clone());
+                if n.kind == "exit_output" {
+                    // an early exit: kept for the training loss and the exit scores, not the network's result
+                    fwd.push(format!("        exits.append({v})"));
+                    exit_weights.push(n.params.get("weight").and_then(|w| w.as_f64()).unwrap_or(0.3).clamp(0.0, 10.0));
+                }
+                if n.params.get("frozen").and_then(|f| f.as_bool()).unwrap_or(false) {
+                    frozen.push(name.clone());
+                }
                 let conv = matches!(n.kind.as_str(), "conv2d" | "dwconv2d" | "convtranspose2d" | "conv3d");
                 layers.push(json!([name, label, conv]));
                 expected.insert(name, json!(r.out));
@@ -685,7 +755,15 @@ fn model_code_opts(g: &Graph, a: &Analysis, save_memory: bool) -> Result<String>
         heads_out.sort();
         result_var = format!("({})", heads_out.iter().map(|(_, v)| v.as_str()).collect::<Vec<_>>().join(", "));
     }
+    if !exit_weights.is_empty() {
+        fwd.insert(0, "        exits = []".into());
+        fwd.push("        self.nnb_exits = exits".into());
+    }
     let mut s = String::new();
+    let uses = |pred: &dyn Fn(&crate::model::Node) -> bool| g.nodes.iter().any(|n| order.contains(&n.id.as_str()) && pred(n));
+    if uses(&|n| n.kind == "moe" || (matches!(n.kind.as_str(), "dense" | "attention") && int(&n.params, "lora", 0, 0, 1024) > 0)) {
+        s += ADAPT_MODULES;
+    }
     if g.nodes.iter().any(|n| order.contains(&n.id.as_str()) && matches!(n.kind.as_str(), "to_tokens" | "cls_pos" | "attention" | "token_pool" | "cross_attention" | "rmsnorm" | "swiglu")) {
         s += TOKEN_MODULES;
     }
@@ -701,7 +779,7 @@ fn model_code_opts(g: &Graph, a: &Analysis, save_memory: bool) -> Result<String>
         s += "\n# ---- end of the design's own code\n\n\n";
     }
     // (save memory cuts the forward where one tensor crosses: with several outputs the parts would have to return several)
-    let cuts = if save_memory && heads_out.len() <= 1 { checkpoint_cuts(&line_inputs, result_pos) } else { vec![] };
+    let cuts = if save_memory && heads_out.len() <= 1 && exit_weights.is_empty() { checkpoint_cuts(&line_inputs, result_pos) } else { vec![] };
     if save_memory {
         s += "import torch.utils.checkpoint\n\n\n";
     }
@@ -737,6 +815,8 @@ fn model_code_opts(g: &Graph, a: &Analysis, save_memory: bool) -> Result<String>
     s += "\n\n";
     s += &format!("# {} trainable parameters\n", a.total_params);
     s += &format!("LAYERS = {}   # module name, label, is a convolution\n", py_json(&Value::Array(layers)));
+    s += &format!("FROZEN = {}   # modules whose weights are not trained\n", py_json(&json!(frozen)));
+    s += &format!("EXIT_WEIGHTS = {}   # the early exits' share of the loss, in forward order\n", py_json(&json!(exit_weights)));
     s += &format!("EXPECTED = {}   # output shape of each module (without the batch)\n", py_json(&Value::Object(expected)));
     Ok(s)
 }

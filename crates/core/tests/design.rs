@@ -885,3 +885,37 @@ fn several_gpus_setting() {
     let code = train_script(&g, &mnist(), &analyze(&g, &mnist()), &TrainSettings { gpus: 0, ..Default::default() }.clean(), "all").unwrap();
     assert!(code.contains("\"gpus\": 0") && code.contains("def run_parallel(n):") && code.contains("DistributedDataParallel"));
 }
+
+#[test]
+fn adapters_experts_and_exits() {
+    let ds = Dataset { source: "huggingface".into(), hf_repo: "x/y".into(), image_size: [16, 16], channels: 3, classes: vec!["a".into(), "b".into(), "c".into()], ..Default::default() };
+    let text = "1 input\n2 conv 16 3x3 frozen\n3 maxpool 2x2\n4 global_pool\n5 exit 0.5\n6 conv 32 3x3 <- 3\n7 to_tokens\n\
+        8 attention heads 4 lora 4\n9 moe 4 top 2 hidden 64\n10 token_pool mean\n11 dense 64 lora 8\n12 output\n";
+    let g = nnb_core::dsl::apply(text, &Graph::default()).unwrap();
+    let a = analyze(&g, &ds);
+    assert!(a.ok, "{:?}", a.problems);
+    let r = |l: &str| a.get(&g.nodes.iter().find(|n| n.label == l).unwrap().id).unwrap().clone();
+    assert_eq!((r("2").params, r("2").frozen), (3 * 9 * 16 + 16, 3 * 9 * 16 + 16), "a frozen convolution");
+    assert_eq!((r("5").params, r("5").out.clone()), (17 * 3, Some(vec![3])), "an early exit: one score per class");
+    let d = 32u64;
+    assert_eq!((r("8").params, r("8").frozen), (4 * d * d + 4 * d + 4 * (d + 3 * d) + 4 * (d + d), 4 * d * d + 4 * d), "LoRA attention");
+    assert_eq!(r("9").params, d * 4 + 4 + 4 * (2 * d * 64 + 64 + d), "router + 4 experts");
+    assert_eq!((r("11").params, r("11").frozen), (33 * 64 + 8 * (32 + 64), 33 * 64), "LoRA dense");
+    assert_eq!(a.frozen_params, r("2").frozen + r("8").frozen + r("11").frozen);
+    let code = train_script(&g, &ds, &a, &TrainSettings::default(), "adapt").unwrap();
+    for part in ["FROZEN = [\"l1\"]", "EXIT_WEIGHTS = [0.5]", "        exits.append(t", "self.nnb_exits = exits", "LoRALinear(32, 64, 8)",
+        "SelfAttention(dim=32, heads=4, dropout=0, lora=4)", "MoE(32, 4, 2, 64)", "class LoRALinear(nn.Module):"] {
+        assert!(code.contains(part), "{part} in\n{code}");
+    }
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("train.py"), &code).unwrap();
+    if let Some(o) = py_compile(&dir.path().join("train.py")) {
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    }
+    // an early exit needs a vector and a classification; top k cannot exceed the experts
+    let msg = |t: &str, d: &Dataset| { let g = nnb_core::dsl::apply(t, &Graph::default()).unwrap(); analyze(&g, d).nodes.iter().flat_map(|n| n.messages.clone()).collect::<Vec<_>>().join(" ") };
+    assert!(msg("1 input\n2 conv 8 3x3\n3 exit\n4 global_pool <- 2\n5 output\n", &ds).contains("from a vector"));
+    assert!(msg("1 input\n2 conv 8 2x2 stride 2\n3 to_tokens\n4 moe 2 top 3\n5 token_pool mean\n6 output\n", &ds).contains("only 2"));
+    let seg = Dataset { task: "segment".into(), ..ds.clone() };
+    assert!(msg("1 input\n2 conv 8 3x3\n3 global_pool\n4 exit\n5 seg_output <- 2\n", &seg).contains("classification"));
+}

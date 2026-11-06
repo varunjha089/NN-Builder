@@ -75,6 +75,13 @@ export function ResultsTab({ runId }: { runId: string | null }) {
           <Img img={s.image} scale={Math.max(1, Math.round(96 / s.image[0].length))} /><Img img={s.truth} scale={Math.max(1, Math.round(96 / s.truth[0].length))} />
           <Img img={s.pred} scale={Math.max(1, Math.round(96 / s.pred[0].length))} /></div><div>{(s.pixel_acc * 100).toFixed(1)}% of pixels right</div></div>)}
       </div></>}
+      {r.exits && <><h3>Early exits</h3><table className="grid"><tbody>
+        <tr><th>Exit</th><th className="num">Share of the loss</th><th className="num">Test accuracy</th><th className="num">Images leaving here</th></tr>
+        {r.exits.exits.map((e: any, i: number) => <tr key={i}><td>exit {e.exit}</td><td className="num">{e.weight}</td><td className="num">{(e.accuracy * 100).toFixed(2)}%</td>
+          <td className="num">{(r.exits.early.share[i] * 100).toFixed(1)}%</td></tr>)}
+        <tr><td>the end of the network</td><td></td><td className="num">{(r.test_acc * 100).toFixed(2)}%</td><td className="num">{(r.exits.early.share[r.exits.early.share.length - 1] * 100).toFixed(1)}%</td></tr>
+      </tbody></table><p className="muted small">Stopping each image at the first exit that is at least {r.exits.early.threshold * 100}% sure gives {(r.exits.early.accuracy * 100).toFixed(2)}%
+        test accuracy, with the share of images leaving at each exit shown above (the earlier they leave, the less computation).</p></>}
       {r.heads?.length > 0 && <><h3>Extra outputs</h3><table className="grid"><tbody>
         <tr><th>Output</th><th>Predicts</th><th className="num">Score</th><th>Details</th></tr>
         {r.heads.map((h: any) => <tr key={h.name}><td>{h.name}</td><td>{({ classify: "one class", multilabel: "several classes", regress: "numbers" } as Record<string, string>)[h.task]}</td>

@@ -453,6 +453,9 @@ RMSNorm & same shape & per token: divided by its root mean square, times a learn
 SwiGLU & same shape & the gated MLP $W_2(\mathrm{silu}(W_1x)\cdot W_3x)$; hidden units\\
 Output & $(n)\rightarrow(K)$ & $K$ = number of classes; softmax/cross-entropy is in the training script\\
 Segmentation output & $(C,H,W)\rightarrow(K,H,W)$ & a 1$\times$1 convolution giving a class score for every pixel; must match the mask size\\
+Early exit & $(n)\rightarrow(K)$ & an extra classifier part way through, trained with the same labels (its loss $\times$ weight); Results
+show what stopping confident images there would give\\
+Mixture of experts & same shape & a router sends every token to its top $k$ of $E$ expert MLPs; a load-balancing loss keeps all in use\\
 Detection output & $(C,h,w)\rightarrow(K{+}4,h,w)$ & anchor-free boxes (CenterNet~\cite{zhou2019centernet}): per cell a score per class, the
 box's width and height and the centre's offset; the image must be a whole number of cells (Section~\ref{sec:detection})\\
 Conv3D & $(C,T,H,W)\rightarrow(F,T',H',W')$ & a time series: filters, kernel (pixels), dates per window, stride (pixels), padding same
@@ -507,6 +510,25 @@ the first arrow's tokens ask, the second's are looked at, e.g.\ Sentinel-2 patch
 attention instead of Concat), or one date's tokens attending to the others. Concat joins token sequences one after the other. In a
 time series, dates with no data at all (every pixel empty) are filled from the dates before and after, so attention needs no mask for
 them; a token embedding for text is not part of NN Builder (it trains on images).
+
+\subsection{Frozen layers, LoRA, experts and early exits}
+\label{sec:adapters}
+\begin{description}[nosep]
+  \item[Frozen.] Every block with weights has a \ui{frozen} switch (text: the word \texttt{frozen}): its weights stay as they are, e.g.\
+        the first layers of a network started from ImageNet weights. The Design tab shows how many weights are trained and how many frozen.
+  \item[LoRA.] Dense and Self-attention have a \ui{LoRA rank}. The layer's own weights are frozen and a low-rank change $B\cdot A$ (rank
+        $r$, $B$ starting at zero) is learnt instead~\cite{hu2021lora}: with ImageNet weights and \ui{train only the new layers}, the loaded
+        weights stay and only the adapters and the new head learn, a small fraction of the weights. Text: \texttt{dense 64 lora 8},
+        \texttt{attention heads 8 lora 4}.
+  \item[Mixture of experts.] The \ui{Mixture of experts} block (tokens or vectors) holds $E$ small expert MLPs and a router; every token
+        goes to its top $k$ experts, whose outputs are mixed by the router's weights (Switch, Mixtral). Many more weights at the cost of $k$
+        experts per token; a load-balancing loss (Switch Transformer, $\times 0.01$) keeps every expert in use. Text: \texttt{moe 8 top 2
+        hidden 256}.
+  \item[Early exits.] An \ui{Early exit} after a Global pool part way through a classifier is an extra Output trained with the same labels
+        (its loss times its \ui{share}). Results list each exit's accuracy and what stopping every image at the first exit that is at
+        least 90\,\% sure would give: the accuracy and the share of images leaving at each exit, i.e.\ how much computation could be
+        saved. Text: \texttt{exit 0.3}.
+\end{description}
 
 \subsection{Several GPUs}
 \label{sec:multigpu}
@@ -1929,6 +1951,7 @@ temporal attention networks. ICCV, 2021. arXiv:2107.07933.
 2023. arXiv:2301.04944.
 \bibitem{hochreiter1997lstm} S.~Hochreiter and J.~Schmidhuber. Long short-term memory. Neural Computation 9(8), 1997.
 \bibitem{zhou2019centernet} X.~Zhou, D.~Wang and P.~Kr\"ahenb\"uhl. Objects as points. 2019. arXiv:1904.07850.
+\bibitem{hu2021lora} E.~J.~Hu, Y.~Shen, P.~Wallis et al. LoRA: Low-rank adaptation of large language models. 2021. arXiv:2106.09685.
 \end{thebibliography}
 
 \end{document}

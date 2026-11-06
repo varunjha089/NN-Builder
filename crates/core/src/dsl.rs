@@ -614,7 +614,8 @@ const ALIASES: &[(&str, (&str, &str))] = &[
     ("silu", ("activation", "silu")), ("sigmoid", ("activation", "sigmoid")), ("tanh", ("activation", "tanh")),
     ("add", ("add", "")), ("concat", ("concat", "")), ("cat", ("concat", "")), ("multiply", ("multiply", "")), ("mul", ("multiply", "")),
     ("to_tokens", ("to_tokens", "")), ("cls_pos", ("cls_pos", "")), ("attention", ("attention", "")), ("attn", ("attention", "")),
-    ("token_pool", ("token_pool", "")), ("output", ("output", "")), ("seg_output", ("seg_output", "")), ("detect_output", ("detect_output", "")), ("detect", ("detect_output", "")), ("custom", ("custom", "")),
+    ("token_pool", ("token_pool", "")), ("output", ("output", "")), ("seg_output", ("seg_output", "")), ("detect_output", ("detect_output", "")), ("detect", ("detect_output", "")),
+    ("exit_output", ("exit_output", "")), ("exit", ("exit_output", "")), ("moe", ("moe", "")), ("custom", ("custom", "")),
     ("subtract", ("subtract", "")), ("sub", ("subtract", "")), ("shared", ("shared", "")),
     ("conv3d", ("conv3d", "")), ("temporal_pool", ("temporal_pool", "")), ("tpool", ("temporal_pool", "")),
     ("cross_attention", ("cross_attention", "")), ("xattn", ("cross_attention", "")), ("rmsnorm", ("rmsnorm", "")), ("rms", ("rmsnorm", "")),
@@ -635,6 +636,8 @@ fn kind_word(kind: &str) -> &str {
         "batchnorm" => "bn",
         "layernorm" => "ln",
         "groupnorm" => "gn",
+        "exit_output" => "exit",
+        "detect_output" => "detect",
         other => other,
     }
 }
@@ -662,6 +665,11 @@ pub fn effective(kind: &str, params: &Map<String, Value>) -> Map<String, Value> 
         _ => &[],
     };
     for (k, v) in params {
+        // (frozen: any block with weights; kept only when on, so that "off" and "not set" compare equal)
+        if k == "frozen" && crate::shapes::SHAREABLE.contains(&kind) && v == &json!(true) {
+            p.insert(k.clone(), v.clone());
+            continue;
+        }
         if p.contains_key(k) || extra.contains(&k.as_str()) {
             p.insert(k.clone(), v.clone());
         }
@@ -741,6 +749,23 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
         // time series: conv3d's dates per window, the recurrent layers' direction, conv1d's own words (whole numbers, not pairs)
         if let (None, Val::Word(w)) = (key, v) {
             match (kind, w.as_str()) {
+                (_, "frozen") if crate::shapes::SHAREABLE.contains(&kind) => {
+                    p.insert("frozen".into(), json!(true));
+                    i += 1;
+                    continue;
+                }
+                ("dense" | "attention", "lora") => {
+                    let t = next_val(&mut i, "lora")?;
+                    p.insert("lora".into(), to_json("lora", &t));
+                    i += 1;
+                    continue;
+                }
+                ("moe", "top" | "hidden") => {
+                    let t = next_val(&mut i, w)?;
+                    p.insert(if w == "top" { "top_k" } else { "units" }.into(), to_json("units", &t));
+                    i += 1;
+                    continue;
+                }
                 ("conv3d", "time") => {
                     let t = next_val(&mut i, "time")?;
                     p.insert("tkernel".into(), to_json("tkernel", &t));
@@ -816,7 +841,7 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
             };
             // only the settings this block has (a stray name would be kept but do nothing)
             let known: Vec<String> = model::defaults(kind).as_object().map(|d| d.keys().cloned().collect()).unwrap_or_default();
-            if !known.iter().any(|x| x == k) {
+            if !known.iter().any(|x| x == k) && !(k == "frozen" && crate::shapes::SHAREABLE.contains(&kind)) {
                 return Err(if known.is_empty() {
                     format!("{} has no settings ('{k}=' means nothing for it)", kind_word(kind))
                 } else {
@@ -839,6 +864,8 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
                     ("upsample", 1) => "scale",
                     ("attention" | "cross_attention", 1) => "heads",
                     ("swiglu", 1) => "units",
+                    ("moe", 1) => "experts",
+                    ("exit_output", 1) => "weight",
                     ("input", 1) => "group",
                     ("output", 1) => "head",
                     ("conv3d", 1) => "filters",
@@ -979,7 +1006,7 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
         _ => &[][..],
     };
     for k in p.keys() {
-        if !known.iter().any(|x| x == k) && !extra.contains(&k.as_str()) {
+        if !known.iter().any(|x| x == k) && !extra.contains(&k.as_str()) && !(k == "frozen" && crate::shapes::SHAREABLE.contains(&kind)) {
             let word = match k.as_str() { "padding" => "pad / same / valid", "dilation" => "dil", "bias" => "nobias / bias", "output_padding" => "outpad", o => o };
             return Err(format!("{} has no {word} setting (its settings: {})", kind_word(kind), if known.is_empty() { "none".into() } else { known.join(", ") }));
         }
@@ -1096,6 +1123,7 @@ fn block_text(kind: &str, params: &Map<String, Value>) -> String {
         "dense" => {
             take("units", fmt_value(&get("units")), &mut words);
             take("activation", if differs("activation") { get("activation").as_str().unwrap_or("relu").to_string() } else { String::new() }, &mut words);
+            take("lora", if differs("lora") { format!("lora {}", fmt_value(&get("lora"))) } else { String::new() }, &mut words);
         }
         "activation" => take("fn", String::new(), &mut words),
         "to_tokens" => take("mode", if differs("mode") { fmt_value(&get("mode")) } else { String::new() }, &mut words),
@@ -1105,6 +1133,12 @@ fn block_text(kind: &str, params: &Map<String, Value>) -> String {
             take("pos", match get("pos").as_str() { Some("sinusoidal") => "sinusoidal".into(), Some("none") => "nopos".into(), _ => String::new() }, &mut words);
         }
         "swiglu" => take("units", fmt_value(&get("units")), &mut words),
+        "moe" => {
+            take("experts", fmt_value(&get("experts")), &mut words);
+            take("top_k", format!("top {}", fmt_value(&get("top_k"))), &mut words);
+            take("units", format!("hidden {}", fmt_value(&get("units"))), &mut words);
+        }
+        "exit_output" => take("weight", fmt_value(&get("weight")), &mut words),
         "cross_attention" => {
             take("heads", format!("heads {}", fmt_value(&get("heads"))), &mut words);
             take("dropout", if differs("dropout") { format!("drop {}", fmt_value(&get("dropout"))) } else { String::new() }, &mut words);
@@ -1142,9 +1176,11 @@ fn block_text(kind: &str, params: &Map<String, Value>) -> String {
             take("dropout", if differs("dropout") { format!("drop {}", fmt_value(&get("dropout"))) } else { String::new() }, &mut words);
             take("causal", if get("causal") == json!(true) { "causal".into() } else { String::new() }, &mut words);
             take("rotary", if get("rotary") == json!(true) { "rotary".into() } else { String::new() }, &mut words);
+            take("lora", if differs("lora") { format!("lora {}", fmt_value(&get("lora"))) } else { String::new() }, &mut words);
         }
         _ => {}
     }
+    take("frozen", if e.get("frozen") == Some(&json!(true)) { "frozen".into() } else { String::new() }, &mut words);
     // anything else (a parameter the short form does not know) as name=value, so that nothing is lost
     for (k, v) in &e {
         if !done.contains(k.as_str()) && d.get(k) != Some(v) {

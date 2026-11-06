@@ -14,6 +14,10 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 pub const BIG_DENSE: u64 = 5_000_000;
 
+fn is_zero(v: &u64) -> bool {
+    *v == 0
+}
+
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct NodeResult {
     pub id: String,
@@ -22,6 +26,9 @@ pub struct NodeResult {
     pub inputs: Vec<Vec<usize>>,
     pub out: Option<Vec<usize>>,
     pub params: u64,
+    /// of `params`, the ones that are not trained (the block is frozen, or a LoRA layer's own weights)
+    #[serde(skip_serializing_if = "is_zero")]
+    pub frozen: u64,
     /// ok | warn | error | blocked (an input has an error) | unconnected (not reached from Input: ignored)
     pub status: String,
     pub messages: Vec<String>,
@@ -44,6 +51,8 @@ pub struct Analysis {
     /// edge id -> the shape it carries
     pub edges: BTreeMap<String, Vec<usize>>,
     pub total_params: u64,
+    /// of total_params, the ones that are not trained (frozen blocks, LoRA layers' own weights)
+    pub frozen_params: u64,
     pub total_macs: u64,
     pub problems: Vec<String>,
     pub ok: bool,
@@ -265,6 +274,7 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
         }
     }
     let mut total = 0u64;
+    let mut frozen_total = 0u64;
     for id in &order {
         let node = node_of[id];
         let srcs: Vec<&str> = in_edges.get(id).unwrap_or(&no_targets).iter().copied().filter(|s| reach.contains(s)).collect();
@@ -360,11 +370,20 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
                 err(&mut r, "Output must be the last block: nothing can come after it.");
                 r.out = None;
             }
+        } else if node.kind == "exit_output" {
+            if r.out.is_some() && ds.task != "classify" {
+                err(&mut r, "Early exits are for classification (one class per image) for now.");
+                r.out = None;
+            }
         } else if r.out.is_some() && !out_edges.contains_key(id) {
             warn(&mut r, "The result of this layer is not used: connect it to a following layer.");
         }
+        if r.out.is_some() && node.params.get("frozen").and_then(|v| v.as_bool()).unwrap_or(false) {
+            r.frozen = r.params;
+        }
         if r.out.is_some() {
             total += r.params;
+            frozen_total += r.frozen;
         }
         results.insert(id, r);
     }
@@ -417,7 +436,7 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
     if classes < need {
         problems.push(if need == 1 { "The dataset has no target columns yet (Dataset tab).".into() } else { "The dataset has no classes yet (Dataset tab).".into() });
     }
-    Analysis { input: input_shape, classes, nodes, edges: edge_shapes, total_params: total, total_macs, problems, ok: ok && classes >= need,
+    Analysis { input: input_shape, classes, nodes, edges: edge_shapes, total_params: total, frozen_params: frozen_total, total_macs, problems, ok: ok && classes >= need,
         head_names: ds.heads.iter().map(|h| h.name.clone()).collect() }
 }
 
@@ -456,6 +475,9 @@ fn macs(r: &NodeResult, bias: bool) -> u64 {
             2 * n * d * d + 2 * m * dk * d + 2 * n * m * d
         }
         "swiglu" => r.params * if out.len() == 2 { out[0] as u64 } else { 1 },
+        // computed by the step, which has the settings: per token the router and top_k experts' two layers
+        "moe" => r.macs,
+        "exit_output" => r.params.saturating_sub(out[0] as u64),
         _ => 0,
     }
 }
@@ -473,7 +495,7 @@ fn warn(r: &mut NodeResult, m: &str) {
 }
 
 /// the kinds whose layer has weights another block can share
-pub const SHAREABLE: &[&str] = &["conv2d", "dwconv2d", "convtranspose2d", "dense", "batchnorm", "layernorm", "groupnorm", "attention", "cls_pos",
+pub const SHAREABLE: &[&str] = &["moe", "conv2d", "dwconv2d", "convtranspose2d", "dense", "batchnorm", "layernorm", "groupnorm", "attention", "cls_pos",
     "custom", "output", "seg_output", "conv3d", "lstm", "gru", "conv1d", "temporal_pool", "rmsnorm", "swiglu"];
 
 /// a Shared-weights block: the shape the shared block's layer gives on this input (which must have the shape that block's input has,
@@ -867,6 +889,12 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
             }
             let d = x[1] as u64;
             r.params = 4 * d * d + 4 * d;
+            let rank = int(p, "lora", 0, 0, 1024) as u64;
+            if rank > 0 {
+                // LoRA on the query/key/value projection (d → 3d) and the output projection (d → d)
+                r.frozen = r.params;
+                r.params += rank * (d + 3 * d) + rank * (d + d);
+            }
             x.clone()
         }
         "cross_attention" => {
@@ -925,6 +953,31 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
                 vec![x[0] * x[1] * x[2]]
             }
         }
+        "moe" => {
+            if !(is2 || x.len() == 1) {
+                err(r, &format!("Mixture of experts works on tokens (or vectors), but its input is {}.", fmt(&x)));
+                return None;
+            }
+            let (e, kk, h) = (int(p, "experts", 4, 1, 256), int(p, "top_k", 2, 1, 256), int(p, "units", 128, 1, 1 << 20));
+            if kk > e {
+                err(r, &format!("Each token goes to its top {kk} experts, but there are only {e}."));
+                return None;
+            }
+            let d = *x.last().unwrap();
+            // the router (d → experts) and every expert's two layers (d → units → d, with biases)
+            r.params = (d * e + e + e * (2 * d * h + h + d)) as u64;
+            let tokens = if is2 { x[0] } else { 1 };
+            r.macs = (tokens * (d * e + kk * 2 * d * h)) as u64;
+            x.clone()
+        }
+        "exit_output" => {
+            if !(x.len() == 1) {
+                err(r, &format!("An early exit gives one score per class from a vector, but its input is {}: add Global pool (or Token pool) before it.", fmt(&x)));
+                return None;
+            }
+            r.params = (x[0] as u64 + 1) * classes.max(1) as u64;
+            vec![classes.max(1)]
+        }
         "dense" | "output" => {
             let units = if k == "dense" { int(p, "units", 128, 1, 1 << 20) } else { classes.max(1) };
             if is3 {
@@ -937,6 +990,12 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
             }
             // on tokens, Dense acts on every token (the last dimension)
             r.params = (*x.last().unwrap() as u64 + 1) * units as u64;
+            let rank = if k == "dense" { int(p, "lora", 0, 0, 1024) as u64 } else { 0 };
+            if rank > 0 {
+                // LoRA: the layer's own weights stay as they are; A (rank × in) and B (units × rank) learn the change
+                r.frozen = r.params;
+                r.params += rank * (*x.last().unwrap() as u64 + units as u64);
+            }
             // the warning is about Flatten -> huge Dense; a transformer MLP on tokens is large by design
             if k == "dense" && !is2 && r.params > BIG_DENSE {
                 warn(r, &format!("This Dense layer has {} parameters: try Global pool instead of Flatten before it.", r.params));
