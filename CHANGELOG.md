@@ -5,7 +5,7 @@ hour, minute, second; the commit time) and the commit. Regenerate with `python3 
 
 ## 06_11_26_06_33_15
 
-**Manual: every kind of data with a picture and the Dataset tab set up for it** (`8d27442`)
+**Manual: every kind of data with a picture and the Dataset tab set up for it** (`6b9a344`)
 
 New section 'Kinds of data, step by step' (and an overview table in the Dataset tab section): built-in,
 Hugging Face, pictures in class folders, segmentation images + masks, Sentinel-2/1 bands, a large
@@ -19,7 +19,7 @@ Engine's 12 bands.
 
 ## 06_11_26_05_31_29
 
-**Multi-label task and Sentinel-1 + Sentinel-2 fusion** (`501a190`)
+**Multi-label task and Sentinel-1 + Sentinel-2 fusion** (`5df14de`)
 
 Multi-label: any number of classes per image (BigEarthNet). Labels from a CSV (file column plus a
 labels column or one 0/1 column per class; class names read on the Mac) or a Hugging Face list-of-
@@ -34,7 +34,7 @@ segmentation (including scenes).
 
 ## 06_11_26_05_22_17
 
-**FUTURE_PLAN: plan for multi-label and S1+S2 fusion** (`32bbaba`)
+**FUTURE_PLAN: plan for multi-label and S1+S2 fusion** (`a2f8454`)
 
 ## 05_11_26_22_02_01
 
