@@ -3,6 +3,14 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 06_11_26_12_35_45
+
+**Version 0.4.0** (`b98bdf4`)
+
+## 06_11_26_11_55_40
+
+**FUTURE_PLAN: first real-data run (EuroSAT-MS on Kaggle) recorded; CHANGELOG** (`2ad774e`)
+
 ## 06_11_26_11_46_03
 
 **Kaggle: notebook title shortened to 50 characters so its slug is the notebook id (long project names gave 400 Bad Request)** (`b9b9de6`)
