@@ -1,0 +1,150 @@
+# TEST_APP.md: what to test by hand
+
+The automatic tests (`cargo test` on every change, GitHub Actions on every push) check the shape engine against PyTorch on ~290 designs and
+train small networks on **generated data on a CPU**. They cannot click through the window, use real datasets, a real GPU, real cloud
+accounts or several GPUs. This file lists what still needs a person: open the app, do the steps, and compare with **Expect**.
+
+How to use it:
+
+- Work in a **new project** (Projects → New project, e.g. "Test 2026-11"), not in a project you care about. Delete it at the end (it goes
+  to the Trash).
+- Kaggle gives about 30 GPU hours a week; the tests below marked **GPU** use a few minutes each (5 epochs or fewer). AWS / spot tests cost
+  money: do them only when you want to.
+- Mark each line: ✅ works · ❌ wrong (write what you saw) · ⏭ skipped. Problems go to Claude with the run id (Train tab → Runs) or a
+  screenshot.
+
+Status column: **CI** = covered by the automatic tests on generated data (the logic is right; the window and real data are not checked) ·
+**Real** = already tried for real once · **Never** = never tried in any form outside the code.
+
+---
+
+## 0. Install and update
+
+| # | Test | Steps | Expect | Status |
+|---|---|---|---|---|
+| 0.1 | Updater | Your installed app says 0.3.0: Help → Check for Updates… → Install and restart | It downloads 0.4.0, restarts, About says 0.4.0; projects and settings unchanged | Never |
+| 0.2 | Keychain after update | Open Connection after the update | At most one Keychain question ("Always Allow"); tokens still there | Real (prompts seen) |
+| 0.3 | Manual | Help → Documentation | The PDF opens (69 pages, dated 6 November 2026) | Real |
+
+## 1. Projects, settings, menus
+
+| # | Test | Steps | Expect | Status |
+|---|---|---|---|---|
+| 1.1 | New / open / close | New project, close (File → Close Project), open it again | Same design and dataset come back | Real |
+| 1.2 | Demo | Projects → Start from a demo → ResNet-18 → ⌘S | Saved as a project; an unsaved demo vanishes when another opens | Real |
+| 1.3 | Delete | Delete the test project at the end | Its folder is in the Trash, off the list | Real |
+| 1.4 | Settings | ⚙ → night mode, panel colours, Design size | Applied at once, kept after restart | Never (checked by script only) |
+| 1.5 | Undo / redo | Change a few blocks, ⌘Z / ⇧⌘Z | Steps undone and redone in order | Never |
+
+## 2. Design canvas (new blocks and tools)
+
+For each, add the block from the palette, select it, change its settings in the inspector, and look at the block's shape and the error /
+warning text.
+
+| # | Test | Steps | Expect | Status |
+|---|---|---|---|---|
+| 2.1 | Palette groups | Look at the palette | Groups: Image, Up-sampling, Dense and outputs (incl. Detection output, Early exit), Normalise, Time series, Transformer (incl. Cross-attention, RMSNorm, SwiGLU, Mixture of experts), Branches (incl. Subtract, Shared weights), Your own (Custom) | Never |
+| 2.2 | Custom block | Add Custom (PyTorch) → Insert an example → Class: SE | The block shows the input's shape; the code box edits; the Text tab shows a `python """ … """` section | Never |
+| 2.3 | Custom shape error | In the code, change `# out: c, h, w` to `# out: c * 2, h, w` | The next block's shape follows (channels doubled); a wrong formula shows a red message | Never |
+| 2.4 | Twin branch | Fused dataset (2.x below or any), Input → conv → conv; select the last conv → Twin branch (shared weights) | A second Input (band group 2) and Shared-weights copies appear; parameters do not grow | Never |
+| 2.5 | Subtract | Subtract the two branches, tick absolute difference | Shape stays; the summary says \|a − b\| | Never |
+| 2.6 | Frozen / LoRA | Tick "frozen" on a conv; set LoRA rank 4 on a Dense | The design summary shows "N trained, M frozen" | Never |
+| 2.7 | MoE / exits | After To tokens add Mixture of experts; after a Global pool add Early exit | Shapes kept; an Early exit before Global pool says it needs a vector | Never |
+| 2.8 | Transformer options | Self-attention: causal, rotary; Class token + position: sinusoidal | The block summary shows causal · rotary; an odd head width with rotary is refused | Never |
+| 2.9 | Output for | With extra outputs (4.6), select an Output → "Output for" | The list shows the main task and each extra output | Never |
+| 2.10 | Large designs | Demo ViT-g/14 → Collapse repeated blocks | Fast; one ×40 node | Real |
+
+## 3. Text tab
+
+| # | Test | Steps | Expect | Status |
+|---|---|---|---|---|
+| 3.1 | Round trip | Paste `doc/examples/everything.nnb` (CIFAR-10 3×32×32) | 97 blocks, no warning, 217,396 parameters (16,832 frozen) | CI |
+| 3.2 | Time series text | Paste `doc/examples/timeseries.nnb` with a time-series dataset (4 bands, 6 dates, 32×32) | No error; Conv3D, Temporal pool, LSTM … on the canvas | CI |
+| 3.3 | New words | Type `5 shared 2`, `subtract abs`, `lstm 32 bi`, `moe 4 top 2 hidden 64`, `exit 0.3`, `dense 64 lora 4`, `conv 8 3x3 frozen`, `detect` | Each builds the right block; ⌘-click selects it | CI |
+| 3.4 | Canvas → text | Change a setting on the canvas | Only that line changes; hand-written functions stay | CI |
+
+## 4. Dataset tab, one kind of data at a time
+
+Each: set the Dataset tab as described, then **Check data on Kaggle** (a few minutes, no training) and look at the data report (Results).
+
+| # | Test | Dataset | Expect | Status |
+|---|---|---|---|---|
+| 4.1 | Sentinel-2, Hugging Face | `giswqs/EuroSAT_MS`, 13 bands | 0 warnings, 10 classes, band means ~1000–2500 | **Real** (92.1 % after 5 epochs) |
+| 4.2 | Own files → Kaggle upload | A folder on this Mac with class subfolders of GeoTIFFs (e.g. a small Earth Engine export) | First run uploads a private Kaggle dataset, later runs reuse it; data check finds all classes | Never |
+| 4.3 | Earth Engine script | Dataset → "Get Sentinel-1/2 data from Google Earth Engine" → run the script in your GEE account | The exports land in Drive with the tab's band order; "Set this tab to match" fills it in | Never |
+| 4.4 | Cloud folder | Own files → in the cloud: a Drive link or gs:// bucket of the export | The machine fetches it; data check OK | Never (CI with file://) |
+| 4.5 | Multi-label | A labels CSV (or BigEarthNet preset with a BigEarthNet subset) | Classes read from the CSV; micro F1 / mAP after training | CI |
+| 4.6 | Extra outputs | Labels CSV with a class column + a number column; Dataset → Extra outputs → add "numbers" with that column | Design needs two Outputs; results show both scores | CI |
+| 4.7 | Regression | Task Regression, labels CSV with a numeric column (e.g. a biomass or yield table you have) | Read labels lists the numeric columns; R² / scatter after training | CI |
+| 4.8 | Segmentation, scene | Earth Engine scene + WorldCover label (layout "large images + label image"), test tiles "strip" | Tiles counted; mIoU after training | CI |
+| 4.9 | Fusion S2 + S1 | Second band group Sentinel-1 from a twin folder | Data check shows 2 groups; mid fusion trains | CI |
+| 4.10 | Own sizes | Same, tick "its own image size" (e.g. S1 at half) | Input 2 has the smaller size; an Input for all bands is refused | CI |
+| 4.11 | Before / after pairs | Two folders of the same bands at two dates, same file names | Accepted (names repeat); Siamese design trains | CI |
+| 4.12 | Time series | Tick "a time series", dates per sample; .npy (dates, bands, H, W) or GeoTIFF date by date | Input (bands, dates, H, W); data check pictures = median date | CI |
+| 4.13 | Detection | A YOLO-format set (images/ + labels/ .txt; e.g. a ship / car / building set from Kaggle or Roboflow, exported as YOLO) | Classes typed in label order; data check counts boxes per class | CI |
+| 4.14 | Class balance | Any unbalanced set → Read folder / Read labels | Counts per class and a 3:1 warning | CI |
+
+## 5. Train tab settings (each needs one short **GPU** run, 3–5 epochs)
+
+| # | Test | Steps | Expect | Status |
+|---|---|---|---|---|
+| 5.1 | Recipe | Use recommended → train | Cosine lr curve, warm-up visible in the lr of each epoch | CI |
+| 5.2 | Losses | Focal (classification), Dice + CE (segmentation), Huber (regression) | Run starts; Results say "Trained with … loss" | CI |
+| 5.3 | Custom loss | Loss: your own (Python) → keep the example | Run trains; a broken function gives a clear error | CI |
+| 5.4 | Class weights | Unbalanced classes: inverse frequency | Log lists the weights; rare-class recall rises | CI |
+| 5.5 | Thresholds | Multi-label + "a threshold per class" | Results list the thresholds | CI |
+| 5.6 | ImageNet weights + LoRA | ResNet-18 demo, weights resnet18, "train only the new layers"; or ViT-B/16 + LoRA on attention | Start event: far fewer trainable parameters; accuracy close to full fine-tuning | CI (weights load), Never (LoRA on a real GPU) |
+| 5.7 | Save memory | ViT demo, "save memory" on | Run card memory drops, ~30 % slower | CI |
+| 5.8 | Seeds | 3 seeds → Compare selected → Export | Overlaid curves; CSV + LaTeX table with mean ± s.d. | CI |
+| 5.9 | GPU memory estimate | Change batch size | Estimate updates; warns above the target's memory | Real |
+
+## 6. Where training runs
+
+| # | Test | Steps | Expect | Status |
+|---|---|---|---|---|
+| 6.1 | Kaggle | Any design, Train on Kaggle | Live curves every 30 s; results downloaded; long project names work | **Real** |
+| 6.2 | College server (SSH) | Connection → add the server → Prepare → Train | SLURM / systemd / tmux chosen; run survives closing the app; results come back | Never |
+| 6.3 | Several GPUs | On a machine with ≥ 2 GPUs: GPUs = all → Train | Start event `gpus: N`; epochs ~N× faster; one set of curves | Never (CI with 2 CPU processes) |
+| 6.4 | Several GPUs, stop | Same, press Stop mid-epoch | All workers stop; results written | Never (CI: spot notice) |
+| 6.5 | AWS on demand | Connection → AWS instance → Train | The app starts the instance, the run stops it at the end | Never |
+| 6.6 | AWS spot | Persistent spot request, interruption behaviour stop | After an interruption the run resumes by itself at the same batch | Never (CI: resume path) |
+| 6.7 | Continue elsewhere | Spot instance terminated, Mac copy on → Continue on another machine | Resumes on the other machine from the checkpoint | Never |
+
+## 7. Results tab, per task
+
+| # | Test | After a run of | Expect | Status |
+|---|---|---|---|---|
+| 7.1 | Classification | 4.1 | Accuracy, top-5, per-class, confusion matrix, Grad-CAM, mistakes | Real |
+| 7.2 | Multi-label | 4.5 | Micro / macro F1, mAP, exact match, per-class table, ✓ ✗ ○ samples | CI |
+| 7.3 | Regression | 4.7 | R², MAE, RMSE cards, per-target table, scatter plot, samples with both numbers | CI |
+| 7.4 | Segmentation | 4.8 | Pixel accuracy, mIoU, IoU per class, image / true / predicted masks | CI |
+| 7.5 | Detection | 4.13 | mAP@0.5, mAP@0.5:0.95, AP per class, images with green (found) and dashed (true) boxes | CI |
+| 7.6 | Extra outputs | 4.6 | "Extra outputs" table under the main cards | CI |
+| 7.7 | Early exits | A classifier with an Early exit | "Early exits" table: accuracy per exit, share leaving early | CI |
+| 7.8 | Data check | Any "Check data" | Sizes, counts, bands, warnings, sample images | Real |
+| 7.9 | Export | "Also save … TorchScript and ONNX" | model.ts and model.onnx in Show files | CI |
+
+## 8. Real-data experiments worth running (each a real test of a new feature)
+
+1. **Crop types from a time series:** a monthly Sentinel-2 stack (6–12 dates) over fields with a crop map as labels; Conv3D + Temporal
+   pool (attention) + a small decoder + Segmentation output. Compare with a single date (time steps off).
+2. **Change detection:** before / after Sentinel-2 pairs (e.g. new buildings or a flood) with a Twin branch and Subtract |a − b|.
+3. **Flood mapping with S1 + S2:** Sentinel-1 at its own size next to Sentinel-2, mid fusion; Dice + CE loss for the rare flood class.
+4. **Biomass / yield regression:** patches with a number each (labels CSV), Huber loss; read R² and the scatter plot.
+5. **Ships or cars:** a YOLO-format detection set; Detection output on a ¼-size map; read mAP@0.5.
+6. **LoRA vs full fine-tuning:** ViT-B/16 with ImageNet weights on EuroSAT RGB: full fine-tuning against LoRA rank 4 on attention
+   (trainable parameters, accuracy, time).
+
+## 9. Known limits (expected, not bugs)
+
+- The Mac never trains; tests on the Mac only check designs and code.
+- Kaggle's API cannot choose the T4×2 accelerator; a Kaggle run gets one GPU.
+- Not built yet: rotated boxes, COCO JSON, real dates / missing-date masks in time series, FSDP, LoRA on convolutions, per-pixel
+  regression (see FUTURE_PLAN.md).
+
+## Results log
+
+| Date | Test # | Result | Notes / run id |
+|---|---|---|---|
+| 2026-11-06 | 4.1, 6.1, 7.1, 7.8 | ✅ | EuroSAT-MS on Kaggle T4: data check 0 warnings (20261106-114810-check); 92.1 % (20261106-115114) |
+| | | | |

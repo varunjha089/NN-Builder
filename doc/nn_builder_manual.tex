@@ -52,7 +52,7 @@
 
 \title{\textbf{NN Builder}\\[4pt]\large User manual: using the application, designing a neural network,\\ and the demo architectures explained}
 \author{The NN Builder project\\\small\url{https://github.com/varunjha089/NN-Builder}}
-\date{5 November 2026 (version 0.3 and the changes after it; see CHANGELOG.md)}
+\date{6 November 2026 (version 0.4 and the changes after it; see CHANGELOG.md)}
 
 \begin{document}
 \maketitle
@@ -108,9 +108,25 @@ Three principles shape the application:
 The tabs in the top bar follow this order. \ui{Connection}, set apart on the right, holds the tokens and machines that training needs,
 and is usually visited once.
 
+\subsection{What it can build}
+\begin{itemize}[nosep]
+  \item \textbf{Tasks:} classification, multi-label (Section~\ref{sec:multilabel}), regression (\ref{sec:regression}), segmentation,
+        object detection (\ref{sec:detection}), and several of them at once (extra outputs, \ref{sec:multitask}).
+  \item \textbf{Data:} pictures, satellite images of any number of bands (Sentinel-2, Sentinel-1, \ref{sec:data-kinds}), two sensors
+        together (fusion, also at their own sizes, \ref{sec:fusion}), before/after pairs (\ref{sec:siamese}), time series of dated images
+        (\ref{sec:timeseries}); from Hugging Face, Kaggle, your own files or a cloud folder; a data check before training
+        (\ref{sec:check-data}).
+  \item \textbf{Networks:} CNNs, U-Nets, Vision Transformers and hybrids from the block list; Siamese networks with shared weights;
+        Conv3D, temporal attention, LSTM / GRU and temporal transformers for time series; transformer options (causal, rotary, RMSNorm,
+        SwiGLU, cross-attention, \ref{sec:transformer-extra}); mixture of experts and early exits, frozen layers and LoRA
+        (\ref{sec:adapters}); and anything else as your own PyTorch class (Custom block, \ref{sec:custom}).
+  \item \textbf{Training:} the usual recipe, unbalanced classes and their losses (\ref{sec:imbalance}), ImageNet weights, several seeds,
+        several GPUs (\ref{sec:multigpu}), on Kaggle, an SSH machine or EC2 (spot included).
+\end{itemize}
+
 \subsection{What it is not}
-NN Builder covers image classification and image segmentation. It does not (yet) train on text, audio or tabular data, and it does not
-run training on the design computer, even for a tiny network. The generated script, however, is ordinary PyTorch~\cite{paszke2019pytorch}:
+NN Builder trains on images (pictures, satellite bands, time series of them). It does not train on text, audio or tabular data, it
+does not generate images (no diffusion models or GANs), and it does not run training on the design computer, even for a tiny network. The generated script, however, is ordinary PyTorch~\cite{paszke2019pytorch}:
 it can be copied, read, edited and run anywhere by hand.
 
 %=====================================================================================================================================
@@ -1237,7 +1253,11 @@ draws each repeated group once; the Text tab edits a design of any size without 
 
 %=====================================================================================================================================
 \section{The Results tab}
-For a finished run (open it in the Train tab): the test accuracy (and top-5 accuracy with more than five classes, and mIoU), precision,
+What it shows depends on the task: \emph{multi-label}: micro / macro F1, mAP, exact match and every class's precision, recall, F1 and
+AP; \emph{regression}: R$^2$, MAE and RMSE per target and a predicted-against-true scatter plot; \emph{detection}: mAP@0.5,
+mAP@0.5:0.95, AP per class and test images with the boxes found and the true ones; \emph{extra outputs}: a table of every output's
+score; \emph{early exits}: each exit's accuracy and what stopping confident images early would give; a \emph{data check}: the data
+report. For classification and segmentation, as follows. For a finished run (open it in the Train tab): the test accuracy (and top-5 accuracy with more than five classes, and mIoU), precision,
 recall and F1 of every class with their macro averages and the hardest classes, the confusion matrix (rows: true class, columns: predicted;
 the diagonal is correct), sample predictions with their confidence (wrong ones marked), the feature maps of the first test image (first
 eight channels of early layers), the first layer's filters as small pictures, and for segmentation the true and predicted masks and the IoU
@@ -1798,7 +1818,7 @@ not: no training results exist yet. Treat it as a starting point for experiments
 \begin{description}
   \item[``design has problems''.] Open Design; the red block says why (Section~\ref{sec:checks}). Blocks after it are greyed out until it is fixed.
   \item[``dataset incomplete'' or no classes.] The class list is empty (Hugging Face: \ui{Read info} and a ClassLabel column; Kaggle:
-        type the class folder names). Text datasets cannot be used.
+        type the class folder names; regression: the target columns; detection: the object classes). Text datasets cannot be used.
   \item[The one-batch check stops the run.] A layer's real shape differed from the application's (for example images of an unexpected
         size in a custom dataset). The message names the layer; check the image size and channels in the Dataset tab.
   \item[``CUDA out of memory''.] With \ui{Split a batch that does not fit} on (the default) the run handles this itself and continues
@@ -1813,6 +1833,14 @@ not: no training results exist yet. Treat it as a starting point for experiments
         by itself. To continue now, use \ui{Continue on another machine} (needs the checkpoint copy on the Mac).
   \item[A demo disappeared.] Unsaved demos are discarded when another demo or project is opened or the application quits; save them with
         \kbd{Cmd+S}.
+  \item[``CHECK: shapes differ \dots{} (the class's \# out: line declares the expected shape)''.] A Custom block's PyTorch class returns
+        another shape than its \texttt{\# out:} line says: correct the line or the class (Section~\ref{sec:custom}).
+  \item[``the image must be a whole number of map cells''.] The Detection output's map must divide the image evenly (e.g.\ 64 and 16):
+        change the pools before it or the image size.
+  \item[``MEMORY: a GPU ran out of memory'' with several GPUs.] With several GPUs a batch is not split automatically: a smaller batch,
+        \ui{save memory}, or one GPU (Section~\ref{sec:multigpu}).
+  \item[macOS asks for the Keychain after an update.] An unsigned new build of the application is a new program for macOS: \ui{Always
+        Allow} once. A self-signed code-signing certificate (FUTURE\_PLAN.md) would end this.
   \item[Training is unstable (loss jumps or becomes NaN).] Lower the learning rate (by 10$\times$), keep mixed precision on (the script
         scales the loss), add BatchNorm / LayerNorm, check that the labels match the class list.
   \item[High training accuracy, low validation accuracy.] Overfitting: augmentation, dropout, fewer parameters (Global pool instead of

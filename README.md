@@ -13,8 +13,12 @@ training code is Python (PyTorch). Planned work: [FUTURE_PLAN.md](FUTURE_PLAN.md
 ## What it does
 
 - **Design tab:** a node graph (React Flow). Blocks: Input, Conv2D, Depthwise Conv2D, ConvTranspose2D, Pool, Global pool, Upsample, BatchNorm,
-  LayerNorm, Dropout, Flatten, Dense, Activation, Add, Concat, Multiply, To tokens, Class token + position, Self-attention, Token pool, Output,
-  Segmentation output. Branches work (ResNet skips with Add, U-Net with Concat, attention gates with Multiply, Transformer blocks with Add).
+  LayerNorm, GroupNorm, Dropout, Flatten, Dense, Activation, Add, Concat, Multiply, Subtract, Shared weights; transformer blocks (To tokens,
+  Class token + position with learnt / sinusoidal / no positions, Self-attention with causal masks, rotary positions and LoRA,
+  Cross-attention, RMSNorm, SwiGLU, Mixture of experts, Token pool); time-series blocks (Conv3D, Temporal pool, To sequence, Conv1D, LSTM,
+  GRU); outputs (Output, Segmentation output, Detection output, Early exit); and **Custom (PyTorch)**: your own `nn.Module` class with a
+  declared output shape. Any block with weights can be **frozen**; Dense and Self-attention take a **LoRA** rank. Branches work (ResNet
+  skips with Add, U-Net with Concat, attention gates with Multiply, Siamese twins with Shared weights: the **Twin branch** button).
   The network reads left to right; "Arrange left to right" lays out any design.
   - **Famous architectures** to start from (Projects page: "Start from a demo architecture" opens one unsaved, ⌘S keeps it; or Design → Famous architectures): LeNet-5, a small CIFAR-10 CNN, AlexNet, VGG-16, GoogLeNet (Inception v1), ResNet-18, MobileNet v1,
     a small DenseNet, a Transformer encoder (image rows as tokens), ViT-Base/16, ViT-Tiny (CIFAR-10), ViT-g/14 (1 billion parameters), U-Net and Attention U-Net (VGG-16,
@@ -51,10 +55,15 @@ training code is Python (PyTorch). Planned work: [FUTURE_PLAN.md](FUTURE_PLAN.md
 - **Projects page:** new project, open a recent one, **Delete** a project (its folder goes to the Trash, from where it can be put back),
   and the demo architectures. **Settings** (⚙): day / neon night theme, the night panel colours, automatic updates, and **Design size**
   (the most blocks a design may have: recommended from the computer's memory, editable).
-- **Dataset tab:** classification or **segmentation** (images + masks; pixel accuracy and mean IoU). Built-in (MNIST, Fashion-MNIST, CIFAR-10), **Hugging Face** (reads the dataset's splits, columns and class names through
-  the public datasets-server API, nothing is downloaded) or **Kaggle** (reads the file list through the Kaggle API and finds the folder with one
-  subfolder per class; for segmentation an images folder and a masks folder). Images are resized and converted to grey or colour as you choose
-  (built-in sets too, e.g. CIFAR-10 at 224×224 for AlexNet).
+- **Dataset tab:** tasks **classification**, **multi-label** (several classes per image, e.g. BigEarthNet), **regression** (numbers per
+  image), **segmentation** (images + masks, or a large scene and its label image cut into tiles) and **object detection** (YOLO-format
+  boxes; a CenterNet-style head, mAP), plus **extra outputs** (several targets at once). Sources: built-in (MNIST, Fashion-MNIST, CIFAR-10),
+  **Hugging Face** (splits, columns and class names read through the public datasets-server API, nothing downloaded), **Kaggle** (the file
+  list read through the Kaggle API), **your own files** (copied to the training machine or uploaded once as a private Kaggle dataset, e.g.
+  Google Earth Engine exports, with a generated export script) or a **cloud folder** (Cloud Storage, Google Drive, rclone) that the machine
+  fetches itself. **Satellite images** of 2–32 bands (Sentinel-2, Sentinel-1 in dB) from GeoTIFF / .npy, two sensors together (also each at
+  its own size), before/after pairs and **time series** of dated images. **Check data** runs the data loading on the training machine and
+  reports what it found before any GPU hour is spent; unbalanced classes get class weights, focal or Dice losses.
 - **Data augmentation** (Train tab): flips, rotation, padded random crop, brightness/contrast, on training images only; for segmentation the
   image and its mask are flipped and rotated together.
 - **Code tab:** the standalone `train.py` the GPU machine runs: the model, the data loading, a training loop with mixed precision, a
@@ -65,6 +74,9 @@ training code is Python (PyTorch). Planned work: [FUTURE_PLAN.md](FUTURE_PLAN.md
 - **GPU memory:** a batch that runs out of GPU memory is processed in 2, 4, 8 … parts with the same result instead of failing; "save
   memory" recomputes layer outputs instead of keeping them (much less memory, ~30% slower); bfloat16 on newer GPUs, channels-last
   convolutions, data loading on all CPU cores; the run card shows the real peak memory and whether the GPU waited for data.
+- **Losses and your own code:** cross-entropy, focal, Dice, Dice + CE, MSE, L1, Huber, or your own `custom_loss(out, y)` in Python.
+- **Several GPUs:** on a machine with several GPUs train.py starts a DistributedDataParallel worker per GPU (stop, spot interruptions and
+  resume work as with one).
 - **Better models and insight:** start from torchvision's ImageNet weights (ResNet-18, VGG-16, ViT-B/16) and fine-tune or train only the
   head; Grad-CAM heat maps and a gallery of misclassified images; save the trained model as TorchScript and ONNX.
 - **Designing:** copy and paste blocks, a residual-block shortcut, GroupNorm, and a ×N view that draws repeated blocks once (ViT-g/14's
@@ -80,8 +92,11 @@ training code is Python (PyTorch). Planned work: [FUTURE_PLAN.md](FUTURE_PLAN.md
   computer is off. Checkpoints are also written every few minutes and safely (never half-written); the app can keep a copy of each one on
   your computer, so a run whose instance was terminated can **continue on another machine** (e.g. a college GPU). Limits on automatic
   resumes and on total running time keep the cost in check.
-- **Results tab:** test accuracy, confusion matrix, sample predictions, first-layer filters, feature maps; the files (model.pt, train.py,
-  results.json) are in the run folder.
+- **Results tab:** test accuracy, confusion matrix, sample predictions, first-layer filters, feature maps; for the other tasks F1 / mAP,
+  R² / MAE / RMSE with a scatter plot, mAP with the boxes drawn, every extra output's score and the early exits; the files (model.pt,
+  train.py, results.json) are in the run folder.
+- **What to test by hand:** [TEST_APP.md](TEST_APP.md), the checklist of everything to try in the real window, on real data and on real
+  GPUs (the automatic tests run on GitHub's CPUs with generated data).
 - **Connection tab** (also the **Connection** menu): the tools (the official `kaggle` CLI and `boto3`, in a small Python environment of the
   app), your Kaggle token, Hugging Face token and AWS access key (kept in the system keychain only), and your machines (college server with a
   password or key, jump host; AWS instance with region, instance id and key file). Password machines: you log in once in a Terminal window the
