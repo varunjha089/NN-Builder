@@ -126,7 +126,7 @@ export function ResultsTab({ runId }: { runId: string | null }) {
             {all.map((k) => <div key={k} className="small">{s.labels.includes(k) ? (s.preds.includes(k) ? "✓" : "○") : "✗"} {String(classes[k] ?? k).slice(0, 14)} {(s.probs[k] * 100).toFixed(0)}%</div>)}
             {all.length === 0 && <div className="small muted">no class</div>}</div>;
         })}</div></>}
-      {r.task !== "segment" && r.task !== "multilabel" && r.task !== "regress" && r.samples?.length > 0 && <><div className="row"><h3 style={{ margin: 0 }}>Sample predictions</h3>
+      {r.task !== "segment" && r.task !== "multilabel" && r.task !== "regress" && r.task !== "detect" && r.samples?.length > 0 && <><div className="row"><h3 style={{ margin: 0 }}>Sample predictions</h3>
         {r.cam_layer && <label className="chk small"><input type="checkbox" checked={cam} onChange={(e) => setCam(e.target.checked)} />
           show Grad-CAM (where the network looked, from layer “{r.cam_layer}”)</label>}</div><div className="thumbs">
         {r.samples.map((s: any, i: number) => <div key={i} className={`thumb ${s.pred !== s.label ? "wrong" : ""}`} title={`true: ${classes[s.label]}`}>
