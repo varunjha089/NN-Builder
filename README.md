@@ -7,7 +7,7 @@ server** (SSH) or an **AWS EC2** instance (g4dn.xlarge). Your computer only desi
 application, designing a network step by step, the arithmetic behind every number, all blocks, training on Kaggle / SSH / EC2 (spot), and
 the fifteen demo architectures explained, with references to the original papers (arXiv).
 
-Version 0.3.0 (main has newer changes, listed in [CHANGELOG.md](CHANGELOG.md)) · MIT licence · Rust (Tauri 2) + React; the generated
+Version 0.4.0 (newer changes on main are listed in [CHANGELOG.md](CHANGELOG.md)) · MIT licence · Rust (Tauri 2) + React; the generated
 training code is Python (PyTorch). Planned work: [FUTURE_PLAN.md](FUTURE_PLAN.md); the design language: [PROGRAMMING_LANGUAGE.md](PROGRAMMING_LANGUAGE.md).
 
 ## What it does

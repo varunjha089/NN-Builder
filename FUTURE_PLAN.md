@@ -18,7 +18,7 @@ What is still open, in the suggested order. Done work is in git and CLAUDE.md; t
    GPU memory. Found and fixed: Kaggle refused notebooks whose title was over 50 characters (400 Bad Request). Seen: data_wait 0.65
    (the GPU waits for the data loader about two thirds of the time: Hugging Face band arrays decoded per image). Still not tried: an
    Earth Engine export of the owner's own (the GEE script, own files upload to Kaggle).
-6. **Release 0.4.0** with housekeeping: upload-artifact action update (Node.js 20 warning), delete the local backup branch, the first
+6. **Release 0.4.0** (released 2026-11-06) with housekeeping: upload-artifact action update (Node.js 20 warning), delete the local backup branch, the first
    real updater test (see section 1).
 
 ## 0b. Why the architecture steps (section 1b) are in this order
@@ -39,9 +39,8 @@ What is still open, in the suggested order. Done work is in git and CLAUDE.md; t
 
 - **Stable signing certificate.** Create a self-signed code-signing certificate in Keychain Access; the build then uses it through an
   environment variable (never in the repository). Ends the Keychain "Always Allow" question after every update.
-- **Release 0.4.0.** Phases 2–4, smoother running and the text language are installed on the owner's Mac but not released; the
-  Windows / Linux / Intel downloads are still 0.3.0. It is also the first real test of the automatic updater (Check for Updates →
-  Install and restart).
+- **First real test of the automatic updater.** 0.4.0 is released (2026-11-06); the app installed on the owner's Mac is the same code
+  but still says 0.3.0, so Help → Check for Updates → Install and restart there is the test.
 - **First real runs of the new training features** (only CI has run them, on a CPU): ImageNet weights, Grad-CAM and the mistakes
   gallery, TorchScript / ONNX export, bfloat16, channels-last, the automatic batch split on a real out-of-memory, save memory, the
   measured memory and data-wait figures. A short Kaggle run of the ResNet-18 demo with ImageNet weights and export would cover most.
