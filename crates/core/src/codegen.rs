@@ -431,6 +431,7 @@ fn model_code_opts(g: &Graph, a: &Analysis, save_memory: bool) -> Result<String>
     let line_inputs: Vec<Vec<usize>> = order.iter().map(|id| ins_of.get(id).unwrap_or(&none).iter().filter_map(|s| pos.get(s).copied()).collect()).collect();
     let mut result_pos = order.len();
     let mut heads_out: Vec<(usize, String)> = vec![];
+    let mut module_of: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
     for (i, id) in order.iter().enumerate() {
         let n = node_of[id];
         let r = result_of[id];
@@ -461,6 +462,17 @@ fn model_code_opts(g: &Graph, a: &Analysis, save_memory: bool) -> Result<String>
                 fwd.push(format!("        {v} = {} * {}   # {label} -> {}", side(0), side(1), fmt(r.out.as_ref().unwrap())));
             }
             "concat" => fwd.push(format!("        {v} = torch.cat([{}], dim=1)   # {label} -> {}", ins.join(", "), fmt(r.out.as_ref().unwrap()))),
+            "subtract" => {
+                let abs = n.params.get("abs").and_then(|b| b.as_bool()).unwrap_or(false);
+                fwd.push(format!("        {v} = {}   # {label} -> {}", if abs { format!("({} - {}).abs()", ins[0], ins[1]) } else { format!("{} - {}", ins[0], ins[1]) },
+                    fmt(r.out.as_ref().unwrap())));
+            }
+            "shared" => {
+                // the same layer (the same weights) as the block it shares, on this branch's input
+                let of = n.params.get("of").and_then(|o| o.as_str()).unwrap_or("");
+                let m = module_of.get(of).cloned().unwrap_or_default();
+                fwd.push(format!("        {v} = self.{m}({})   # {label}: the weights of {m} -> {}", ins.join(", "), fmt(r.out.as_ref().unwrap())));
+            }
             _ => {
                 let mods = modules(n, a, a.classes);
                 let name = format!("l{i}");
@@ -474,6 +486,7 @@ fn model_code_opts(g: &Graph, a: &Analysis, save_memory: bool) -> Result<String>
                     fmt(r.out.as_ref().unwrap()), r.params));
                 init.push(if mods.len() == 1 { format!("        self.{name} = {}", mods[0]) } else { format!("        self.{name} = nn.Sequential(\n            {},\n        )", mods.join(",\n            ")) });
                 fwd.push(format!("        {v} = self.{name}({})", ins.join(", ")));
+                module_of.insert(n.id.as_str(), name.clone());
                 let conv = matches!(n.kind.as_str(), "conv2d" | "dwconv2d" | "convtranspose2d");
                 layers.push(json!([name, label, conv]));
                 expected.insert(name, json!(r.out));

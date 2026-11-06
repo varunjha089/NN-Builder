@@ -367,6 +367,26 @@ the main task):
 7 output 2 <- 3            # extra output 2 (e.g. dry / wet)
 \end{verbatim}
 
+\subsubsection*{\texttt{subtract} (\texttt{sub}), \texttt{shared} --- comparing branches, shared weights}
+\begin{Verbatim}[fontsize=\small]
+LABEL subtract [abs] <- A, B
+LABEL shared OTHER
+\end{Verbatim}
+\texttt{subtract}: the first input minus the second (\texttt{abs}: $|a-b|$; \texttt{abs=true}); equal shapes. \texttt{shared OTHER}: the
+layer of block \texttt{OTHER} (its label) again, with the same weights, on this block's input (a Siamese network); the label may be a
+whole path or one of the same function call or pass. Its input must have the shape that block's input has.
+\begin{verbatim}
+1 input 1                  # the "before" images (band group 1)
+2 conv 16 3x3
+3 conv 16 3x3
+4 input 2                  # the "after" images: the same bands (band group 2)
+5 shared 2                 # block 2's convolution, with its weights
+6 shared 3
+7 subtract abs <- 3, 6     # what changed
+8 global_pool
+9 output
+\end{verbatim}
+
 \subsubsection*{\texttt{custom} --- your own PyTorch class}
 \label{sec:custom-text}
 \begin{Verbatim}[fontsize=\small]
@@ -456,6 +476,6 @@ In the layer table, the blocks of one \texttt{repeat}, \texttt{for} or call line
 \subsection{A design that uses everything}
 \file{doc/examples/everything.nnb} in the repository is a hybrid CNN and Transformer written only as text: functions calling functions
 with defaults and named values, a function with two inputs, \texttt{for} with tuples, \texttt{repeat} with \texttt{i}, \texttt{let} and
-every operator, paths into loop passes, a left-out label, comments, and every block kind except the segmentation output, including a Custom block with its \texttt{python} section (90 blocks,
+every operator, paths into loop passes, a left-out label, comments, and every block kind except the segmentation output, including a Custom block with its \texttt{python} section and a shared-weights twin (92 blocks,
 186\,086 parameters, no warning at $3\times32\times32$). The test suite builds it and every example of this chapter, and GitHub Actions
 compares its layers with real PyTorch.

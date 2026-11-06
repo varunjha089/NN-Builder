@@ -135,6 +135,14 @@ crates/core/src/
                            group 2 to SIZE2, read_bands pads it with NaN into the top-left corner (stats NaN-aware, normalise -> 0),
                            flips per group block, band_report on each group's own pixels. DatasetTab SecondGroup "its own image size".
                            CI: ci_multiband_check fusion_sizes (S2 32×32 + S1 16×16).
+                           Shared weights: kind "shared" (param "of" = the shared block's id; shapes::shared_step runs that block's step on
+                           this input, which must equal the source's input; params 0; Kahn order waits for the source; SHAREABLE kinds)
+                           and "subtract" (a - b, abs). codegen calls the source's module (module_of). DSL `shared LABEL` (label -> id in
+                           expand, whole or relative to the block's own group; printed as "shared @id" then resolve_shared in print /
+                           sync / patch_*), `subtract abs`. Data: a pair in time = bands2 == bands (duplicate names allowed; harness
+                           BANDS names the second copy B04_2). UI: Design "Twin branch (shared weights)" (addTwin), inspectors. Tests:
+                           design.rs siamese_shared_weights, text.rs shared_weights_and_subtract, everything.nnb (tw / df), CI siamese
+                           (before/after pairs, PyTorch's parameter count = the app's).
                            Sentinel step finished: scene_split ("" random | strip = eastern tenth, one tile column gap | files =
                            scene_test_image/_label) in harness scene_split(); BigEarthNet layout: read_patch_folder (one GeoTIFF per band,
                            <patch>_<band>.tif, bands resized to the largest), label tables via read_table (CSV/TSV/Parquet, pyarrow on

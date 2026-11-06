@@ -93,7 +93,9 @@ escape hatch, 2-D only, supervised only, one GPU. The steps below, in this order
    (not twin files), segmentation + extra outputs, per-head class weights.* The plan: more than one Input (each bound to a data source or band group; inputs of different sizes, e.g.
    10 m S2 and 20 m bands, or S1 and S2 at their own sizes) and more than one Output (multi-task heads, each with its task, loss
    and weight, and its own scores in Results); shapes, codegen, text language, harness (a batch becomes a dict of tensors).
-5. **Weight sharing:** a block that reuses another block's weights (or a whole branch: Siamese / twin networks); with step 4 this
+5. **Weight sharing:** *Done 2026-11-06 (CI-tested, not yet on real data): Shared-weights block, Twin branch button, Subtract,
+   before/after pairs as a second band group with the same bands. Left: a pair layout of its own (two files listed in a table, or two
+   dates in one file), change-map datasets like OSCD tried for real, contrastive / triplet losses.* The plan: a block that reuses another block's weights (or a whole branch: Siamese / twin networks); with step 4 this
    gives change detection from before / after image pairs (OSCD-style), with a pair dataset layout.
 6. **Time dimension:** time-series data (a stack of dated Sentinel-2 / Sentinel-1 images per place: a folder per patch, or a band
    axis of T×C in one GeoTIFF; Earth Engine script for monthly composites), Conv3d / Conv1d and their pools, temporal attention over

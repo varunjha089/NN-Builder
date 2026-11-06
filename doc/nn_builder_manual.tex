@@ -449,6 +449,10 @@ Self-attention & $(N,D)\rightarrow(N,D)$ & heads, dropout; multi-head scaled dot
 Token pool & $(N,D)\rightarrow(D)$ & the class token, or the mean of all tokens\\
 Output & $(n)\rightarrow(K)$ & $K$ = number of classes; softmax/cross-entropy is in the training script\\
 Segmentation output & $(C,H,W)\rightarrow(K,H,W)$ & a 1$\times$1 convolution giving a class score for every pixel; must match the mask size\\
+Subtract & equal shapes $\rightarrow$ same & the first input minus the second, or $|a-b|$: the difference of two branches (Siamese
+change detection)\\
+Shared weights & as the shared block & runs another block's layer, with the same weights, on its own input of the same shape; the weights
+count once (Siamese / twin networks, Section~\ref{sec:siamese})\\
 Custom (PyTorch) & declared by the class & runs a class from the design's own PyTorch code (an \texttt{nn.Module} given the input
 shape; a \texttt{\# out:} line declares the output shape); the inspector edits the code; checked on the training machine
 (Section~\ref{sec:custom})\\
@@ -725,6 +729,25 @@ text \texttt{output 1}). Usually they share the body of the network and each has
 Output. The network returns all outputs; the run reports the main task as usual (and its score decides early stopping and the best
 epoch) and every extra output in a table: accuracy, micro F1 and mAP, or R$^2$, MAE and RMSE per number, in the numbers' own units. The
 Train tab's chart draws each output's validation score.
+
+\subsection{Shared weights: Siamese networks and change detection}
+\label{sec:siamese}
+A Siamese (twin) network looks at two images with the \emph{same} layers, so that both are described in the same terms, and then
+compares the two descriptions: has this field been built on, flooded or cleared between two dates? NN Builder does it with:
+\begin{itemize}[nosep]
+  \item \textbf{the data as a pair in time:} the second band group with the \emph{same bands} as the first, from the folder of the later
+        images (same subfolders and file names): e.g.\ \file{before/changed/17.tif} and \file{after/changed/17.tif}. The second copy of
+        each band is reported as \texttt{B04\_2} etc.; flips and turns are applied to both images alike;
+  \item \textbf{the Twin branch button} (Design tab): build one branch from the Input (convolutions, pools, \dots), select its last block and
+        press \ui{Twin branch (shared weights)}. The same branch appears again from an Input for band group 2, made of \ui{Shared
+        weights} blocks (each runs the original layer with the original weights) and copies of the layers without weights. In text:
+        \texttt{5 shared 2} uses block 2's weights (a label inside a function or repeat may name a block of the same call or pass);
+  \item \textbf{a join that compares:} \ui{Subtract} with \ui{absolute difference} gives $|a-b|$, what changed (FC-Siam-diff); Concat keeps
+        both (FC-Siam-conc). Then the head: Global pool + Output for ``changed / not changed'', or a decoder to a Segmentation output for a
+        change map (images + masks).
+\end{itemize}
+The shared layers are trained by both images and counted once in the parameters. A Shared-weights block's input must have the shape of
+the original block's input, or the weights would not fit; the inspector lists the blocks whose weights can be used.
 
 \subsection{Sentinel-1 and Sentinel-2 together (fusion)}
 \label{sec:fusion}

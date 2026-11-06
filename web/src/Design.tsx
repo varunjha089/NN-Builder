@@ -5,7 +5,7 @@ import {
   type Connection, type Edge, type EdgeChange, type Node, type NodeChange, type NodeProps, MarkerType,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { api, fmt, errText, type Analysis, type AppState, type Graph, type NodeResult, type Params, type Template } from "./api";
+import { api, fmt, errText, type Analysis, type AppState, type GNode, type Graph, type NodeResult, type Params, type Template } from "./api";
 import { SlidingPreview } from "./Preview";
 import { neon, useTheme } from "./theme";
 
@@ -13,7 +13,7 @@ export const COLORS: Record<string, string> = {
   input: "#3b6fd8", conv2d: "#d9822b", dwconv2d: "#c96d1a", convtranspose2d: "#b5651d", pool2d: "#2a9d8f", global_pool: "#21867a", upsample: "#3c8d7f",
   batchnorm: "#8e5bb5", layernorm: "#7d4fa3", groupnorm: "#a066c9", repeat: "#0e7490", dropout: "#9c6ac6", flatten: "#9a8c1c", dense: "#4b5bb5", activation: "#6c7a89", add: "#c0392b",
   concat: "#a93226", multiply: "#b03a5b", output: "#2e8b57", seg_output: "#1f7a4d",
-  to_tokens: "#0f766e", cls_pos: "#0e7490", attention: "#7c3aed", token_pool: "#0369a1", custom: "#475569",
+  to_tokens: "#0f766e", cls_pos: "#0e7490", attention: "#7c3aed", token_pool: "#0369a1", custom: "#475569", subtract: "#9b2c2c", shared: "#64748b",
 };
 const GROUPS: [string, string[]][] = [
   ["Image", ["conv2d", "dwconv2d", "pool2d", "global_pool", "flatten"]],
@@ -21,7 +21,7 @@ const GROUPS: [string, string[]][] = [
   ["Dense and outputs", ["dense", "output", "seg_output"]],
   ["Normalise / regularise", ["batchnorm", "layernorm", "groupnorm", "dropout", "activation"]],
   ["Transformer", ["to_tokens", "cls_pos", "attention", "token_pool"]],
-  ["Branches", ["add", "concat", "multiply"]],
+  ["Branches", ["add", "concat", "multiply", "subtract", "shared"]],
   ["Your own", ["custom"]],
 ];
 
@@ -49,6 +49,8 @@ function summary(kind: string, p: Params): string {
     case "token_pool": return p.mode === "mean" ? "mean of tokens" : "class token";
     case "custom": return p.class ? `class ${p.class}` : "choose a class";
     case "output": return Number(p.head ?? 0) > 0 ? `output ${p.head}` : "";
+    case "subtract": return p.abs ? "|a − b|" : "a − b";
+    case "shared": return p.of ? "the weights of another block" : "choose the block";
     default: return "";
   }
 }
@@ -340,6 +342,35 @@ export function Design({ st, graph, setGraph, analysis, persist, focus, toast, r
     setSelected(made[made.length - 1].id);
     toast(`Residual block added (${c} channels; 2 × ${(9 * c * c).toLocaleString()} convolution weights).`);
   };
+  /** Siamese / twin branch: the straight branch from an Input to the selected block, again from the other band group's Input, with
+   *  the same weights (Shared-weights blocks for every layer with weights; layers without weights copied) */
+  const addTwin = () => {
+    if (!sel) return;
+    const chain: GNode[] = [];
+    let cur: GNode | undefined = graph.nodes.find((n) => n.id === sel.id);
+    while (cur && cur.kind !== "input") {
+      const ins = graph.edges.filter((e) => e.target === cur!.id);
+      if (ins.length !== 1) return toast("Twin branch copies a straight branch (one input per block) from an Input to the selected block.");
+      chain.unshift(cur);
+      cur = graph.nodes.find((n) => n.id === ins[0].source);
+    }
+    if (!cur || !chain.length) return toast("Select the last block of a branch that starts at an Input.");
+    const tag = Date.now().toString(36);
+    const inputs = graph.nodes.filter((n) => n.kind === "input");
+    let nodes = graph.nodes;
+    let other = inputs.find((n) => n.id !== cur!.id && Number(n.params.group ?? 0) === 2);
+    if (!other) {
+      other = { id: `in${tag}`, kind: "input", params: { group: 2 }, x: cur.x, y: cur.y + 260 };
+      nodes = [...nodes.map((n) => (n.id === cur!.id ? { ...n, params: { ...n.params, group: 1 } } : n)), other];
+    }
+    const SHAREABLE = ["conv2d", "dwconv2d", "convtranspose2d", "dense", "batchnorm", "layernorm", "groupnorm", "attention", "cls_pos", "custom"];
+    const made = chain.map((b, i) => ({ id: `tw${tag}${i}`, kind: SHAREABLE.includes(b.kind) ? "shared" : b.kind,
+      params: SHAREABLE.includes(b.kind) ? { of: b.id } : { ...b.params }, x: b.x, y: b.y + 260 }));
+    const edges = [...graph.edges, ...made.map((m, i) => ({ id: `e${tag}${i}`, source: i === 0 ? other!.id : made[i - 1].id, target: m.id }))];
+    save({ ...graph, nodes: [...nodes, ...made], edges });
+    setSelected(made[made.length - 1].id);
+    toast(`Twin branch added: ${made.filter((m) => m.kind === "shared").length} layers share their weights. Join the two branches (e.g. Subtract |a − b| or Concat).`);
+  };
   // earlier blocks (in computation order) that can feed a skip connection into the selected one
   const order = analysis?.nodes.filter((r) => r.out).map((r) => r.id) ?? [];
   const candidates = sel && order.includes(sel.id) ? order.slice(0, order.indexOf(sel.id)).filter((id) => !graph.edges.some((e) => e.source === id && e.target === sel.id))
@@ -360,6 +391,8 @@ export function Design({ st, graph, setGraph, analysis, persist, focus, toast, r
           {collapsed ? "Show every block" : "Collapse repeated blocks (×N)"}</button>}
         <button className="arrange" onClick={() => addResidual()} disabled={collapsed || !sel}
           title="After the selected block: Conv 3×3 → BN → ReLU → Conv 3×3 → BN → Add (skip from the selected block) → ReLU">Residual block after selected</button>
+        <button className="arrange" onClick={() => addTwin()} disabled={collapsed || !sel}
+          title="Siamese network: the branch from the Input to the selected block again, from the second band group's Input (e.g. the 'after' image), with the same weights">Twin branch (shared weights)</button>
         <p className="muted small">Click a block to add it after the selected one. Drag from a block's right dot to another block's left dot to connect (several arrows into Add / Concat / Multiply). Select + Backspace deletes.</p>
         {GROUPS.map(([g, kinds]) => (
           <div key={g}><h4>{g}</h4>{kinds.map((k) => (
@@ -399,6 +432,7 @@ export function Design({ st, graph, setGraph, analysis, persist, focus, toast, r
 }
 
 // ---------------------------------------------------------------- inspector
+const SHARE_KINDS = ["conv2d", "dwconv2d", "convtranspose2d", "dense", "batchnorm", "layernorm", "groupnorm", "attention", "cls_pos", "custom", "output", "seg_output"];
 const EXAMPLE_CLASS = `class SE(nn.Module):
     """squeeze-and-excitation (Hu et al. 2018): one weight per channel, from the channel means"""
     # out: c, h, w
@@ -780,6 +814,16 @@ function Inspector({ node, result, analysis, graph, st, setParam, setParams, can
         {node.kind === "token_pool" && <Sel label="Use" value={p.mode} options={[["cls", "the class token (ViT)"], ["mean", "the mean of all tokens"]]} onChange={(v) => setParam("mode", v)} />}
         {node.kind === "activation" && <Sel label="Function" value={p.fn} options={acts.filter(([a]) => a !== "none")} onChange={(v) => setParam("fn", v)} />}
         {node.kind === "layernorm" && <p className="muted">On an image it normalises over (channels, height, width) (GroupNorm with one group); on a vector, over its features.</p>}
+        {node.kind === "subtract" && <><label className="chk"><input type="checkbox" checked={!!p.abs} onChange={(e) => setParam("abs", e.target.checked)} />
+          absolute difference |a − b|</label>
+          <p className="muted">The first input minus the second (the order of the arrows); equal shapes. In a Siamese change-detection network the
+            two branches see the before and after images, and |a − b| keeps what changed.</p></>}
+        {node.kind === "shared" && <>
+          <Sel label="Uses the weights of" value={String(p.of ?? "")} options={[["", "choose…"], ...(analysis?.nodes ?? [])
+            .filter((r) => SHARE_KINDS.includes(r.kind) && r.id !== node.id).map((r): [string, string] =>
+              [r.id, `${graph.nodes.find((n) => n.id === r.id)?.label || "·"} ${r.title} ${fmt(r.out)}`])]} onChange={(v) => setParam("of", v)} />
+          <p className="muted">Runs that block's layer again, with the same weights, on this block's input (which must have the shape that block's
+            input has). The weights are trained by both uses and counted once: a Siamese (twin) network. The Twin branch button makes a whole branch of these.</p></>}
         {node.kind === "add" && <p className="muted">Adds two or more branches element by element (a residual connection): their shapes must be equal.</p>}
         {node.kind === "concat" && <p className="muted">Joins branches along channels (images: equal height and width) or features (vectors). The order of the arrows is the order of the channels.</p>}
         {node.kind === "output" && <>

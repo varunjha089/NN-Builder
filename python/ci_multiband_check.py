@@ -356,6 +356,39 @@ def multitask(root):
     print(f"multitask: class accuracy {done['test_acc']}, biomass/height R² {heads['biomass']['score']:.3f}, wet accuracy {heads['wet']['score']:.3f}")
 
 
+def make_change(root):
+    """before/<class>/i.npy and after/<class>/i.npy: 'same' = the same place with new noise, 'changed' = a bright 6×6 patch appeared
+    somewhere; the overall brightness varies between places, so only the difference tells the classes apart"""
+    rng = np.random.default_rng(15)
+    for cls in ("changed", "same"):
+        for part in ("before", "after"):
+            os.makedirs(os.path.join(root, part, cls), exist_ok=True)
+        for i in range(150):
+            base = rng.normal(0, 1, size=(2, 24, 24)).astype(np.float32) + rng.uniform(-2, 2)
+            after = base + rng.normal(0, 0.2, size=base.shape).astype(np.float32)
+            if cls == "changed":
+                y, x = rng.integers(0, 18, size=2)
+                after[:, y:y + 6, x:x + 6] += 4.0
+            np.save(os.path.join(root, "before", cls, f"{i}.npy"), base)
+            np.save(os.path.join(root, "after", cls, f"{i}.npy"), after.astype(np.float32))
+
+
+def siamese(root):
+    """a Siamese network (shared weights) learns change from before/after pairs; the shared layers have one set of weights"""
+    root = os.path.abspath(root)
+    make_change(os.path.join(root, "own", "cd"))
+    ev = run(os.path.join(root, "siamese"), os.path.join(root, "data"), "siamese")
+    start = next(e for e in ev if e["event"] == "start")
+    code = open(os.path.join(root, "siamese", "train.py")).read()
+    app_params = int(code.split(" trainable parameters")[0].rsplit("# ", 1)[1])
+    assert start["params"] == app_params, f"PyTorch counts {start['params']}, the app {app_params}: shared weights must count once"
+    st = json.load(open(os.path.join(root, "siamese", "band_stats.json")))
+    assert st["bands"] == ["b1", "b2", "b1_2", "b2_2"], st
+    done = next(e for e in ev if e["event"] == "done")
+    assert done["test_acc"] >= 0.9, f"siamese: {done}"
+    print(f"siamese: before/after pairs, shared encoder ({app_params} parameters, counted once), |a - b|, test accuracy {done['test_acc']}")
+
+
 def custom_blocks(root):
     """the design's own PyTorch classes train like any block, the custom loss is used, and a wrong '# out:' line stops the run at the
     one-batch check with a message naming the block"""
@@ -562,6 +595,7 @@ if __name__ == "__main__":
     regress(sys.argv[1])
     custom_blocks(sys.argv[1])
     multitask(sys.argv[1])
+    siamese(sys.argv[1])
     cloud(sys.argv[1])
     ben(sys.argv[1])
     pretrained_ms(sys.argv[1])

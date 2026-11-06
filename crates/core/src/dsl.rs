@@ -615,6 +615,7 @@ const ALIASES: &[(&str, (&str, &str))] = &[
     ("add", ("add", "")), ("concat", ("concat", "")), ("cat", ("concat", "")), ("multiply", ("multiply", "")), ("mul", ("multiply", "")),
     ("to_tokens", ("to_tokens", "")), ("cls_pos", ("cls_pos", "")), ("attention", ("attention", "")), ("attn", ("attention", "")),
     ("token_pool", ("token_pool", "")), ("output", ("output", "")), ("seg_output", ("seg_output", "")), ("custom", ("custom", "")),
+    ("subtract", ("subtract", "")), ("sub", ("subtract", "")), ("shared", ("shared", "")),
 ];
 
 fn kind_of(word: &str) -> Option<(&'static str, &'static str)> {
@@ -723,6 +724,23 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
     };
     while i < args.len() {
         let (key, v) = &args[i];
+        // shared 2: the label of the block whose weights it uses (turned into that block's id once the blocks exist)
+        if let (None, "shared") = (key, kind) {
+            if p.contains_key("of") {
+                return Err("shared takes one label (the block whose weights it uses)".into());
+            }
+            p.insert("of".into(), json!(match v { Val::Num(n) => fmt_num(*n), Val::Word(w) => w.clone() }));
+            i += 1;
+            continue;
+        }
+        if let (None, Val::Word(w), "subtract") = (key, v, kind) {
+            if w != "abs" {
+                return Err(format!("'{w}' means nothing for subtract (abs: |a - b|)"));
+            }
+            p.insert("abs".into(), json!(true));
+            i += 1;
+            continue;
+        }
         // custom SE: the class name, written as it is in the code (upper case kept)
         if let (None, Val::Word(w), "custom") = (key, v, kind) {
             if p.contains_key("class") {
@@ -1002,6 +1020,9 @@ fn block_text(kind: &str, params: &Map<String, Value>) -> String {
         "cls_pos" => take("cls", if get("cls") == json!(false) { "nocls".into() } else { String::new() }, &mut words),
         "input" => take("group", if differs("group") { fmt_value(&get("group")) } else { String::new() }, &mut words),
         "custom" => take("class", get("class").as_str().unwrap_or("").to_string(), &mut words),
+        // printed as "@<id>" and replaced by that block's label once all labels are known (resolve_shared)
+        "shared" => take("of", format!("@{}", get("of").as_str().unwrap_or("")), &mut words),
+        "subtract" => take("abs", if get("abs") == json!(true) { "abs".into() } else { String::new() }, &mut words),
         "output" => take("head", if differs("head") { fmt_value(&get("head")) } else { String::new() }, &mut words),
         "attention" => {
             take("heads", format!("heads {}", fmt_value(&get("heads"))), &mut words);
@@ -1370,6 +1391,23 @@ pub fn expand(text: &str, old: &Graph) -> Result<Expanded, Vec<Diagnostic>> {
         n.id = id;
     }
     let id_of: HashMap<String, String> = nodes.iter().map(|n| (n.label.clone(), n.id.clone())).collect();
+    // shared LABEL: the label as written (whole), or relative to the block's own group (a label inside the same function call or pass)
+    for n in nodes.iter_mut().filter(|n| n.kind == "shared") {
+        let want = n.params.get("of").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        if want.is_empty() {
+            continue;
+        }
+        let local = n.label.rfind('.').map(|i| format!("{}{want}", &n.label[..=i]));
+        match id_of.get(&want).or_else(|| local.as_ref().and_then(|l| id_of.get(l))) {
+            Some(id) => {
+                n.params.insert("of".into(), json!(id));
+            }
+            None => {
+                let line = lines.get(&n.label).copied().unwrap_or(1);
+                return Err(vec![diag(line, 1, format!("shared {want}: no block has the label {want}"))]);
+            }
+        }
+    }
     let mut seen: HashMap<(String, String), usize> = HashMap::new();
     let edges: Vec<Edge> = edges.into_iter().map(|(s, t)| {
         let (s, t) = (id_of[&s].clone(), id_of[&t].clone());
@@ -1612,8 +1650,8 @@ pub fn print(g: &Graph) -> (String, HashMap<String, String>) {
         prev_out = Some(p);
         p += 1;
     }
-    let labels = order.iter().enumerate().map(|(p, &i)| (g.nodes[i].id.clone(), label[p].clone())).collect();
-    (lines.join("\n") + "\n", labels)
+    let labels: HashMap<String, String> = order.iter().enumerate().map(|(p, &i)| (g.nodes[i].id.clone(), label[p].clone())).collect();
+    (resolve_shared(&(lines.join("\n") + "\n"), &labels), labels)
 }
 
 // ---------------------------------------------------------------- keeping canvas and text in step
@@ -1633,9 +1671,28 @@ pub fn same_structure(a: &Graph, b: &Graph) -> bool {
 
 /// after a change on the canvas: keep the text when it still describes the blocks exactly (moves, or a text just applied), else print
 /// the text again from the blocks (functions and loops written by hand then become plain lines and repeats) and label the blocks
+/// `shared @<id>` (as block_text writes it) -> `shared <label>`, with the labels the blocks have now
+fn resolve_shared(text: &str, labels: &HashMap<String, String>) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find("shared @") {
+        out += &rest[..i + 7];
+        let tail = &rest[i + 8..];
+        let end = tail.find(|c: char| !(c.is_alphanumeric() || "_-.".contains(c))).unwrap_or(tail.len());
+        let id = &tail[..end];
+        out += labels.get(id).map(|l| l.as_str()).unwrap_or(id);
+        rest = &tail[end..];
+    }
+    out + rest
+}
+
 pub fn sync(g: &Graph) -> Graph {
     // the text's python section always holds the design's code (it may have been edited on the canvas)
     let mut out = sync_blocks(g);
+    if out.text.contains("shared @") {
+        let labels: HashMap<String, String> = out.nodes.iter().map(|n| (n.id.clone(), n.label.clone())).collect();
+        out.text = resolve_shared(&out.text, &labels);
+    }
     out.text = crate::custom::set_section(&out.text, &g.python);
     out
 }
@@ -1762,6 +1819,7 @@ fn patch_settings(text: &str, e: &Expanded, g: &Graph) -> Option<String> {
         out.push('\n');
     }
     // the rewritten text must give exactly the canvas design
+    let out = if out.contains("shared @") { resolve_shared(&out, &g.nodes.iter().map(|n| (n.id.clone(), n.label.clone())).collect()) } else { out };
     let check = expand(&out, g).ok()?;
     same_structure(&check.graph, g).then_some(out)
 }
@@ -1956,6 +2014,7 @@ fn patch_structure(text: &str, e: &Expanded, g: &Graph) -> Option<(String, HashM
     for n in &mut labelled.nodes {
         n.label = label[&n.id].clone();
     }
+    let text_out = if text_out.contains("shared @") { resolve_shared(&text_out, &label) } else { text_out };
     let check = expand(&text_out, &labelled).ok()?;
     same_structure(&check.graph, &labelled).then_some((text_out, label))
 }

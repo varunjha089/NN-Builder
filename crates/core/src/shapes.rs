@@ -209,16 +209,29 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
             q.extend(out_edges.get(id).unwrap_or(&no_targets).iter().copied());
         }
     }
-    // computation order (Kahn) over the reached part
+    // computation order (Kahn) over the reached part; a Shared-weights block also waits for the block whose weights it uses
+    let shared_of = |n: &Node| n.params.get("of").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let mut after: HashMap<&str, Vec<&str>> = HashMap::new();
+    for n in g.nodes.iter().filter(|n| n.kind == "shared" && reach.contains(n.id.as_str())) {
+        let of = shared_of(n);
+        if let Some(src) = reach.get(of.as_str()) {
+            if *src != n.id.as_str() {
+                after.entry(*src).or_default().push(n.id.as_str());
+            }
+        }
+    }
     let mut indeg: HashMap<&str, usize> = reach.iter().map(|id| (*id, 0)).collect();
     for e in edges.iter().filter(|e| reach.contains(e.source.as_str()) && reach.contains(e.target.as_str())) {
         *indeg.get_mut(e.target.as_str()).unwrap() += 1;
+    }
+    for t in after.values().flatten() {
+        *indeg.get_mut(t).unwrap() += 1;
     }
     let mut ready: VecDeque<&str> = g.nodes.iter().map(|n| n.id.as_str()).filter(|id| indeg.get(id) == Some(&0)).collect();
     let mut order: Vec<&str> = vec![];
     while let Some(id) = ready.pop_front() {
         order.push(id);
-        for t in out_edges.get(id).unwrap_or(&no_targets).iter().copied().filter(|t| reach.contains(t)) {
+        for t in out_edges.get(id).unwrap_or(&no_targets).iter().copied().filter(|t| reach.contains(t)).chain(after.get(id).cloned().unwrap_or_default()) {
             let d = indeg.get_mut(t).unwrap();
             *d -= 1;
             if *d == 0 {
@@ -279,6 +292,7 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
                     err(&mut r, &m);
                     None
                 }
+                None if node.kind == "shared" => shared_step(node, &mut r, &node_of, &results, rf_in, &mut rfs, &py, ds, classes),
                 None => {
                     // an Output block gives as many values as its head has classes / targets
                     let k = if node.kind == "output" { ds.head_size(head_of(node)).unwrap_or(0) } else { classes };
@@ -423,6 +437,64 @@ fn warn(r: &mut NodeResult, m: &str) {
     if r.status == "ok" {
         r.status = "warn".into();
     }
+}
+
+/// the kinds whose layer has weights another block can share
+pub const SHAREABLE: &[&str] = &["conv2d", "dwconv2d", "convtranspose2d", "dense", "batchnorm", "layernorm", "groupnorm", "attention", "cls_pos",
+    "custom", "output", "seg_output"];
+
+/// a Shared-weights block: the shape the shared block's layer gives on this input (which must have the shape that block's input has,
+/// or the weights would not fit); no parameters of its own
+#[allow(clippy::too_many_arguments)]
+fn shared_step<'a>(node: &'a Node, r: &mut NodeResult, node_of: &HashMap<&str, &Node>, results: &HashMap<&str, NodeResult>,
+    rf_in: ([usize; 2], [usize; 2]), rfs: &mut HashMap<&'a str, ([usize; 2], [usize; 2])>, py: &[crate::custom::PyClass], ds: &Dataset, classes: usize) -> Option<Vec<usize>> {
+    let of = node.params.get("of").and_then(|v| v.as_str()).unwrap_or("");
+    let Some(src) = node_of.get(of).copied() else {
+        err(r, if of.is_empty() { "Choose the block whose weights this one uses (Shared weights: of)." } else { "The block whose weights this one uses is not in the design." });
+        return None;
+    };
+    if src.kind == "shared" {
+        err(r, "Share the original block's weights, not another Shared-weights block's.");
+        return None;
+    }
+    if !SHAREABLE.contains(&src.kind.as_str()) {
+        err(r, &format!("{} has no weights to share.", model::title(&src.kind)));
+        return None;
+    }
+    let Some(sr) = results.get(src.id.as_str()).filter(|s| s.out.is_some()) else {
+        err(r, &format!("The {} whose weights this block uses has a problem (or is not connected).", model::title(&src.kind)));
+        return None;
+    };
+    if r.inputs.len() != 1 {
+        err(r, if r.inputs.is_empty() { "Connect an input to this block." } else { "A Shared-weights block takes one input." });
+        return None;
+    }
+    if r.inputs[0] != sr.inputs[0] {
+        err(r, &format!("The shared {}'s weights are for an input {}, but this block's input is {}.", model::title(&src.kind), fmt(&sr.inputs[0]), fmt(&r.inputs[0])));
+        return None;
+    }
+    let mut twin = src.clone();
+    twin.id = node.id.clone();
+    let k = if src.kind == "output" { ds.head_size(src.params.get("head").and_then(|v| v.as_u64()).unwrap_or(0) as usize).unwrap_or(0) } else { classes };
+    let mut probe = NodeResult { inputs: r.inputs.clone(), title: r.title.clone(), ..Default::default() };
+    // (the receptive field is the shared block's computed on this block's input; kept under this block's id)
+    let mut tmp: HashMap<&str, ([usize; 2], [usize; 2])> = HashMap::new();
+    let out = step(&twin, &mut probe, k, rf_in, &mut tmp, py);
+    if let Some(v) = tmp.get(twin.id.as_str()) {
+        rfs.insert(node.id.as_str(), *v);
+    }
+    if probe.status == "error" {
+        for m in &probe.messages {
+            err(r, m);
+        }
+        return None;
+    }
+    r.formula = probe.formula;
+    r.padding = probe.padding;
+    r.stride = probe.stride;
+    r.rf = probe.rf;
+    r.params = 0;
+    out
 }
 
 /// the output shape of one node from its inputs (or None with an error in r)
@@ -721,6 +793,15 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
                     fmt(a), fmt(b)));
                 return None;
             }
+        }
+        "subtract" => {
+            if ins.len() != 2 || ins[0] != ins[1] {
+                err(r, &if ins.len() != 2 { "Subtract takes exactly two inputs (the first minus the second).".to_string() } else {
+                    format!("Subtract needs two inputs of the same shape, but they are {} and {}.", fmt(&ins[0]), fmt(&ins[1]))
+                });
+                return None;
+            }
+            x.clone()
         }
         "seg_output" => {
             if !is3 {

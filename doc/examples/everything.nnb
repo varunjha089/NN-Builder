@@ -108,7 +108,10 @@ def up(c, k = 2) {
 sd custom Unshuffle
 20 flatten
 21 dense 16 tanh
-22 concat <- 18, 21
+# the same Dense again with the same weights (shared), on the same input: their difference |a - b| is 0, which only shows the wiring
+tw shared 21 <- 20
+df subtract abs <- 21, tw
+22 concat <- 18, df
 23 dense 64 - 1 + 1 gelu
 24 dropout 0.2
 25 activation relu

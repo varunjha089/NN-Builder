@@ -771,3 +771,40 @@ fn inputs_at_their_own_sizes() {
     assert!(Dataset { image_size2: vec![128, 64], ..ds.clone() }.problems().iter().any(|p| p.contains("may not be larger")));
     assert!(Dataset { image_size2: vec![32], ..ds.clone() }.problems().iter().any(|p| p.contains("two numbers")));
 }
+
+#[test]
+fn siamese_shared_weights() {
+    let s = |v: &[&str]| v.iter().map(|b| b.to_string()).collect::<Vec<_>>();
+    // before / after the same place: the same bands in both groups (a pair in time) is allowed
+    let ds = Dataset { source: "local".into(), local_dir: "/data/cd".into(), kaggle_train_dir: "before".into(), image_size: [32, 32], sensor: "s2".into(),
+        band_order: s(&["B2", "B3", "B4", "B8"]), bands: s(&["B2", "B3", "B4", "B8"]), sensor2: "s2".into(), band_order2: s(&["B2", "B3", "B4", "B8"]),
+        bands2: s(&["B2", "B3", "B4", "B8"]), fuse_dir: "after".into(), classes: s(&["same", "changed"]), ..Default::default() };
+    assert!(ds.problems().is_empty(), "{:?}", ds.problems());
+    let other = Dataset { bands2: s(&["B2", "B3"]), band_order2: s(&["B2", "B3"]), ..ds.clone() };
+    assert!(other.problems().iter().any(|p| p.contains("share a band name")), "only a full pair may repeat names");
+    let text = "1 input 1\n2 conv 8 3x3\n3 conv 8 3x3\n4 input 2\n5 shared 2\n6 shared 3\n7 subtract abs <- 3, 6\n8 global_pool\n9 output\n";
+    let g = nnb_core::dsl::apply(text, &Graph::default()).unwrap();
+    let a = analyze(&g, &ds);
+    assert!(a.ok, "{:?}", a.problems);
+    let r = |l: &str| a.get(&g.nodes.iter().find(|n| n.label == l).unwrap().id).unwrap();
+    assert_eq!((r("5").out.clone(), r("5").params, r("6").out.clone()), (Some(vec![8, 32, 32]), 0, Some(vec![8, 32, 32])));
+    // the weights are counted once: two convolutions (4->8, 8->8) and the output (8->2)
+    assert_eq!(a.total_params, (4 * 9 * 8 + 8) + (8 * 9 * 8 + 8) + (8 * 2 + 2));
+    let code = train_script(&g, &ds, &a, &TrainSettings::default(), "siam").unwrap();
+    assert!(code.matches("= self.l2(").count() == 2 && code.matches("= self.l3(").count() == 2 && code.contains(".abs()"), "{code}");
+    assert!(!code.contains("self.l4 =") && !code.contains("self.l5 ="), "no module of their own");
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("train.py"), &code).unwrap();
+    if let Some(o) = py_compile(&dir.path().join("train.py")) {
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    }
+    // problems: a different input shape, a block without weights, sharing a shared block
+    let msg = |t: &str, l: &str| {
+        let g = nnb_core::dsl::apply(t, &Graph::default()).unwrap();
+        let a = analyze(&g, &ds);
+        a.get(&g.nodes.iter().find(|n| n.label == l).unwrap().id).unwrap().messages.join(" ")
+    };
+    assert!(msg("1 input 1\n2 conv 8 3x3\n3 input 2\n4 maxpool 2x2\n5 shared 2\n6 global_pool <- 2\n7 global_pool <- 5\n8 add <- 6, 7\n9 output\n", "5").contains("weights are for an input"));
+    assert!(msg("1 input 1\n2 maxpool 2x2\n3 input 2\n4 shared 2\n5 add <- 2, 4\n6 global_pool\n7 output\n", "4").contains("no weights to share"));
+    assert!(msg("1 input 1\n2 conv 8 3x3\n3 input 2\n4 shared 2\n5 shared 4 <- 3\n6 add <- 2, 4\n7 add <- 6, 5\n8 global_pool\n9 output\n", "5").contains("original block"));
+}

@@ -58,6 +58,7 @@ pub const KINDS: &[(&str, &str)] = &[
     ("add", "Add"),
     ("concat", "Concat"),
     ("multiply", "Multiply"),
+    ("subtract", "Subtract"),
     ("to_tokens", "To tokens"),
     ("cls_pos", "Class token + position"),
     ("attention", "Self-attention"),
@@ -65,6 +66,7 @@ pub const KINDS: &[(&str, &str)] = &[
     ("output", "Output"),
     ("seg_output", "Segmentation output"),
     ("custom", "Custom (PyTorch)"),
+    ("shared", "Shared weights"),
 ];
 
 pub const ACTIVATIONS: &[&str] = &["relu", "leaky_relu", "gelu", "silu", "sigmoid", "tanh", "none"];
@@ -95,6 +97,10 @@ pub fn defaults(kind: &str) -> Value {
         "custom" => json!({"class": ""}),
         // which output of a multi-task network: 0 = the main task, 1, 2, ... = the Dataset tab's extra outputs
         "output" => json!({"head": 0}),
+        // a - b, or |a - b| (Siamese change detection: the difference of the two branches)
+        "subtract" => json!({"abs": false}),
+        // runs another block's layer with that block's weights (Siamese / twin networks): "of" = that block's id
+        "shared" => json!({"of": ""}),
         _ => json!({}),
     }
 }
@@ -103,7 +109,7 @@ pub fn defaults(kind: &str) -> Value {
 pub fn arity(kind: &str) -> Option<usize> {
     match kind {
         "input" => Some(0),
-        "add" | "concat" | "multiply" => None,
+        "add" | "concat" | "multiply" | "subtract" => None,
         _ => Some(1),
     }
 }

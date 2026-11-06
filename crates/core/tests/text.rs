@@ -338,7 +338,8 @@ fn everything_design() {
     assert_eq!(inputs(&g, "6.2.a"), vec!["6.1.d"]);
     assert_eq!(inputs(&g, "11"), vec!["10", "8.r"]);
     assert_eq!(inputs(&g, "19"), vec!["11"]);
-    assert_eq!(inputs(&g, "22"), vec!["18", "21"]);
+    assert_eq!(inputs(&g, "22"), vec!["18", "df"]);
+    assert_eq!(by_label(&g, "tw").params["of"], json!(by_label(&g, "21").id.clone()), "shared 21 -> the id of block 21");
     // the generated PyTorch code compiles
     let ds = cifar();
     let code = nnb_core::codegen::train_script(&g, &ds, &a, &nnb_core::codegen::TrainSettings::default(), "everything").unwrap();
@@ -685,4 +686,20 @@ fn output_head_number() {
     assert_eq!(by_label(&g, "5").params["head"], json!(1));
     let printed = print(&g).0;
     assert!(printed.contains("3 output\n") && printed.contains("output 2 <- 2") && printed.contains("output 1 <- 2"), "{printed}");
+}
+
+#[test]
+fn shared_weights_and_subtract() {
+    let text = "1 input 1\n2 conv 8 3x3\n3 conv 8 3x3\n4 input 2\n5 shared 2\n6 shared 3\n7 subtract abs <- 3, 6\n8 global_pool\n9 output\n";
+    let g = build(text);
+    assert_eq!(by_label(&g, "5").params["of"], json!(by_label(&g, "2").id.clone()));
+    assert_eq!(by_label(&g, "7").params["abs"], json!(true));
+    let printed = print(&g).0;
+    assert!(printed.contains("5 shared 2") && printed.contains("6 shared 3") && printed.contains("subtract abs"), "{printed}");
+    assert_eq!(sync(&g).text, text, "the hand-written text is kept");
+    // a function: a label inside the same call
+    let f = build("def twin() {\n  a conv 8 3x3\n  b shared a <- in\n  c sub <- a, b\n}\n1 input\n2 twin()\n3 global_pool\n4 output\n");
+    assert_eq!(by_label(&f, "2.b").params["of"], json!(by_label(&f, "2.a").id.clone()));
+    assert!(err("1 input\n2 shared 7\n").message.contains("no block has the label 7"));
+    assert!(err("1 input\n2 conv 8 3x3\n3 subtract wrong <- 1, 2\n").message.contains("abs"));
 }

@@ -567,7 +567,10 @@ impl Dataset {
                         p.push(format!("At most {MAX_BANDS} bands in both groups together."))
                     }
                     let keys: Vec<String> = self.bands.iter().chain(&self.bands2).map(|b| band_key(b)).collect();
-                    if keys.iter().enumerate().any(|(i, b)| keys[..i].contains(b)) {
+                    // the same bands twice is a pair in time (before / after the same place: change detection); otherwise a name may
+                    // be in one group only
+                    let pair = self.bands2.iter().map(|b| band_key(b)).collect::<Vec<_>>() == self.bands.iter().map(|b| band_key(b)).collect::<Vec<_>>();
+                    if !pair && keys.iter().enumerate().any(|(i, b)| keys[..i].contains(b)) {
                         p.push("The two band groups share a band name: rename one (e.g. VV in the second group only).".into())
                     }
                     if !self.kaggle_test_dir.is_empty() && self.task != "multilabel" && self.task != "regress" {

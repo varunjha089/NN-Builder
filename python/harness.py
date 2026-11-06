@@ -93,7 +93,8 @@ GROUPS = [{"bands": list(DATASET.get("bands") or []), "order": list(DATASET.get(
 if DATASET.get("bands2"):
     GROUPS.append({"bands": list(DATASET["bands2"]), "order": list(DATASET.get("band_order2") or DATASET["bands2"]),
                    "sensor": DATASET.get("sensor2", ""), "db": bool(DATASET.get("s1_db2"))})
-BANDS = [b for g in GROUPS for b in g["bands"]]
+# the band names of both groups; a pair in time (the same bands before / after) names the second copy B04_2, B03_2, ...
+BANDS = GROUPS[0]["bands"] + [b + "_2" if b in GROUPS[0]["bands"] else b for g in GROUPS[1:] for b in g["bands"]]
 MULTI = bool(BANDS)
 FUSE = []          # (folder of the first group's files, folder of the second group's), set by load_data
 BAND_STATS = None  # per-band (mean, std), measured on the training images (multiband_stats)

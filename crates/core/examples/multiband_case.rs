@@ -130,6 +130,20 @@ fn main() {
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(format!("{d}/train.py"), train_script(&g, &ds, &a, &t, "multitask").unwrap()).unwrap();
     }
+    // change detection: before / after pairs (the same two bands in both groups), a Siamese encoder (shared weights) and |a - b|
+    {
+        let ds = Dataset { source: "local".into(), local_dir: format!("{dir}/own/cd"), local_on_machine: true, kaggle_train_dir: "before".into(),
+            image_size: [24, 24], sensor: "other".into(), band_order: s(&["b1", "b2"]), bands: s(&["b1", "b2"]), sensor2: "other".into(),
+            band_order2: s(&["b1", "b2"]), bands2: s(&["b1", "b2"]), fuse_dir: "after".into(), classes: s(&["changed", "same"]), ..Default::default() };
+        let g = nnb_core::dsl::apply("net \"siamese ci\"\n1 input 1\n2 conv 16 3x3\n3 conv 16 3x3\n4 input 2\n5 shared 2\n6 shared 3\n\
+            7 subtract abs <- 3, 6\n8 global_pool max\n9 output\n", &Default::default()).unwrap();
+        let a = analyze(&g, &ds);
+        assert!(a.ok && ds.problems().is_empty(), "siamese: {:?} {:?}", a.problems, ds.problems());
+        let t = TrainSettings { epochs: 8, batch_size: 16, amp: false, aug_hflip: true, aug_rotate: 10.0, ..Default::default() }.clean();
+        let d = format!("{dir}/siamese");
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(format!("{d}/train.py"), train_script(&g, &ds, &a, &t, "siamese").unwrap()).unwrap();
+    }
     for (name, ds) in cases {
         assert!(ds.problems().is_empty(), "{name}: {:?}", ds.problems());
         let g = if ds.task == "segment" { &seg } else if name == "fusion" { &mid } else if name == "fusion_sizes" { &mid_sizes } else { &g };
