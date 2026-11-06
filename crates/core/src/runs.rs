@@ -219,7 +219,7 @@ fn start_seeded(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_token
     if d.exists() {
         bail!("A run was started this second; try again.");
     }
-    let title = format!("nnb {} {}", pr.name(), id);
+    let title = cloud::kernel_title(&pr.name(), &id);
     if check {
         log("Check data: the run only loads the data, reports it and checks one batch (no training).".into());
     }

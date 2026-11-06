@@ -139,6 +139,29 @@ pub fn folder_counts(files: &[(String, String)], folder: &str, classes: &[String
     }).collect()
 }
 
+/// the notebook's title "nnb <project> <run id>", at most 50 characters with the run id whole: Kaggle refuses a push (400 Bad Request)
+/// when the id is not the slug of the title, and kernel_slug cuts slugs at 50, so a long project name is shortened here instead
+pub fn kernel_title(project: &str, run_id: &str) -> String {
+    let mut name: Vec<char> = project.chars().collect();
+    loop {
+        let n: String = name.iter().collect();
+        let n = n.trim_end_matches(|c: char| !c.is_alphanumeric());
+        let title = if n.is_empty() { format!("nnb {run_id}") } else { format!("nnb {n} {run_id}") };
+        if (title.chars().count() <= 50 && slug_of(&title).len() <= 50) || name.is_empty() {
+            return title;
+        }
+        name.pop();
+    }
+}
+
+fn slug_of(title: &str) -> String {
+    let mut s: String = title.to_ascii_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    while s.contains("--") {
+        s = s.replace("--", "-");
+    }
+    s.trim_matches('-').to_string()
+}
+
 pub fn kernel_slug(title: &str) -> String {
     let mut s: String = title.to_ascii_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
     while s.contains("--") {
@@ -301,4 +324,20 @@ pub fn aws(c: &AwsCreds, action: &str, region: &str, instance: &str) -> Result<V
         bail!("AWS: {}", v["error"].as_str().unwrap_or("unknown error"));
     }
     Ok(v)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kernel_title_fits_and_matches_its_slug() {
+        let t = kernel_title("EuroSAT-MS (Sentinel-2, 13 bands)", "20261106-113822-check");
+        assert!(t.chars().count() <= 50 && t.ends_with(" 20261106-113822-check"), "{t}");
+        assert_eq!(kernel_slug(&t), slug_of(&t), "the id is the title's whole slug");
+        assert_eq!(kernel_title("Kaggle test LeNet-5", "20261104-221149"), "nnb Kaggle test LeNet-5 20261104-221149");
+        let long = kernel_title(&"x".repeat(200), "20261106-113822-s3");
+        assert!(long.len() <= 50 && long.ends_with("-s3"), "{long}");
+        assert!(kernel_slug(&kernel_title("ÄÖÜ ü", "20261106-1")).ends_with("20261106-1"));
+    }
 }
