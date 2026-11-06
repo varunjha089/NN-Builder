@@ -7,6 +7,9 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+    # a commit that only regenerates the changelog builds nothing new (and would cancel the build of the commit before it); path
+    # filters are not applied to tag pushes, so releases always build
+    paths-ignore: ["CHANGELOG.md"]
   workflow_dispatch:
 
 concurrency:
