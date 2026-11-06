@@ -13,7 +13,11 @@ What is still open, in the suggested order. Done work is in git and CLAUDE.md; t
    single-band GeoTIFFs per patch), ImageNet weights for more than 3 bands (first convolution expanded), Hugging Face band arrays.
 4. **Google Drive / Cloud Storage source** (done 2026-11-06; real buckets / links not tried): Earth Engine exports reach the training machine directly (rclone / gsutil on the machine),
    without passing through the Mac.
-5. **Real-data run** (needs the owner): Check data and a short training run on a real Sentinel export; the Earth Engine script run once.
+5. **Real-data run** (done 2026-11-06 for Hugging Face giswqs/EuroSAT_MS, 13 bands, on a Kaggle T4): Check data passed (no warning, 10
+   classes, realistic band values); 5 epochs of a 143,594-parameter CNN: test accuracy 92.1 % (top-5 99.8 %), 17 s per epoch, 0.15 GB
+   GPU memory. Found and fixed: Kaggle refused notebooks whose title was over 50 characters (400 Bad Request). Seen: data_wait 0.65
+   (the GPU waits for the data loader about two thirds of the time: Hugging Face band arrays decoded per image). Still not tried: an
+   Earth Engine export of the owner's own (the GEE script, own files upload to Kaggle).
 6. **Release 0.4.0** with housekeeping: upload-artifact action update (Node.js 20 warning), delete the local backup branch, the first
    real updater test (see section 1).
 
