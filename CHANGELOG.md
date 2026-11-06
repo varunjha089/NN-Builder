@@ -3,6 +3,18 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 06_11_26_17_24_48
+
+**CI: the loss formula check knows the detection flag** (`417eece`)
+
+## 06_11_26_17_23_15
+
+**Build workflow: a changelog-only commit builds nothing (it used to cancel the build of the commit before it)** (`85d69ab`)
+
+## 06_11_26_17_20_55
+
+**Object detection: YOLO-format boxes, a CenterNet-style Detection output, mAP@0.5 and @0.5:0.95, boxes drawn in Results** (`bc46814`)
+
 ## 06_11_26_15_26_26
 
 **Transformer additions: causal masks, rotary and sinusoidal positions, RMSNorm, SwiGLU, cross-attention, token concat; empty dates filled** (`edc9553`)
