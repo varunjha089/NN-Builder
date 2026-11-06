@@ -3,6 +3,67 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 06_11_26_07_39_24
+
+**Manual: Dataset tab pictures redrawn (cloud location, BigEarthNet preset, test tiles)** (`c6a3223`)
+
+## 06_11_26_07_38_34
+
+**Build workflow: upload-artifact v7 and download-artifact v8 (Node.js 24; ends the Node.js 20 deprecation warning)** (`2e4d803`)
+
+## 06_11_26_07_38_03
+
+**Data in the cloud: the training machine fetches it (Cloud Storage, Google Drive, rclone)** (`f951c33`)
+
+Own files can be 'in the cloud': gs://bucket/folder (Earth Engine's Cloud Storage export; private buckets
+use a service-account key kept in the Keychain and copied to SSH / AWS machines like the other tokens), a
+Google Drive folder or file shared by link (gdown; a zip is unpacked), or an rclone remote set up on the
+machine. Nothing passes through the Mac; the files are cached in the machine's data folder. The Earth
+Engine script can export to Cloud Storage and set the tab to match.
+
+## 06_11_26_07_33_43
+
+**CI: the unbalanced-classes check measures the rare class on a balanced test folder** (`6200b3e`)
+
+The random 10% test split had no rare image (22 test images, rare 1:10), so its recall was undefined.
+
+## 06_11_26_07_32_31
+
+**Sentinel step finished: scene test region, BigEarthNet layout, ImageNet weights on bands, Hugging Face band arrays** (`c15ad5b`)
+
+Scenes: test tiles at random, as the eastern strip of every image with a one-tile gap, or from a separately
+exported test region. BigEarthNet v2 as downloaded: patch folders of single-band GeoTIFFs (bands brought
+to the largest size), metadata.parquet labels with its split and s1_name pairing for S1 + S2 fusion,
+class names with commas, a 19-class preset. ImageNet weights now work with any bands: the first
+convolution's RGB filters go to B04/B03/B02, other bands get their mean, scaled by 3/C. Hugging Face
+datasets with band arrays (array columns, GeoTIFF or .npy bytes) for classification, multi-label and
+segmentation. CI covers each with real PyTorch.
+
+## 06_11_26_07_26_12
+
+**Unbalanced classes: class counts, class weights and per-class thresholds** (`a12e5aa`)
+
+Dataset tab shows images per class next to class folders (own files and Kaggle), warning above 3:1.
+Train tab: 'Unbalanced classes' weights the loss by inverse class frequency or its square root
+(multi-label: pos_weight = negatives / positives per class; segmentation: pixels), computed on the
+training machine; multi-label can choose each class's threshold on the validation data (best F1),
+used for the test scores and saved as thresholds.json. Results show the weights and thresholds.
+
+## 06_11_26_07_23_45
+
+**Check data: a run that loads and reports the data without training** (`2febfd8`)
+
+'Check data on <target>' (Train tab) runs train.py on the same machine with check_only: it loads the
+data as training would, reports sizes, images per class (pixels for segmentation), every band's raw
+range / mean / spread / empty and zero pixels, warns about empty or constant bands (wrong band order),
+linear Sentinel-1 without dB, Sentinel-2 far above 10000, missing classes, imbalance and very small
+sets, runs the one-batch shape check and shows twelve test images. Listed as a data check; the Results
+tab shows the report. Nothing is saved in the project's settings.
+
+## 06_11_26_07_19_46
+
+**FUTURE_PLAN: the next six tasks in order** (`c8d3096`)
+
 ## 06_11_26_06_33_15
 
 **Manual: every kind of data with a picture and the Dataset tab set up for it** (`6b9a344`)
