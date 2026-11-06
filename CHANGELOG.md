@@ -3,6 +3,10 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 06_11_26_10_43_34
+
+**Custom PyTorch blocks: the design's own nn.Module classes (declared output shape, checked on the machine) and a custom loss** (`a5b9d3e`)
+
 ## 06_11_26_09_49_59
 
 **Regression task: numbers per image from table columns, MSE / L1 / Huber loss, R² / MAE / RMSE and a scatter plot** (`56b357f`)
