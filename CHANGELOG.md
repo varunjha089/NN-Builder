@@ -3,6 +3,21 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 06_11_26_05_31_29
+
+**Multi-label task and Sentinel-1 + Sentinel-2 fusion** (`501a190`)
+
+Multi-label: any number of classes per image (BigEarthNet). Labels from a CSV (file column plus a
+labels column or one 0/1 column per class; class names read on the Mac) or a Hugging Face list-of-
+ClassLabel column. Sigmoid + binary cross-entropy; micro/macro F1, mAP, exact match and per-class
+precision/recall/F1/AP in Results.
+
+Fusion: a second band group (e.g. Sentinel-1 next to Sentinel-2) from files with the same names in
+another folder, stacked after the first group. Early fusion with one Input; mid fusion with one
+Input per group (Input 'Bands' setting, 'input 1' / 'input 2' in text), joined by Concat; the
+generated forward slices the stacked image per group. Works for classification, multi-label and
+segmentation (including scenes).
+
 ## 06_11_26_05_22_17
 
 **FUTURE_PLAN: plan for multi-label and S1+S2 fusion** (`32bbaba`)
