@@ -318,7 +318,9 @@ def load_pretrained(model, name):
             dst[key] = src[j][1].to(dst[key].dtype)
             loaded.append(key)
     model.load_state_dict(dst)
-    weights = [k for k, v in model.state_dict().items() if v.dim() > 1]
+    # (a LoRA layer's adapters A and B are new by design: they do not count against the match)
+    adapters = {f"{n}.{x}" for n, m in model.named_modules() if hasattr(m, "base") and hasattr(m, "a") and hasattr(m, "b") for x in ("a", "b")}
+    weights = [k for k, v in model.state_dict().items() if v.dim() > 1 and k not in adapters]
     loaded_weights = [k for k in loaded if k in weights]
     if len(loaded_weights) < 0.8 * len(weights):
         raise SystemExit(f"PRETRAINED: the design does not match {name}: only {len(loaded_weights)} of its {len(weights)} weight tensors have "

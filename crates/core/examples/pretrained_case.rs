@@ -18,5 +18,16 @@ fn main() {
         let d = format!("{dir}/{weights}");
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(format!("{d}/train.py"), train_script(&g, &ds, &a, &t, &format!("ci {weights}")).unwrap()).unwrap();
+        if *weights == "vit_b_16" {
+            // the same with a LoRA adapter (rank 4) on every attention: the weights must still load, and B = 0 leaves the outputs unchanged
+            let mut g = g.clone();
+            for n in g.nodes.iter_mut().filter(|n| n.kind == "attention") {
+                n.params.insert("lora".into(), serde_json::json!(4));
+            }
+            let a = analyze(&g, &ds);
+            let d = format!("{dir}/vit_b_16_lora");
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(format!("{d}/train.py"), train_script(&g, &ds, &a, &t, "ci vit_b_16 lora").unwrap()).unwrap();
+        }
     }
 }

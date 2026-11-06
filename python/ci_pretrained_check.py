@@ -17,8 +17,9 @@ import torchvision
 def main(root):
     torch.manual_seed(0)
     x = torch.randn(2, 3, 224, 224)
-    for name in ("resnet18", "vgg16", "vit_b_16"):
-        path = os.path.join(os.path.abspath(root), name, "train.py")
+    for folder in ("resnet18", "vgg16", "vit_b_16", "vit_b_16_lora"):
+        name = folder.replace("_lora", "")
+        path = os.path.join(os.path.abspath(root), folder, "train.py")
         spec = importlib.util.spec_from_file_location(f"train_{name}", path)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)  # defines Net and the harness; training runs only under __main__
@@ -28,10 +29,12 @@ def main(root):
         with torch.no_grad():
             a, b = net(x), ref(x)
         diff = float((a - b).abs().max())
-        assert len(loaded) == len(net.state_dict()), f"{name}: {len(loaded)} of {len(net.state_dict())} tensors loaded"
+        # (with LoRA the adapters A and B have no counterpart: B starts at zero, so the outputs are still torchvision's)
+        new = [k for k in net.state_dict() if k.endswith((".a", ".b"))] if folder.endswith("_lora") else []
+        assert len(loaded) + len(new) == len(net.state_dict()), f"{folder}: {len(loaded)} of {len(net.state_dict())} tensors loaded"
         assert diff < (5e-3 if name.startswith("vit") else 1e-4), f"{name}: outputs differ by {diff}"
         assert bool((a.argmax(1) == b.argmax(1)).all()), f"{name}: different predictions"
-        print(f"{name}: all {len(loaded)} tensors loaded; outputs equal to torchvision's (max difference {diff:.2e})")
+        print(f"{folder}: all {len(loaded)} tensors loaded ({len(new)} new adapters); outputs equal to torchvision's (max difference {diff:.2e})")
 
 
 if __name__ == "__main__":
