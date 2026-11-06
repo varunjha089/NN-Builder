@@ -3,6 +3,10 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 06_11_26_07_54_45
+
+**Hugging Face band arrays read as NumPy arrays (with_format), not nested lists** (`2a7ee8b`)
+
 ## 06_11_26_07_39_24
 
 **Manual: Dataset tab pictures redrawn (cloud location, BigEarthNet preset, test tiles)** (`c6a3223`)
