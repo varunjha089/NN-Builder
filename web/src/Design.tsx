@@ -43,11 +43,14 @@ function summary(kind: string, p: Params): string {
     case "dropout": return `rate ${p.rate}`;
     case "groupnorm": return `${p.groups} groups`;
     case "repeat": return `${p.count} identical blocks · double-click to expand`;
-    case "dense": return `${p.units} units · ${p.activation}`;
+    case "dense": return `${p.units} units · ${p.activation}${Number(p.lora) > 0 ? ` · LoRA ${p.lora}` : ""}`;
     case "activation": return `${p.fn}`;
     case "to_tokens": return p.mode === "rows" ? "rows as tokens" : "pixels/patches as tokens";
-    case "cls_pos": return p.cls === false ? "position embedding" : "class token + position embedding";
-    case "attention": return `${p.heads} heads${Number(p.dropout) > 0 ? ` · dropout ${p.dropout}` : ""}${p.causal ? " · causal" : ""}${p.rotary ? " · rotary" : ""}`;
+    case "cls_pos": {
+      const pos = p.pos === "sinusoidal" ? "sinusoidal positions" : p.pos === "none" ? "no positions" : "position embedding";
+      return p.cls === false ? pos : `class token + ${pos}`;
+    }
+    case "attention": return `${p.heads} heads${Number(p.dropout) > 0 ? ` · dropout ${p.dropout}` : ""}${p.causal ? " · causal" : ""}${p.rotary ? " · rotary" : ""}${Number(p.lora) > 0 ? ` · LoRA ${p.lora}` : ""}`;
     case "cross_attention": return `${p.heads} heads · queries from the first arrow`;
     case "swiglu": return `${p.units} hidden units`;
     case "moe": return `${p.experts} experts · top ${p.top_k} · ${p.units} hidden`;
