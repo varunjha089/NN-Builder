@@ -73,12 +73,34 @@ fn kaggle(c: &KaggleCreds) -> Result<Command> {
     Ok(cmd)
 }
 
+/// a failure of the connection, not of the request (a moment without network or DNS, Kaggle busy): worth trying again
+fn transient(out: &str) -> bool {
+    ["NameResolution", "ConnectionError", "Max retries exceeded", "Connection aborted", "timed out", "Temporary failure", "502 Bad Gateway",
+        "503 Service Unavailable"].iter().any(|w| out.contains(w))
+}
+
+/// a Kaggle CLI call, tried again up to twice (5 s apart) when the connection failed: on this Mac a name lookup fails now and then
+fn kcap(c: &KaggleCreds, build: impl Fn(&mut Command) -> &mut Command) -> Result<(i32, String)> {
+    let mut last = (1, String::new());
+    for attempt in 0..3 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        }
+        let mut cmd = kaggle(c)?;
+        last = capture(build(&mut cmd), None);
+        if last.0 == 0 || !transient(&last.1) {
+            break;
+        }
+    }
+    Ok(last)
+}
+
 fn last_line(out: &str) -> String {
     out.trim().lines().last().unwrap_or("no answer").to_string()
 }
 
 pub fn kaggle_test(c: &KaggleCreds) -> Result<String> {
-    let (code, out) = capture(kaggle(c)?.args(["kernels", "list", "--mine", "--page-size", "1", "--csv"]), None);
+    let (code, out) = kcap(c, |k| k.args(["kernels", "list", "--mine", "--page-size", "1", "--csv"]))?;
     if code != 0 {
         bail!("Kaggle refused: {}", last_line(&out));
     }
@@ -90,10 +112,10 @@ pub fn kaggle_files(c: &KaggleCreds, slug: &str) -> Result<Vec<(String, String)>
     if !slug.chars().all(|ch| ch.is_ascii_alphanumeric() || "-_./".contains(ch)) || slug.matches('/').count() != 1 {
         bail!("Kaggle dataset: owner/name");
     }
-    let (mut code, mut out) = capture(kaggle(c)?.args(["datasets", "files", slug, "--csv", "--page-size", "1000"]), None);
+    let (mut code, mut out) = kcap(c, |k| k.args(["datasets", "files", slug, "--csv", "--page-size", "1000"]))?;
     if code != 0 {
         // older / newer CLIs differ in the paging option
-        (code, out) = capture(kaggle(c)?.args(["datasets", "files", slug, "--csv"]), None);
+        (code, out) = kcap(c, |k| k.args(["datasets", "files", slug, "--csv"]))?;
     }
     if code != 0 {
         bail!("Kaggle: {}", last_line(&out));
@@ -183,7 +205,7 @@ pub fn kaggle_push(c: &KaggleCreds, dir: &Path, title: &str, dataset_slug: Optio
     std::fs::create_dir_all(&push_dir)?;
     std::fs::copy(dir.join("train.py"), push_dir.join("train.py")).context("train.py missing")?;
     store::write_json(&push_dir.join("kernel-metadata.json"), &meta)?;
-    let (code, out) = capture(kaggle(c)?.args(["kernels", "push", "-p"]).arg(&push_dir), None);
+    let (code, out) = kcap(c, |k| k.args(["kernels", "push", "-p"]).arg(&push_dir))?;
     if code != 0 || !out.to_lowercase().contains("successfully pushed") {
         bail!("Kaggle push failed: {}", last_line(&out));
     }
@@ -216,21 +238,31 @@ pub fn kaggle_upload(c: &KaggleCreds, dir: &Path, key: &str, log: &Log) -> Resul
     }
     let meta = serde_json::json!({"title": key, "id": slug, "licenses": [{"name": "other"}]});
     store::write_json(&stage.join("dataset-metadata.json"), &meta)?;
-    let exists = capture(kaggle(c)?.args(["datasets", "files", &slug, "--csv"]), None).0 == 0;
+    let exists = kcap(c, |k| k.args(["datasets", "files", &slug, "--csv"]))?.0 == 0;
     log(format!("{} your files on Kaggle as the private dataset {slug} ({sig}) ...", if exists { "Updating" } else { "Uploading" }));
-    let mut cmd = kaggle(c)?;
-    if exists {
-        cmd.args(["datasets", "version", "-p"]).arg(&stage).args(["-m", "NN Builder: the folder changed", "--dir-mode", "zip"]);
-    } else {
-        cmd.args(["datasets", "create", "-p"]).arg(&stage).args(["--dir-mode", "zip"]);
+    let (mut code, mut out) = (1, vec![]);
+    for attempt in 0..3 {
+        if attempt > 0 {
+            log("No connection to Kaggle: trying again in 5 s ...".into());
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        }
+        let mut cmd = kaggle(c)?;
+        if exists {
+            cmd.args(["datasets", "version", "-p"]).arg(&stage).args(["-m", "NN Builder: the folder changed", "--dir-mode", "zip"]);
+        } else {
+            cmd.args(["datasets", "create", "-p"]).arg(&stage).args(["--dir-mode", "zip"]);
+        }
+        (code, out) = stream(&mut cmd, None, log);
+        if code == 0 || !transient(&out.join("\n")) {
+            break;
+        }
     }
-    let (code, out) = stream(&mut cmd, None, log);
     if code != 0 {
         bail!("Kaggle upload failed: {}", out.last().map(|l| l.as_str()).unwrap_or("no answer"));
     }
     // Kaggle unpacks and checks the files before a notebook can attach them
     for _ in 0..120 {
-        let (code, out) = capture(kaggle(c)?.args(["datasets", "status", &slug]), None);
+        let (code, out) = kcap(c, |k| k.args(["datasets", "status", &slug]))?;
         let l = out.to_lowercase();
         if code != 0 || l.contains("ready") {
             break; // ready, or a CLI without the status command: the notebook waits for the data itself
@@ -259,7 +291,7 @@ fn link(from: &Path, to: &Path) -> Result<()> {
 
 /// "running" | "done" | "error" | "stopped"
 pub fn kaggle_status(c: &KaggleCreds, reference: &str) -> Result<(String, String)> {
-    let (code, out) = capture(kaggle(c)?.args(["kernels", "status", reference]), None);
+    let (code, out) = kcap(c, |k| k.args(["kernels", "status", reference]))?;
     if code != 0 {
         bail!("Kaggle: {}", last_line(&out));
     }
@@ -278,7 +310,7 @@ pub fn kaggle_status(c: &KaggleCreds, reference: &str) -> Result<(String, String
 
 /// the notebook's log so far: Kaggle also gives it while the notebook is still running (the text of its stream records)
 pub fn kaggle_logs(c: &KaggleCreds, reference: &str) -> Result<String> {
-    let (code, out) = capture(kaggle(c)?.args(["kernels", "logs", reference]), None);
+    let (code, out) = kcap(c, |k| k.args(["kernels", "logs", reference]))?;
     if code != 0 {
         bail!("Kaggle: {}", last_line(&out));
     }
@@ -298,7 +330,7 @@ pub fn stream_text(raw: &str) -> String {
 
 pub fn kaggle_output(c: &KaggleCreds, reference: &str, into: &Path) -> Result<()> {
     std::fs::create_dir_all(into)?;
-    let (code, out) = capture(kaggle(c)?.args(["kernels", "output", reference, "-p"]).arg(into).arg("-o"), None);
+    let (code, out) = kcap(c, |k| k.args(["kernels", "output", reference, "-p"]).arg(into).arg("-o"))?;
     if code != 0 {
         bail!("Kaggle: {}", last_line(&out));
     }
@@ -329,6 +361,14 @@ pub fn aws(c: &AwsCreds, action: &str, region: &str, instance: &str) -> Result<V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connection_failures_are_tried_again() {
+        assert!(transient("requests.exceptions.ConnectionError: HTTPSConnectionPool(host='api.kaggle.com', port=443): Max retries exceeded"));
+        assert!(transient("Failed to resolve 'api.kaggle.com' (NameResolutionError)"));
+        assert!(!transient("403 Client Error: Forbidden"), "a refused request is not tried again");
+        assert!(!transient("Kernel push error: Maximum batch GPU session count of 2 reached."));
+    }
 
     #[test]
     fn kernel_title_fits_and_matches_its_slug() {
