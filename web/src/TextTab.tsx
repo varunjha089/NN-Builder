@@ -41,7 +41,7 @@ const HELP: [string, string][] = [
 
 // ---------------------------------------------------------------- colours for the text (drawn behind a transparent textarea)
 const BLOCKS = new Set(["input", "conv", "conv2d", "dwconv", "dwconv2d", "convt", "convtranspose", "convtranspose2d", "pool", "pool2d", "maxpool",
-  "avgpool", "global_pool", "gap", "upsample", "bn", "batchnorm", "ln", "layernorm", "gn", "groupnorm", "dropout", "flatten", "dense", "linear",
+  "avgpool", "global_pool", "gap", "upsample", "bn", "batchnorm", "ln", "layernorm", "gn", "groupnorm", "dropout", "flatten", "dense", "linear", "custom",
   "activation", "act", "relu", "leaky_relu", "gelu", "silu", "sigmoid", "tanh", "add", "concat", "cat", "multiply", "mul", "to_tokens", "cls_pos",
   "attention", "attn", "token_pool", "output", "seg_output"]);
 const KEYWORDS = new Set(["net", "let", "def", "repeat", "for", "in", "as", "none"]);

@@ -78,10 +78,12 @@ escape hatch, 2-D only, supervised only, one GPU. The steps below, in this order
    for unbalanced Sentinel segmentation. Harness `loss_of` gains the cases; class weights keep working. *Dice, Dice + CE and focal done
    (2026-11-06); MSE / L1 / Huber with a "regress" task (numbers per image from table columns) done the same day; both CI-tested, not
    yet on a real run. Left: per-pixel regression (canopy height / biomass maps: a number per pixel from a raster).*
-3. **Custom PyTorch block (escape hatch):** a block holding a few lines of PyTorch (`__init__` and `forward` bodies) plus a declared
+3. **Custom PyTorch block (escape hatch):** *Done 2026-11-06 (CI-tested; not yet on a real run): the code is one per design
+   (Graph.python, a python """ … """ section in the text), the output shape is a "# out:" line in the class; custom loss in the Train
+   tab. Left: Custom blocks with several inputs, copy/paste of blocks carrying their class into another design.* The plan was: a block holding a few lines of PyTorch (`__init__` and `forward` bodies) plus a declared
    output shape (formula in the input shape); shapes trusts the declaration, codegen pastes the code into the model class, the
    one-batch check on the GPU machine compares the real shape with the declared one. Also a custom loss (a function of logits and
-   targets). Saved in the .nnb and the text language (`custom name { ... }`); no Python ever runs on the Mac.
+   targets). Saved in the .nnb and the text language; no Python ever runs on the Mac.
 4. **Several inputs and outputs:** more than one Input (each bound to a data source or band group; inputs of different sizes, e.g.
    10 m S2 and 20 m bands, or S1 and S2 at their own sizes) and more than one Output (multi-task heads, each with its task, loss
    and weight, and its own scores in Results); shapes, codegen, text language, harness (a batch becomes a dict of tensors).

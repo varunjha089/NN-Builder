@@ -614,7 +614,7 @@ const ALIASES: &[(&str, (&str, &str))] = &[
     ("silu", ("activation", "silu")), ("sigmoid", ("activation", "sigmoid")), ("tanh", ("activation", "tanh")),
     ("add", ("add", "")), ("concat", ("concat", "")), ("cat", ("concat", "")), ("multiply", ("multiply", "")), ("mul", ("multiply", "")),
     ("to_tokens", ("to_tokens", "")), ("cls_pos", ("cls_pos", "")), ("attention", ("attention", "")), ("attn", ("attention", "")),
-    ("token_pool", ("token_pool", "")), ("output", ("output", "")), ("seg_output", ("seg_output", "")),
+    ("token_pool", ("token_pool", "")), ("output", ("output", "")), ("seg_output", ("seg_output", "")), ("custom", ("custom", "")),
 ];
 
 fn kind_of(word: &str) -> Option<(&'static str, &'static str)> {
@@ -723,6 +723,18 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
     };
     while i < args.len() {
         let (key, v) = &args[i];
+        // custom SE: the class name, written as it is in the code (upper case kept)
+        if let (None, Val::Word(w), "custom") = (key, v, kind) {
+            if p.contains_key("class") {
+                return Err(format!("custom takes one class name ('{w}' is a second one)"));
+            }
+            if !crate::custom::ok_name(w) {
+                return Err(format!("'{w}' is not a class name a custom block can use (letters, digits and _)"));
+            }
+            p.insert("class".into(), json!(w));
+            i += 1;
+            continue;
+        }
         if let Some(k) = key {
             let k = match (kind, k.as_str()) {
                 (_, "pad") => "padding",
@@ -988,6 +1000,7 @@ fn block_text(kind: &str, params: &Map<String, Value>) -> String {
         "token_pool" => take("mode", if differs("mode") { fmt_value(&get("mode")) } else { String::new() }, &mut words),
         "cls_pos" => take("cls", if get("cls") == json!(false) { "nocls".into() } else { String::new() }, &mut words),
         "input" => take("group", if differs("group") { fmt_value(&get("group")) } else { String::new() }, &mut words),
+        "custom" => take("class", get("class").as_str().unwrap_or("").to_string(), &mut words),
         "attention" => {
             take("heads", format!("heads {}", fmt_value(&get("heads"))), &mut words);
             take("dropout", if differs("dropout") { format!("drop {}", fmt_value(&get("dropout"))) } else { String::new() }, &mut words);
@@ -1306,7 +1319,21 @@ fn letters(i: usize) -> String {
 /// build the blocks of a text. Blocks keep the id and position of the block with the same label in `old`; new blocks are placed next
 /// to their first input (or everything is arranged when nothing matches).
 pub fn expand(text: &str, old: &Graph) -> Result<Expanded, Vec<Diagnostic>> {
-    let prog = parse(text).map_err(|d| vec![d])?;
+    // the python """ … """ section (the design's PyTorch classes) is not NNB text: its lines are blanked for the parser
+    let (python, blocks_text) = crate::custom::split_section(text);
+    if python.len() > crate::custom::MAX_CODE {
+        return Err(vec![diag(1, 1, format!("the PyTorch code is longer than {} characters", crate::custom::MAX_CODE))]);
+    }
+    if text.lines().filter(|l| l.trim() == "python \"\"\"").count() > 1 {
+        let line = text.lines().enumerate().filter(|(_, l)| l.trim() == "python \"\"\"").nth(1).map(|(i, _)| i + 1).unwrap_or(1);
+        return Err(vec![diag(line, 1, "only one python \"\"\" section: put all the classes in it")]);
+    }
+    if blocks_text.lines().count() == text.lines().count() && text.lines().any(|l| l.trim() == "python \"\"\"")
+        && !text.lines().skip_while(|l| l.trim() != "python \"\"\"").skip(1).any(|l| l.trim() == "\"\"\"") {
+        let line = text.lines().position(|l| l.trim() == "python \"\"\"").map(|i| i + 1).unwrap_or(1);
+        return Err(vec![diag(line, 1, "the python section is not closed: end it with a line holding only \"\"\"")]);
+    }
+    let prog = parse(&blocks_text).map_err(|d| vec![d])?;
     let mut ctx = Ctx { defs: &prog.defs, nodes: vec![], edges: vec![], outputs: HashMap::new(), lines: BTreeMap::new(), tops: BTreeMap::new(), depth: 0 };
     let mut top = Scope { prefix: String::new(), vars: HashMap::new(), inputs: vec![], local: HashMap::new(), auto: 0 };
     ctx.stmts(&prog.stmts, &mut top).map_err(|d| vec![d])?;
@@ -1348,7 +1375,7 @@ pub fn expand(text: &str, old: &Graph) -> Result<Expanded, Vec<Diagnostic>> {
         *k += 1;
         Edge { id: format!("e{s}-{t}-{k}"), source: s, target: t }
     }).collect();
-    let mut g = Graph { nodes: std::mem::take(&mut nodes), edges, text: text.to_string() };
+    let mut g = Graph { nodes: std::mem::take(&mut nodes), edges, text: text.to_string(), python };
     if kept == 0 {
         model::layout(&mut g);
         wrap_rows(&mut g, 24);
@@ -1605,6 +1632,13 @@ pub fn same_structure(a: &Graph, b: &Graph) -> bool {
 /// after a change on the canvas: keep the text when it still describes the blocks exactly (moves, or a text just applied), else print
 /// the text again from the blocks (functions and loops written by hand then become plain lines and repeats) and label the blocks
 pub fn sync(g: &Graph) -> Graph {
+    // the text's python section always holds the design's code (it may have been edited on the canvas)
+    let mut out = sync_blocks(g);
+    out.text = crate::custom::set_section(&out.text, &g.python);
+    out
+}
+
+fn sync_blocks(g: &Graph) -> Graph {
     if !g.text.is_empty() {
         if let Ok(e) = expand(&g.text, g) {
             if same_structure(&e.graph, g) {

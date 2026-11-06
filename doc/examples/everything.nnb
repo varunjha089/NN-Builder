@@ -7,6 +7,19 @@ let w = 16
 let heads = 2
 let depth = 2
 
+# the design's own PyTorch code: a Custom block names a class; # out: declares its output shape in the input's sizes
+python """
+class Unshuffle(nn.Module):
+    """space to depth: each 2x2 square of pixels becomes 4 channels (no parameters)"""
+    # out: c * 4, h // 2, w // 2
+    def __init__(self, c, h, w):
+        super().__init__()
+        self.op = nn.PixelUnshuffle(2)
+
+    def forward(self, x):
+        return self.op(x)
+"""
+
 # squeeze-and-excitation: one weight per channel (global pool, two dense, sigmoid), multiplied into the input
 def se(c, r = 4) {
   g global_pool
@@ -92,6 +105,7 @@ def up(c, k = 2) {
 
 # a CNN head on the decoder output, joined with the transformer's vector
 19 avgpool 4x4 <- 11
+sd custom Unshuffle
 20 flatten
 21 dense 16 tanh
 22 concat <- 18, 21

@@ -13,7 +13,7 @@ export const COLORS: Record<string, string> = {
   input: "#3b6fd8", conv2d: "#d9822b", dwconv2d: "#c96d1a", convtranspose2d: "#b5651d", pool2d: "#2a9d8f", global_pool: "#21867a", upsample: "#3c8d7f",
   batchnorm: "#8e5bb5", layernorm: "#7d4fa3", groupnorm: "#a066c9", repeat: "#0e7490", dropout: "#9c6ac6", flatten: "#9a8c1c", dense: "#4b5bb5", activation: "#6c7a89", add: "#c0392b",
   concat: "#a93226", multiply: "#b03a5b", output: "#2e8b57", seg_output: "#1f7a4d",
-  to_tokens: "#0f766e", cls_pos: "#0e7490", attention: "#7c3aed", token_pool: "#0369a1",
+  to_tokens: "#0f766e", cls_pos: "#0e7490", attention: "#7c3aed", token_pool: "#0369a1", custom: "#475569",
 };
 const GROUPS: [string, string[]][] = [
   ["Image", ["conv2d", "dwconv2d", "pool2d", "global_pool", "flatten"]],
@@ -22,6 +22,7 @@ const GROUPS: [string, string[]][] = [
   ["Normalise / regularise", ["batchnorm", "layernorm", "groupnorm", "dropout", "activation"]],
   ["Transformer", ["to_tokens", "cls_pos", "attention", "token_pool"]],
   ["Branches", ["add", "concat", "multiply"]],
+  ["Your own", ["custom"]],
 ];
 
 type LayerData = { kind: string; title: string; params: Params; result?: NodeResult; summary: string; label?: string; sig?: string };
@@ -46,6 +47,7 @@ function summary(kind: string, p: Params): string {
     case "cls_pos": return p.cls === false ? "position embedding" : "class token + position embedding";
     case "attention": return `${p.heads} heads${Number(p.dropout) > 0 ? ` · dropout ${p.dropout}` : ""}`;
     case "token_pool": return p.mode === "mean" ? "mean of tokens" : "class token";
+    case "custom": return p.class ? `class ${p.class}` : "choose a class";
     default: return "";
   }
 }
@@ -138,7 +140,9 @@ export function Design({ st, graph, setGraph, analysis, persist, focus, toast, r
   const save = useCallback((changed: Graph) => {
     // a canvas action may build the design as { nodes, edges }: keep its text, so that the Rust side edits only the lines the change
     // concerns (functions, loops, names and comments stay) instead of printing a new text
-    const g = changed.text === undefined && graph.text ? { ...changed, text: graph.text } : changed;
+    let g = changed.text === undefined && graph.text ? { ...changed, text: graph.text } : changed;
+    // the design's PyTorch code (Custom blocks) stays with the design through every canvas action
+    if (g.python === undefined && graph.python) g = { ...g, python: graph.python };
     remember(graph);
     setGraph(g);
     window.clearTimeout(saveTimer.current);
@@ -379,6 +383,7 @@ export function Design({ st, graph, setGraph, analysis, persist, focus, toast, r
         </ReactFlow>}
       </div>
       <Inspector node={sel} result={sel ? results[sel.id] : undefined} analysis={analysis} graph={graph} st={st} setParam={setParam} setParams={setParams}
+        setPython={(code) => save({ ...graph, python: code })}
         addInput={() => {
           // mid fusion: this Input takes band group 1, a new Input below it group 2 (give it its own branch, then join them with Concat)
           if (!sel) return;
@@ -393,6 +398,54 @@ export function Design({ st, graph, setGraph, analysis, persist, focus, toast, r
 }
 
 // ---------------------------------------------------------------- inspector
+const EXAMPLE_CLASS = `class SE(nn.Module):
+    """squeeze-and-excitation (Hu et al. 2018): one weight per channel, from the channel means"""
+    # out: c, h, w
+    def __init__(self, c, h, w):
+        super().__init__()
+        self.fc = nn.Sequential(nn.Linear(c, max(1, c // 4)), nn.ReLU(), nn.Linear(max(1, c // 4), c), nn.Sigmoid())
+
+    def forward(self, x):
+        return x * self.fc(x.mean((2, 3)))[:, :, None, None]
+`;
+
+/** the classes defined at the top level of the design's code (as the Rust side reads them: custom.rs) */
+const pyClasses = (code: string) => [...code.matchAll(/^class ([A-Za-z_][A-Za-z0-9_]*)\s*[(:]/gm)].map((m) => m[1]);
+
+/** Custom block: which class of the design's PyTorch code it runs, and that code (shared by every Custom block of the design) */
+function CustomFields({ cls, code, setClass, setPython }: { cls: string; code: string; setClass: (c: string) => void; setPython: (c: string) => void }) {
+  const [text, setText] = useState(code);
+  const timer = useRef<number>(0);
+  useEffect(() => { setText(code); }, [code]);
+  const change = (t: string) => {
+    setText(t);
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setPython(t), 600);
+  };
+  const names = pyClasses(text);
+  return <>
+    <Sel label="Class" value={cls} options={[["", names.length ? "choose…" : "(no class in the code yet)"], ...names.map((n): [string, string] => [n, n])]}
+      onChange={(v) => setClass(v)} />
+    <label className="code-label">The design's PyTorch code (all its Custom blocks share it)
+      <textarea className="code" spellCheck={false} rows={16} value={text} onChange={(e) => change(e.target.value)}
+        onBlur={() => { window.clearTimeout(timer.current); if (text !== code) setPython(text); }}
+        onKeyDown={(e) => {
+          if (e.key !== "Tab") return;
+          e.preventDefault();
+          const t = e.currentTarget, a = t.selectionStart, b = t.selectionEnd;
+          change(text.slice(0, a) + "    " + text.slice(b));
+          requestAnimationFrame(() => { t.selectionStart = t.selectionEnd = a + 4; });
+        }} /></label>
+    <p className="row small"><button className="small" onClick={() => { const t = (text.trim() ? text.trimEnd() + "\n\n\n" : "") + EXAMPLE_CLASS; change(t); if (!cls) setClass("SE"); }}
+      disabled={names.includes("SE")}>Insert an example (squeeze-and-excitation)</button></p>
+    <p className="muted small">Each class is an <code>nn.Module</code> at the top level. Its <code>__init__(self, c, h, w)</code> receives the input's
+      shape (<code>t, d</code> for tokens, <code>n</code> for a vector). A line <code># out: c * 2, h // 2, w // 2</code> inside the class gives
+      the output's shape in those names (without it: the same as the input), so the rest of the design can be checked here. The code runs only
+      on the training machine, where the one-batch check compares the real shape with the declared one before training. <code>torch</code> and
+      <code>nn</code> are imported; import anything else at the top of the code.</p>
+  </>;
+}
+
 function Num({ label, value, onChange, min = 1, max = 4096, step = 1 }: { label: string; value: unknown; onChange: (v: number) => void; min?: number; max?: number; step?: number }) {
   const [text, setText] = useState(String(value ?? ""));
   useEffect(() => setText(String(value ?? "")), [value]);
@@ -636,9 +689,9 @@ function LayerTable({ nodes, graph }: { nodes: NodeResult[]; graph: Graph }) {
   );
 }
 
-function Inspector({ node, result, analysis, graph, st, setParam, setParams, candidates, addSkip, addInput }: {
+function Inspector({ node, result, analysis, graph, st, setParam, setParams, candidates, addSkip, addInput, setPython }: {
   node: { id: string; kind: string; params: Params } | null; result?: NodeResult; analysis: Analysis | null; graph: Graph; st: AppState;
-  setParam: (k: string, v: unknown) => void; setParams: (p: Params) => void; addInput: () => void;
+  setParam: (k: string, v: unknown) => void; setParams: (p: Params) => void; addInput: () => void; setPython: (code: string) => void;
   candidates: { id: string; label: string }[]; addSkip: (src: string, mode: "add" | "concat") => void;
 }) {
   const color = useKindColor();
@@ -651,6 +704,8 @@ function Inspector({ node, result, analysis, graph, st, setParam, setParams, can
             {analysis.total_macs >= 1e9 ? `${(analysis.total_macs / 1e9).toFixed(2)} G` : `${(analysis.total_macs / 1e6).toFixed(1)} M`} MACs per image</span></>}</p>}
         {analysis?.problems.map((p) => <div key={p} className="msg error">{p}</div>)}
         {analysis?.ok && <div className="msg ok">The design is complete: every shape fits. Next: Dataset, then Train.</div>}
+        {graph.nodes.some((n) => n.kind === "custom") && <p className="muted small">The parameters of Custom blocks (your PyTorch classes) are not
+          in this count: the training machine counts them (shown in the run's log).</p>}
         <p className="muted">Click a block to set its filters, kernel, stride, padding or pooling, and to see how its output size is computed.</p>
         {analysis && <LayerTable nodes={analysis.nodes} graph={graph} />}
       </div>
@@ -703,6 +758,7 @@ function Inspector({ node, result, analysis, graph, st, setParam, setParams, can
           <Sel label="Mode" value={p.mode} options={[["nearest", "nearest"], ["bilinear", "bilinear"]]} onChange={(v) => setParam("mode", v)} />
         </>}
         {node.kind === "dropout" && <Num label="Rate" value={p.rate} min={0} max={0.95} step={0.05} onChange={(v) => setParam("rate", v)} />}
+        {node.kind === "custom" && <CustomFields cls={String(p.class ?? "")} code={graph.python ?? ""} setClass={(c) => setParam("class", c)} setPython={setPython} />}
         {node.kind === "groupnorm" && <><Num label="Groups" value={p.groups} min={1} max={65536} onChange={(v) => setParam("groups", v)} />
           <p className="muted">Normalises each image over groups of channels (Wu &amp; He 2018): unlike BatchNorm it does not depend on the batch,
             so it works with small batches. The channels must divide evenly by the number of groups (32 is common; 1 group = LayerNorm over the image).</p></>}

@@ -449,8 +449,34 @@ Self-attention & $(N,D)\rightarrow(N,D)$ & heads, dropout; multi-head scaled dot
 Token pool & $(N,D)\rightarrow(D)$ & the class token, or the mean of all tokens\\
 Output & $(n)\rightarrow(K)$ & $K$ = number of classes; softmax/cross-entropy is in the training script\\
 Segmentation output & $(C,H,W)\rightarrow(K,H,W)$ & a 1$\times$1 convolution giving a class score for every pixel; must match the mask size\\
+Custom (PyTorch) & declared by the class & runs a class from the design's own PyTorch code (an \texttt{nn.Module} given the input
+shape; a \texttt{\# out:} line declares the output shape); the inspector edits the code; checked on the training machine
+(Section~\ref{sec:custom})\\
 \bottomrule
 \end{longtable}
+
+\subsection{Your own layers in PyTorch (Custom block)}
+\label{sec:custom}
+When a layer is not in the block list (a new attention variant, a gate from a paper, a pixel shuffle), write it in PyTorch. Add a
+\ui{Custom (PyTorch)} block (palette: \emph{Your own}) and select it. The inspector shows the design's PyTorch code, shared by all
+its Custom blocks, and a \ui{Class} list with the classes in it; \ui{Insert an example} adds a squeeze-and-excitation class to start
+from. Each class is an \texttt{nn.Module} at the top level of the code:
+\begin{itemize}[nosep]
+  \item \texttt{\_\_init\_\_(self, c, h, w)} receives the shape of the block's input (\texttt{t, d} for tokens, \texttt{n} for a vector),
+        so the class can size its layers;
+  \item a line \texttt{\# out: c * 2, h // 2, w // 2} in the class declares the output shape in those names (without it, the output
+        has the input's shape). NN Builder uses it to check and size the rest of the design;
+  \item \texttt{forward(self, x)} returns the output. \texttt{torch} and \texttt{nn} are imported; import anything else at the top.
+\end{itemize}
+The Mac never runs this code. It is copied into \file{train.py} above the network, and on the training machine the one-batch check
+compares each Custom block's real output shape with the declared one before any training, stopping with the block's name if they
+differ. The parameters of Custom blocks are counted there too (the Design tab's total leaves them out). In the Text tab the code is the
+\texttt{python """ \dots{} """} section and the block is \texttt{custom CLASS} (Section~\ref{sec:custom-text}).
+
+The loss can be your own as well: \ui{Loss: your own (Python)} in the Train tab opens a box with \texttt{def custom\_loss(out, y):}
+(an example for the task is filled in). \texttt{out} is the network's output for a batch and \texttt{y} the labels as the data gives
+them (class numbers; 0/1 per class for multi-label; a class per pixel with $-100$ for unlabelled pixels; the standardised targets for
+regression); it returns one number. The validation loss uses it too.
 
 \subsection{Transformers in NN Builder}
 A transformer works on a \emph{sequence of tokens}, shape $(N, D)$: $N$ tokens of $D$ values. To use one on images:

@@ -34,6 +34,9 @@ pub struct Graph {
     /// the design as text (dsl.rs), kept in step with the blocks: written by the user (with functions and loops) or printed from the canvas
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub text: String,
+    /// the design's own PyTorch code: nn.Module classes that Custom blocks name (custom.rs); pasted into train.py as written
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub python: String,
 }
 
 /// Every node kind the canvas offers, with its title, its default parameters and how many inputs it takes (None = two or more).
@@ -61,6 +64,7 @@ pub const KINDS: &[(&str, &str)] = &[
     ("token_pool", "Token pool"),
     ("output", "Output"),
     ("seg_output", "Segmentation output"),
+    ("custom", "Custom (PyTorch)"),
 ];
 
 pub const ACTIVATIONS: &[&str] = &["relu", "leaky_relu", "gelu", "silu", "sigmoid", "tanh", "none"];
@@ -87,6 +91,8 @@ pub fn defaults(kind: &str) -> Value {
         "token_pool" => json!({"mode": "cls"}),
         // 0 = all channels; 1 / 2 = one band group of a fused dataset (Sentinel-2 + Sentinel-1: one Input per sensor)
         "input" => json!({"group": 0}),
+        // the name of a class in the design's PyTorch code (Graph::python)
+        "custom" => json!({"class": ""}),
         _ => json!({}),
     }
 }

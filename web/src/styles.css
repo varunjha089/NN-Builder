@@ -54,6 +54,8 @@ tr.click { cursor: pointer; } tr.sel td { background: var(--info); }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 pre { background: var(--soft); padding: 10px; border-radius: 6px; overflow: auto; font: 12px/1.45 ui-monospace, Menlo, monospace; }
 pre.code { white-space: pre; }
+.code-label { display: block; width: 100%; }
+textarea.code { display: block; margin-top: 4px; white-space: pre; overflow: auto; tab-size: 4; min-height: 220px; resize: vertical; }
 pre.log { max-height: 300px; white-space: pre-wrap; }
 pre.formula { margin: 4px 0; }
 code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: var(--hover); padding: 0 4px; border-radius: 3px; }

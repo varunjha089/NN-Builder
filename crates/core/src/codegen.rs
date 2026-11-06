@@ -96,6 +96,10 @@ pub struct TrainSettings {
     /// (the same as "") | "l1" | "huber" (squared below 1 standard deviation of the target, linear above)
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub loss: String,
+    /// loss "custom": Python code defining `def custom_loss(out, y):` (the network's output and the labels as the harness has them;
+    /// regression: the standardised targets), returning one number; pasted into train.py
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub custom_loss: String,
     /// focal loss: γ (0 = plain cross-entropy; 2 is usual)
     #[serde(default = "default_gamma")]
     pub focal_gamma: f64,
@@ -123,7 +127,7 @@ fn default_gamma() -> f64 {
 }
 
 /// the losses the Train tab offers ("" = cross-entropy; regression: MSE)
-pub const LOSSES: [&str; 7] = ["", "focal", "dice", "dice_ce", "mse", "l1", "huber"];
+pub const LOSSES: [&str; 8] = ["", "focal", "dice", "dice_ce", "mse", "l1", "huber", "custom"];
 
 fn default_schedule() -> String {
     "constant".into()
@@ -150,7 +154,7 @@ impl Default for TrainSettings {
             aug_hflip: false, aug_vflip: false, aug_crop: 0, aug_rotate: 0.0, aug_color: false, checkpoint_minutes: 0.0, max_resumes: default_max_resumes(),
             val_fraction: 0.0, early_stop: false, patience: default_patience(), monitor: default_monitor(),
             weight_decay: 0.0, schedule: default_schedule(), warmup_epochs: 0.0, label_smoothing: 0.0, grad_clip: 0.0,
-            pretrained: String::new(), freeze: default_freeze(), export: false, save_memory: false, auto_split: true, class_weights: String::new(), loss: String::new(), focal_gamma: default_gamma(), tune_thresholds: false, check_only: false }
+            pretrained: String::new(), freeze: default_freeze(), export: false, save_memory: false, auto_split: true, class_weights: String::new(), loss: String::new(), custom_loss: String::new(), focal_gamma: default_gamma(), tune_thresholds: false, check_only: false }
     }
 }
 
@@ -361,6 +365,9 @@ fn modules(n: &Node, a: &Analysis, classes: usize) -> Vec<String> {
             m.extend(act(activation(p, "activation")).map(String::from));
         }
         "output" => m.push(format!("nn.Linear(in_features={}, out_features={classes})", inp[0])),
+        // the design's own class, given the input shape (its code is pasted above class Net)
+        "custom" => m.push(format!("{}({})", p.get("class").and_then(|v| v.as_str()).unwrap_or(""),
+            inp.iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", "))),
         "seg_output" => m.push(format!("nn.Conv2d(in_channels={}, out_channels={classes}, kernel_size=1)", inp[0])),
         _ => {}
     }
@@ -453,6 +460,7 @@ fn model_code_opts(g: &Graph, a: &Analysis, save_memory: bool) -> Result<String>
                 let note = match n.kind.as_str() {
                     "output" => " (one score per class; the loss applies softmax)",
                     "seg_output" => " (a score per class for every pixel)",
+                    "custom" => " (your PyTorch class; parameters counted on the training machine)",
                     _ => "",
                 };
                 init.push(format!("        # {label}: {} -> {}, {} parameters{note}", r.inputs.iter().map(|s| fmt(s)).collect::<Vec<_>>().join(" + "),
@@ -472,6 +480,11 @@ fn model_code_opts(g: &Graph, a: &Analysis, save_memory: bool) -> Result<String>
     let mut s = String::new();
     if g.nodes.iter().any(|n| order.contains(&n.id.as_str()) && matches!(n.kind.as_str(), "to_tokens" | "cls_pos" | "attention" | "token_pool")) {
         s += TOKEN_MODULES;
+    }
+    if g.nodes.iter().any(|n| order.contains(&n.id.as_str()) && n.kind == "custom") {
+        s += "# ---- the design's own PyTorch code (Custom blocks), as written in NN Builder\n";
+        s += g.python.trim_end();
+        s += "\n# ---- end of the design's own code\n\n\n";
     }
     let cuts = if save_memory { checkpoint_cuts(&line_inputs, result_pos) } else { vec![] };
     if save_memory {
@@ -533,8 +546,14 @@ pub fn train_script(g: &Graph, ds: &Dataset, a: &Analysis, t: &TrainSettings, ti
     if t.loss.starts_with("dice") && ds.task != "segment" && ds.task != "multilabel" {
         bail!("Dice loss needs segmentation or multi-label (one class per image: use cross-entropy or focal).");
     }
+    if t.loss == "custom" && !t.custom_loss.contains("def custom_loss(") {
+        bail!("The custom loss needs Python code that defines def custom_loss(out, y): (Train tab: Loss).");
+    }
+    if t.custom_loss.len() > crate::custom::MAX_CODE {
+        bail!("The custom loss is longer than {} characters.", crate::custom::MAX_CODE);
+    }
     let numeric = matches!(t.loss.as_str(), "mse" | "l1" | "huber");
-    if ds.task == "regress" && !numeric && !t.loss.is_empty() {
+    if ds.task == "regress" && !numeric && !t.loss.is_empty() && t.loss != "custom" {
         bail!("Regression is trained with MSE, L1 or Huber loss (Train tab: Loss).");
     }
     if ds.task != "regress" && numeric {
@@ -576,5 +595,10 @@ pub fn train_script(g: &Graph, ds: &Dataset, a: &Analysis, t: &TrainSettings, ti
         py_json(&t_json),
         py_json(&json!(ds.class_names())),
     );
-    Ok(head + &model + "\n\n" + HARNESS)
+    let loss = if t.loss == "custom" {
+        format!("# ---- the custom loss (Train tab), as written in NN Builder\n{}\n# ---- end of the custom loss\n\n\n", t.custom_loss.trim_end())
+    } else {
+        String::new()
+    };
+    Ok(head + &model + "\n\n" + &loss + HARNESS)
 }

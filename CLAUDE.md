@@ -108,6 +108,18 @@ crates/core/src/
                            pixels masked, LOSS_WEIGHT weights every loss), recipe.loss in "start", results.json "loss"; Train tab Loss
                            select, ResultsTab line. CI: ci_multiband_check loss_math (formulas on small tensors) and focal on
                            imbalanced + multilabel, dice_ce on segfiles, dice on scene.
+                           Custom blocks: kind "custom" (param "class"), Graph.python = the design's PyTorch code (serde default; saved
+                           with the design); custom.rs reads it as text (classes(): name, __init__ args = input dims, "# out:" shape
+                           expressions; out_shape(), calc() with + - * // %; split_section / set_section for the text's python """ … """
+                           section). shapes "custom" uses the declaration (params 0: counted on the machine); codegen pastes the code
+                           above class Net and builds Name(c, h, w); harness one-batch check names a wrong # out:. DSL: `custom NAME`,
+                           expand blanks the section (line numbers kept), sync = sync_blocks + set_section(g.python). Custom loss:
+                           TrainSettings.loss "custom" + custom_loss (must define def custom_loss(out, y); pasted before the harness;
+                           regression gets standardised targets). UI: palette "Your own", CustomFields (class select, code textarea,
+                           example SE), Design save keeps graph.python; Train tab custom loss box (CUSTOM_LOSS examples). Tests:
+                           design.rs custom_pytorch_blocks, text.rs custom_blocks_and_python_section, everything.nnb (Unshuffle, run by
+                           CI), CI ci_multiband_check custom_blocks (trains SE + Down with a custom loss; a wrong # out: must stop at
+                           the check).
                            Sentinel step finished: scene_split ("" random | strip = eastern tenth, one tile column gap | files =
                            scene_test_image/_label) in harness scene_split(); BigEarthNet layout: read_patch_folder (one GeoTIFF per band,
                            <patch>_<band>.tif, bands resized to the largest), label tables via read_table (CSV/TSV/Parquet, pyarrow on

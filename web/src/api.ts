@@ -6,7 +6,7 @@ export type Params = Record<string, unknown>;
 export interface DesignSize { max_blocks: number; recommended: number; own: boolean; ram_gb: number }
 export interface GNode { id: string; kind: string; params: Params; x: number; y: number; label?: string }
 export interface GEdge { id: string; source: string; target: string }
-export interface Graph { nodes: GNode[]; edges: GEdge[]; text?: string }
+export interface Graph { nodes: GNode[]; edges: GEdge[]; text?: string; python?: string }
 
 export interface NodeResult {
   id: string; kind: string; title: string; inputs: number[][]; out: number[] | null; params: number;
@@ -40,7 +40,7 @@ export interface TrainSettings {
   val_fraction: number; early_stop: boolean; patience: number; monitor: "val_loss" | "val_acc" | "val_miou";
   weight_decay: number; schedule: "constant" | "cosine" | "plateau"; warmup_epochs: number; label_smoothing: number; grad_clip: number;
   pretrained: "" | "resnet18" | "vgg16" | "vit_b_16"; freeze: "none" | "backbone"; export: boolean; save_memory: boolean; auto_split: boolean;
-  class_weights?: "" | "inverse" | "sqrt"; tune_thresholds?: boolean; loss?: "" | "focal" | "dice" | "dice_ce" | "mse" | "l1" | "huber"; focal_gamma?: number;
+  class_weights?: "" | "inverse" | "sqrt"; tune_thresholds?: boolean; loss?: "" | "focal" | "dice" | "dice_ce" | "mse" | "l1" | "huber" | "custom"; focal_gamma?: number; custom_loss?: string;
 }
 
 export interface Machine {

@@ -3,6 +3,7 @@
 
 pub mod cloud;
 pub mod codegen;
+pub mod custom;
 pub mod dataset;
 pub mod dsl;
 pub mod jobs;

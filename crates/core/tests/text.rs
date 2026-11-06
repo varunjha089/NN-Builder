@@ -649,3 +649,31 @@ fn the_design_name_is_kept_and_used() {
     // without a name, nothing changes
     assert_eq!(dsl::design_name("1 input\n2 output\n"), None);
 }
+
+#[test]
+fn custom_blocks_and_python_section() {
+    let text = "net \"custom\"\npython \"\"\"\nclass Twice(nn.Module):\n    # out: c * 2, h, w\n    def __init__(self, c, h, w):\n        super().__init__()\n        self.conv = nn.Conv2d(c, c * 2, 1)\n\n    def forward(self, x):\n        return {'a': 1} and self.conv(x)\n\"\"\"\n1 input\n2 conv 8 3x3\n3 custom Twice\n4 global_pool\n5 output\n";
+    let g = build(text);
+    assert!(g.python.starts_with("class Twice(nn.Module):") && g.python.contains("{'a': 1}"), "{}", g.python);
+    assert_eq!(by_label(&g, "3").params["class"], json!("Twice"));
+    assert_eq!(by_label(&g, "4").kind, "global_pool", "line numbers after the section are kept");
+    let a = analyze(&g, &cifar());
+    assert!(a.ok, "{:?}", a.problems);
+    assert_eq!(a.get(&by_label(&g, "3").id).unwrap().out, Some(vec![16, 32, 32]));
+    // printed from the blocks: `custom Twice`, and sync puts the code back into the text
+    assert!(print(&g).0.contains("3 custom Twice"), "{}", print(&g).0);
+    let mut printed = g.clone();
+    printed.text = String::new();
+    let s = sync(&printed);
+    assert!(s.text.contains("python \"\"\"\nclass Twice") && s.text.contains("custom Twice"), "{}", s.text);
+    assert_eq!(build(&s.text).python, g.python);
+    // the code changed on the canvas: the text's section follows, the rest of the text stays
+    let mut edited = g.clone();
+    edited.python = g.python.replace("c * 2, h, w", "c * 2, h, w  ");
+    let s = sync(&edited);
+    assert!(s.text.contains("c * 2, h, w  ") && s.text.contains("net \"custom\"") && s.text.contains("2 conv 8 3x3"), "{}", s.text);
+    // problems: an unclosed section, two sections, a bad class name
+    assert!(err("python \"\"\"\nclass A(nn.Module):\n    pass\n1 input\n").message.contains("not closed"));
+    assert!(err("python \"\"\"\n\"\"\"\npython \"\"\"\n\"\"\"\n1 input\n").message.contains("only one"));
+    assert!(err("1 input\n2 custom 3\n").message.contains("number"));
+}

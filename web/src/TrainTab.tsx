@@ -4,6 +4,13 @@ import { api, errText, type Analysis, type AppState, type RunStatus, type TrainS
 
 /** the recipe that suits most networks here (and is the usual one for transformers): AdamW with weight decay, warm-up then cosine decay,
  *  label smoothing, gradient clipping */
+/** a starting point for the custom loss, per task */
+const CUSTOM_LOSS: Record<string, string> = {
+  classify: "def custom_loss(out, y):\n    # cross-entropy with a small penalty on very large scores\n    return nn.functional.cross_entropy(out, y) + 1e-4 * (out ** 2).mean()\n",
+  multilabel: "def custom_loss(out, y):\n    # binary cross-entropy, positives counted twice\n    return nn.functional.binary_cross_entropy_with_logits(out, y.float(), pos_weight=torch.full_like(out[0], 2.0))\n",
+  regress: "def custom_loss(out, y):\n    # log-cosh: like MSE for small errors, like L1 for large ones\n    d = out - y\n    return (d + nn.functional.softplus(-2 * d) - 0.6931471805599453).mean()\n",
+};
+
 const RECOMMENDED: Partial<TrainSettings> = { optimizer: "adamw", weight_decay: 0.05, schedule: "cosine", warmup_epochs: 5, label_smoothing: 0.1, grad_clip: 1 };
 
 /** rough GPU memory for training, in GB: weights + gradients + Adam's two moments (16 bytes per parameter), the layer outputs kept for the
@@ -154,7 +161,8 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
           </div>}
           <div className="row">
             <label title="What the network is trained to make small">Loss
-              <select value={train.loss ?? ""} onChange={(e) => set({ loss: e.target.value as TrainSettings["loss"] })}>
+              <select value={train.loss ?? ""} onChange={(e) => set({ loss: e.target.value as TrainSettings["loss"],
+                ...(e.target.value === "custom" && !train.custom_loss ? { custom_loss: CUSTOM_LOSS[datasetTask === "regress" ? "regress" : datasetTask === "multilabel" ? "multilabel" : "classify"] } : {}) })}>
                 {datasetTask === "regress" ? <>
                   <option value="">mean squared error (MSE)</option>
                   <option value="l1">mean absolute error (L1)</option>
@@ -164,12 +172,20 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
                 {(datasetTask === "segment" || datasetTask === "multilabel") && <>
                   <option value="dice">Dice (overlap per class)</option>
                   <option value="dice_ce">Dice + cross-entropy</option></>}
+                <option value="custom">your own (Python)</option>
               </select></label>
             {train.loss === "focal" && <label>focal γ<input type="number" min={0} max={5} step={0.5} value={train.focal_gamma ?? 2}
               onChange={(e) => set({ focal_gamma: Number(e.target.value) })} /></label>}
           </div>
           {train.loss?.startsWith("dice") && datasetTask !== "segment" && datasetTask !== "multilabel" &&
             <p className="msg error small">Dice loss needs segmentation or multi-label; with one class per image use cross-entropy or focal.</p>}
+          {train.loss === "custom" && <>
+            <textarea className="code" spellCheck={false} rows={8} value={train.custom_loss ?? ""} onChange={(e) => set({ custom_loss: e.target.value })} />
+            <p className="muted small">Define <code>def custom_loss(out, y):</code> returning one number. <code>out</code> is the network's output for a
+              batch ({datasetTask === "segment" ? "batch, classes, height, width" : "batch, classes"}); <code>y</code> is what the data gives:
+              {datasetTask === "segment" ? " a class number per pixel (−100 = no label)" : datasetTask === "multilabel" ? " 0 / 1 per class"
+                : datasetTask === "regress" ? " the targets standardised (mean 0, spread 1)" : " the class number of each image"}.
+              The validation loss is this loss too. It runs only on the training machine; <code>torch</code> and <code>nn</code> are imported.</p></>}
           {datasetTask === "regress" && ["focal", "dice", "dice_ce"].includes(train.loss ?? "") &&
             <p className="msg error small">Regression is trained with MSE, L1 or Huber loss: choose one above.</p>}
           {datasetTask !== "regress" && ["mse", "l1", "huber"].includes(train.loss ?? "") &&

@@ -308,6 +308,26 @@ def loss_math():
     print("losses: focal (γ 0 = CE / BCE, weights), Dice (perfect = 0), Dice + CE, unlabelled pixels left out")
 
 
+def custom_blocks(root):
+    """the design's own PyTorch classes train like any block, the custom loss is used, and a wrong '# out:' line stops the run at the
+    one-batch check with a message naming the block"""
+    root = os.path.abspath(root)
+    data = os.path.join(root, "data")
+    ev = run(os.path.join(root, "custom"), data, "custom")
+    assert next(e for e in ev if e["event"] == "start")["recipe"]["loss"] == "custom"
+    assert any(e["event"] == "check" for e in ev), "the one-batch check passed"
+    done = next(e for e in ev if e["event"] == "done")
+    assert done["test_acc"] >= 0.9, done
+    res = json.load(open(os.path.join(root, "custom", "results.json")))
+    assert res["loss"] == {"kind": "custom"}, res.get("loss")
+    folder = os.path.join(root, "custom_bad")
+    env = {**os.environ, "NNB_DATA": data, "PYTHONUNBUFFERED": "1"}
+    p = subprocess.run([sys.executable, "train.py"], cwd=folder, env=env, capture_output=True, text=True, timeout=600)
+    msg = p.stdout + p.stderr
+    assert p.returncode != 0 and "CHECK: shapes differ" in msg and "Custom" in msg and "# out:" in msg, msg[-2000:]
+    print(f"custom: SE + Down classes, custom loss, test accuracy {done['test_acc']}; a wrong # out: line stopped at the check")
+
+
 def make_regress(root):
     """300 two-band images; biomass = 40 + 25·mean(b2), height = 3 + 6·mean(b1) (plus a little noise); targets.csv lists them, and one
     row has no number (left out)"""
@@ -492,6 +512,7 @@ if __name__ == "__main__":
     check_data(sys.argv[1])
     imbalanced(sys.argv[1])
     regress(sys.argv[1])
+    custom_blocks(sys.argv[1])
     cloud(sys.argv[1])
     ben(sys.argv[1])
     pretrained_ms(sys.argv[1])

@@ -1283,7 +1283,7 @@ LOSS_WEIGHT = None   # unbalanced classes: a weight per class (multi-label: pos_
 THRESH = None        # multi-label: a decision threshold per class chosen on the validation data (tune_thresholds), else 0.5
 
 
-LOSS = TRAIN.get("loss") or ""            # "" (cross-entropy / BCE; regression: MSE) | "focal" | "dice" | "dice_ce" | "mse" | "l1" | "huber"
+LOSS = TRAIN.get("loss") or ""            # "" (cross-entropy / BCE; regression: MSE) | focal | dice | dice_ce | mse | l1 | huber | custom
 GAMMA = float(TRAIN.get("focal_gamma") or 2.0)
 
 
@@ -1293,6 +1293,9 @@ def loss_of(out, y, smoothing=0.0):
     images / pixels count little. Dice (segmentation, multi-label): 1 - the mean over classes of 2|P∩T| / (|P| + |T|) on the batch's
     probabilities; dice_ce adds the plain cross-entropy (BCE) to it. Unlabelled pixels (-100) are left out of every one."""
     out = out.float()
+    if LOSS == "custom":
+        # the Train tab's own loss (defined above, in the generated part of train.py)
+        return custom_loss(out, standardise(y.float()) if REGRESS else y)
     if REGRESS:
         z = standardise(y.float())
         if LOSS == "l1":
@@ -1483,7 +1486,8 @@ def one_batch_check(model, loader, device):
     model.zero_grad(set_to_none=True)
     for h in hooks:
         h.remove()
-    bad = [f"{label}: expected {EXPECTED[name]}, got {seen.get(name)}" for name, label, _ in LAYERS if seen.get(name) != EXPECTED[name]]
+    bad = [f"{label}: expected {EXPECTED[name]}, got {seen.get(name)}" + (" (the class's '# out:' line declares the expected shape)" if "Custom" in label else "")
+           for name, label, _ in LAYERS if seen.get(name) != EXPECTED[name]]
     if bad:
         raise SystemExit("CHECK: shapes differ from the design: " + "; ".join(bad[:5]))
     if not REGRESS and int(y.max()) >= len(CLASSES):

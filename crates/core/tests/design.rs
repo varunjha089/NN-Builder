@@ -663,3 +663,43 @@ fn cloud_locations() {
     assert!(ds.local_key().starts_with("nnb-nnb-export-"), "{}", ds.local_key());
     assert!(Dataset { cloud_url: "ftp://x".into(), ..ds.clone() }.problems().join(" ").contains("cloud location"));
 }
+
+const CUSTOM_CODE: &str = "class SE(nn.Module):\n    \"\"\"squeeze-and-excitation: a weight per channel from the channel means\"\"\"\n    # out: c, h, w\n    def __init__(self, c, h, w):\n        super().__init__()\n        self.fc = nn.Sequential(nn.Linear(c, max(1, c // 4)), nn.ReLU(), nn.Linear(max(1, c // 4), c), nn.Sigmoid())\n\n    def forward(self, x):\n        return x * self.fc(x.mean((2, 3)))[:, :, None, None]\n\n\nclass Down(nn.Module):\n    # out: c * 2, h // 2, w // 2\n    def __init__(self, c, h, w):\n        super().__init__()\n        self.conv = nn.Conv2d(c, c * 2, 3, stride=2, padding=1)\n\n    def forward(self, x):\n        return torch.relu(self.conv(x))\n";
+
+#[test]
+fn custom_pytorch_blocks() {
+    let mut g = chain(vec![("input", json!({})), ("conv2d", json!({"filters": 8})), ("custom", json!({"class": "SE"})),
+        ("custom", json!({"class": "Down"})), ("global_pool", json!({})), ("output", json!({}))]);
+    let ds = mnist();
+    // without the code: the block says what is missing
+    let a = analyze(&g, &ds);
+    assert!(!a.ok && a.get("n2").unwrap().messages.iter().any(|m| m.contains("no class SE")), "{:?}", a.get("n2").unwrap().messages);
+    g.python = CUSTOM_CODE.into();
+    let a = analyze(&g, &ds);
+    assert!(a.ok, "{:?}", a.problems);
+    assert_eq!(a.get("n2").unwrap().out, Some(vec![8, 28, 28]));
+    assert_eq!(a.get("n3").unwrap().out, Some(vec![16, 14, 14]), "the # out: line");
+    let t = TrainSettings { loss: "custom".into(), custom_loss: "def custom_loss(out, y):\n    return nn.functional.cross_entropy(out, y)\n".into(), ..Default::default() }.clean();
+    let code = train_script(&g, &ds, &a, &t, "custom").unwrap();
+    assert!(code.contains("class SE(nn.Module):") && code.contains("self.l2 = SE(8, 28, 28)") && code.contains("self.l3 = Down(8, 28, 28)"), "{code}");
+    assert!(code.find("class SE(").unwrap() < code.find("class Net(").unwrap(), "the classes come before Net");
+    assert!(code.contains("def custom_loss(out, y):") && code.contains("\"loss\": \"custom\""));
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("train.py"), &code).unwrap();
+    if let Some(out) = py_compile(&dir.path().join("train.py")) {
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    }
+    // a custom loss without its function is refused on the Mac
+    let bad = TrainSettings { loss: "custom".into(), ..Default::default() };
+    assert!(train_script(&g, &ds, &a, &bad, "x").unwrap_err().to_string().contains("def custom_loss("));
+    // the wrong number of sizes for the input (a class for images after Global pool)
+    let mut g2 = chain(vec![("input", json!({})), ("global_pool", json!({})), ("custom", json!({"class": "SE"})), ("output", json!({}))]);
+    g2.python = CUSTOM_CODE.into();
+    let a2 = analyze(&g2, &ds);
+    assert!(a2.get("n2").unwrap().messages.iter().any(|m| m.contains("a vector")), "{:?}", a2.get("n2").unwrap().messages);
+    // saved with the design (and older designs without code still load)
+    let saved: Graph = serde_json::from_str(&serde_json::to_string(&g).unwrap()).unwrap();
+    assert_eq!(saved.python, CUSTOM_CODE);
+    let old: Graph = serde_json::from_str("{\"nodes\": [], \"edges\": []}").unwrap();
+    assert!(old.python.is_empty());
+}

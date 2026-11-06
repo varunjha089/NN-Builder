@@ -81,6 +81,29 @@ fn main() {
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(format!("{d}/train.py"), train_script(&g, &ds, &a, &t, "pretrained_ms").unwrap()).unwrap();
     }
+    // the design's own PyTorch code: a squeeze-and-excitation class and a strided down-sampling class (# out: declares the shape), with
+    // a custom loss; and the same with a wrong # out: line, which the one-batch check on the machine must catch
+    {
+        let ds = Dataset { source: "kaggle".into(), kaggle_slug: "ci/sentinel2".into(), image_size: [32, 32], sensor: "s2".into(),
+            band_order: s(SENTINEL2_BANDS), bands: s(&["B02", "B03", "B04", "B08", "B11", "B12"]), classes: s(&["forest", "water"]), ..Default::default() };
+        let code = "class SE(nn.Module):\n    # out: c, h, w\n    def __init__(self, c, h, w):\n        super().__init__()\n\
+            \x20       self.fc = nn.Sequential(nn.Linear(c, c // 4), nn.ReLU(), nn.Linear(c // 4, c), nn.Sigmoid())\n\n\
+            \x20   def forward(self, x):\n        return x * self.fc(x.mean((2, 3)))[:, :, None, None]\n\n\n\
+            class Down(nn.Module):\n    # out: c * 2, h // 2, w // 2\n    def __init__(self, c, h, w):\n        super().__init__()\n\
+            \x20       self.conv = nn.Conv2d(c, c * 2, 3, stride=2, padding=1)\n\n\
+            \x20   def forward(self, x):\n        return torch.relu(self.conv(x))\n";
+        let text = format!("net \"custom ci\"\npython \"\"\"\n{code}\"\"\"\n1 input\n2 conv 16 3x3\n3 custom SE\n4 custom Down\n5 global_pool\n6 output\n");
+        let loss = "def custom_loss(out, y):\n    # cross-entropy plus a small penalty on large scores\n    return nn.functional.cross_entropy(out, y) + 1e-3 * (out ** 2).mean()\n";
+        for (name, text) in [("custom", text.clone()), ("custom_bad", text.replace("c * 2, h // 2, w // 2", "c * 2, h, w"))] {
+            let g = nnb_core::dsl::apply(&text, &Default::default()).unwrap();
+            let a = analyze(&g, &ds);
+            assert!(a.ok, "{name}: {:?}", a.problems);
+            let t = TrainSettings { epochs: 3, batch_size: 16, amp: false, loss: "custom".into(), custom_loss: loss.into(), ..Default::default() }.clean();
+            let d = format!("{dir}/{name}");
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(format!("{d}/train.py"), train_script(&g, &ds, &a, &t, name).unwrap()).unwrap();
+        }
+    }
     for (name, ds) in cases {
         assert!(ds.problems().is_empty(), "{name}: {:?}", ds.problems());
         let g = if ds.task == "segment" { &seg } else if name == "fusion" { &mid } else { &g };

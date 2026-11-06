@@ -356,6 +356,39 @@ LABEL output | seg_output
 No values: \texttt{output} gives one score per class of the dataset (classification); \texttt{seg\_output} one score per class for every
 pixel (segmentation; it must be at the size of the masks). Exactly one, as the last block.
 
+\subsubsection*{\texttt{custom} --- your own PyTorch class}
+\label{sec:custom-text}
+\begin{Verbatim}[fontsize=\small]
+LABEL custom CLASS
+python """   ...  """          the design's PyTorch code: one section, anywhere (usually at the top)
+\end{Verbatim}
+A layer the block list does not have is written in PyTorch. The code is a section that begins with a line \texttt{python """} and
+ends with a line holding only \texttt{"""} (inside it, write docstrings on one line or with \texttt{\textquotesingle\textquotesingle\textquotesingle});
+every class at its top level is an \texttt{nn.Module} whose \texttt{\_\_init\_\_} receives the input's shape (\texttt{c, h, w} for an
+image, \texttt{t, d} for tokens, \texttt{n} for a vector), and a comment line \texttt{\# out:} declares the output's shape in those names
+(whole-number arithmetic: \texttt{+ - * // \%}); without it the output has the input's shape. \texttt{custom CLASS} uses a class:
+\begin{verbatim}
+python """
+class Down(nn.Module):
+    # out: c * 2, h // 2, w // 2
+    def __init__(self, c, h, w):
+        super().__init__()
+        self.conv = nn.Conv2d(c, c * 2, 3, stride=2, padding=1)
+
+    def forward(self, x):
+        return torch.relu(self.conv(x))
+"""
+1 input
+2 conv 16 3x3
+3 custom Down              # (16, 32, 32) -> (32, 16, 16), from the # out: line
+4 custom Down              # (32, 16, 16) -> (64, 8, 8): one class, used twice (two separate layers)
+5 global_pool
+6 output
+\end{verbatim}
+The Mac never runs the code: it checks the rest of the design with the declared shapes, and the training machine's one-batch check
+compares every Custom block's real output with its declaration before training (a wrong \texttt{\# out:} line stops the run there). The
+parameters of these classes are counted on the training machine. On the canvas the Custom block's inspector edits the same code.
+
 \subsection{The rules in brief}
 \begin{verbatim}
 net "name"                                   name of the design (optional)
@@ -365,6 +398,7 @@ LABEL BLOCK SETTINGS [<- REF, REF]           one block; without <- it takes the 
 LABEL NAME(EXPR, Q=EXPR) [<- REF, REF]       a function call (inside: in, in2, ...)
 LABEL repeat EXPR [as NAME] [<- REF] { LINES }       passes chained; i = pass number
 LABEL for A, B in (EXPR, EXPR), ... [<- REF] { LINES }
+python """ ... """                           the design's PyTorch classes (for custom CLASS)
 REF:  a label | in | in2 | a path like 5.2.b    EXPR: numbers, names, + - * / // % ^ ( )
 \end{verbatim}
 
@@ -411,6 +445,6 @@ In the layer table, the blocks of one \texttt{repeat}, \texttt{for} or call line
 \subsection{A design that uses everything}
 \file{doc/examples/everything.nnb} in the repository is a hybrid CNN and Transformer written only as text: functions calling functions
 with defaults and named values, a function with two inputs, \texttt{for} with tuples, \texttt{repeat} with \texttt{i}, \texttt{let} and
-every operator, paths into loop passes, a left-out label, comments, and every block kind except the segmentation output (89 blocks,
+every operator, paths into loop passes, a left-out label, comments, and every block kind except the segmentation output, including a Custom block with its \texttt{python} section (90 blocks,
 186\,086 parameters, no warning at $3\times32\times32$). The test suite builds it and every example of this chapter, and GitHub Actions
 compares its layers with real PyTorch.

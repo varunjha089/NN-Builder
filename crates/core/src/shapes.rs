@@ -168,6 +168,7 @@ fn window(n: usize, k: usize, s: usize, p: usize, d: usize) -> (usize, i64, usiz
 pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
     let input_shape = ds.input_shape();
     let classes = ds.class_names().len();
+    let py = crate::custom::classes(&g.python);
     let need = if ds.task == "regress" { 1 } else { 2 }; // regression: the "classes" are the target columns
     let mut problems: Vec<String> = vec![];
     let ids: HashSet<&str> = g.nodes.iter().map(|n| n.id.as_str()).collect();
@@ -266,7 +267,7 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
                     err(&mut r, &m);
                     None
                 }
-                None => step(node, &mut r, classes, rf_in, &mut rfs),
+                None => step(node, &mut r, classes, rf_in, &mut rfs, &py),
             };
             if r.status != "error" {
                 r.out = out;
@@ -393,7 +394,8 @@ fn warn(r: &mut NodeResult, m: &str) {
 }
 
 /// the output shape of one node from its inputs (or None with an error in r)
-fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 2], [usize; 2]), rfs: &mut HashMap<&'a str, ([usize; 2], [usize; 2])>) -> Option<Vec<usize>> {
+fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 2], [usize; 2]), rfs: &mut HashMap<&'a str, ([usize; 2], [usize; 2])>,
+    py: &[crate::custom::PyClass]) -> Option<Vec<usize>> {
     let p = &node.params;
     let k = node.kind.as_str();
     let ins = r.inputs.clone();
@@ -532,6 +534,32 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
                 return None;
             }
             vec![x[0]]
+        }
+        "custom" => {
+            // the shape the class declares (# out:); its parameters are counted on the training machine
+            let name = p.get("class").and_then(|v| v.as_str()).unwrap_or("");
+            let found: Vec<&crate::custom::PyClass> = py.iter().filter(|c| c.name == name).collect();
+            if name.is_empty() {
+                err(r, "Choose the PyTorch class this block runs (Custom block: class), or write one in the design's PyTorch code.");
+                return None;
+            }
+            if found.is_empty() {
+                let names: Vec<&str> = py.iter().map(|c| c.name.as_str()).collect();
+                err(r, &format!("There is no class {name} in the design's PyTorch code{}.",
+                    if names.is_empty() { String::new() } else { format!(" (it has {})", names.join(", ")) }));
+                return None;
+            }
+            if found.len() > 1 {
+                err(r, &format!("The design's PyTorch code defines {name} {} times; keep one.", found.len()));
+                return None;
+            }
+            match crate::custom::out_shape(found[0], &x) {
+                Ok(s) => s,
+                Err(m) => {
+                    err(r, &m);
+                    return None;
+                }
+            }
         }
         "upsample" => {
             if !is3 {
