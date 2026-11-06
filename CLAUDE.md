@@ -195,6 +195,11 @@ doc/nn_builder_manual.tex  the user manual (LaTeX, plain thebibliography, no bib
                            doc/figures/*.jpg: screenshots (1440×900 window, JPEG). Take them from a copy started with a neutral
                            NN_BUILDER_HOME (e.g. /Users/Shared/nnb-screens with projects_dir "~/NN_Builder_Projects", auto_update false) so
                            no user name, path or real project shows; never the Connection tab (it shows Keychain account names).
+                           Kinds of data (sec:data-kinds): doc/figures/kind_*.png = GENERATED example data drawn by
+                           doc/screens/data_pictures.py (numpy + matplotlib; no download), data_*.png = the Dataset tab drawn by the real UI
+                           (web/dist) in headless Chrome with doc/screens/stub.js answering app_state / project_load from
+                           examples/doc_screens.rs (no app window needed; PYTHON=<python with Pillow> trims the empty page):
+                           (cd web && npm run build) && doc/screens/render.sh. Re-run both after Dataset-tab changes.
                            The MSG-Former section (sec:msg) has the layer table, parameter and compute breakdowns and ablations: if the
                            template changes, update those numbers (templates test pins the total).
 ```

@@ -500,6 +500,27 @@ Only the \emph{description} of a dataset is read on the design computer; the ima
 \screenshot{05_dataset}{The Dataset tab with built-in CIFAR-10, as MSG-Former opens (the demo picks the built-in set that fits its
 input, so nothing is resized).}{fig:dataset}
 
+\paragraph{What data NN Builder reads.} Every kind, with a picture of such data and the Dataset tab set up for it, is in
+Section~\ref{sec:data-kinds}.
+
+\begin{center}\small
+\begin{tabular}{@{}p{0.27\linewidth}p{0.2\linewidth}p{0.45\linewidth}@{}}
+\toprule
+Data & Sources & Task and files \\
+\midrule
+MNIST, Fashion-MNIST, CIFAR-10 & built-in & classification \\
+Pictures (PNG, JPEG, \dots; grey or colour) & Hugging Face, Kaggle, own files & classification: a label column, or one folder per class \\
+Pictures + masks & Hugging Face, Kaggle, own files & segmentation: a mask column, or images and masks with the same names \\
+Satellite / multispectral images (Sentinel-2, any bands) & Kaggle, own files & GeoTIFF or \file{.npy}, 1--32 bands; classification,
+  multi-label, segmentation \\
+Radar (Sentinel-1 VV, VH) & Kaggle, own files & as above; linear or dB \\
+Large exported scenes + label image (Google Earth Engine) & own files, Kaggle & segmentation: cut into tiles \\
+Several classes per image (BigEarthNet) & own files, Kaggle, Hugging Face & multi-label: a CSV (or a list column) \\
+Two sensors for the same places (S1 + S2) & own files, Kaggle & fusion: two band groups, early or mid \\
+\bottomrule
+\end{tabular}
+\end{center}
+
 \subsection{Built-in datasets}
 MNIST (handwritten digits, $1\times28\times28$)~\cite{lecun1998gradient}, Fashion-MNIST (clothing, $1\times28\times28$)~\cite{xiao2017fashion}
 and CIFAR-10 (photos, $3\times32\times32$)~\cite{krizhevsky2009cifar}, ten classes each, downloaded by torchvision on the GPU machine.
@@ -641,6 +662,112 @@ WorldCover 2021 map (11 classes, as class numbers 0--10; replace it by your own 
 labelled point into a Drive folder per class, starting every export itself. \ui{Set this tab to match the export} fills in the band
 order, the layout and (WorldCover) the class names. The app does not run the script: it needs your Earth Engine account, so check it
 there.
+
+%=====================================================================================================================================
+\section{Kinds of data, step by step}
+\label{sec:data-kinds}
+For each kind of data: what such data looks like, the Dataset tab set up for it, and the steps. The data pictures are \emph{generated}
+examples (a random land-cover map turned into typical Sentinel-2 reflectances and Sentinel-1 backscatter; \file{doc/screens/data\_pictures.py}),
+not real images; the Dataset tab pictures are the application's own screen (\file{doc/screens/render.sh}). The folder paths in them are
+examples. After any of these, the Design tab's Input block shows the resulting shape, and the Output block must have as many classes as
+the class list.
+
+\newcommand{\datafig}[3]{\begin{figure}[htbp]\centering\includegraphics[width=\linewidth,height=0.42\textheight,keepaspectratio]{#1}\caption{#2}\label{#3}\end{figure}}
+\newcommand{\tabfig}[3]{\begin{figure}[htbp]\centering\includegraphics[width=\linewidth,height=0.62\textheight,keepaspectratio]{#1}\caption{#2}\label{#3}\end{figure}}
+
+\subsection{Built-in sets (MNIST, Fashion-MNIST, CIFAR-10)}
+\tabfig{data_builtin}{Dataset tab: built-in CIFAR-10.}{fig:data-builtin}
+\begin{enumerate}[nosep]
+  \item \ui{Task: Classification}, \ui{Source: Built-in (torchvision)}.
+  \item Choose the set. The Input becomes its own size ($1\times28\times28$ or $3\times32\times32$); tick \ui{Resize the images} for a
+        network made for larger pictures and set the size and channels.
+\end{enumerate}
+Nothing else: torchvision downloads the set on the GPU machine.
+
+\subsection{Pictures from Hugging Face}
+\tabfig{data_huggingface}{Dataset tab: a Hugging Face dataset (\texttt{timm/eurosat-rgb}, RGB satellite pictures in ten classes) before
+\ui{Read info}.}{fig:data-hf}
+\begin{enumerate}[nosep]
+  \item \ui{Source: Hugging Face}; type the id (\texttt{owner/name}) and press \ui{Read info}.
+  \item Check the splits, the \ui{Image column} and the \ui{Label column} (its class names fill the list); \ui{Show 8 example images}
+        checks the choice.
+  \item Set the image size and channels the network should receive.
+\end{enumerate}
+
+\subsection{Pictures in class folders (Kaggle or your own files)}
+\datafig{kind_pictures}{Pictures sorted into one folder per class (generated examples).}{fig:kind-pictures}
+\tabfig{data_folders}{Dataset tab: your own folder with \file{train/} and \file{test/}, each with one subfolder per class.}{fig:data-folders}
+\begin{enumerate}[nosep]
+  \item \ui{Source: Kaggle} (type \texttt{owner/name}, \ui{Read files}) or \ui{My own files} (\ui{Choose\dots}, \ui{Read folder}).
+  \item \ui{Training folder}: the folder whose subfolders are the classes (found by itself when there is one); optionally a
+        \ui{Test folder} with the same subfolders.
+  \item \ui{Image bands}: \ui{ordinary pictures}. Set the size and channels (1 grey, 3 colour); the class names are the folder names.
+\end{enumerate}
+
+\subsection{Segmentation: images and masks}
+\datafig{kind_segmentation}{Images and masks with the same names; a mask holds the class number of every pixel (generated examples).}{fig:kind-seg}
+\tabfig{data_segfiles}{Dataset tab: multispectral images and masks in your own folder.}{fig:data-segfiles}
+\begin{enumerate}[nosep]
+  \item \ui{Task: Segmentation}. Hugging Face: choose the \ui{Mask column}. Kaggle or own files: \ui{Images folder} and \ui{Masks folder}
+        (a mask may add \file{\_mask}; PNG, GeoTIFF or \file{.npy}).
+  \item Pictures: \ui{ordinary pictures}; satellite images: choose the bands as below.
+  \item The class list: mask value 0 is the first line, 1 the second, \dots; other values (no data, 255) are not scored.
+  \item The design must end in \ui{Segmentation output}, at the input's size (e.g.\ a U-Net).
+\end{enumerate}
+
+\subsection{Satellite images: Sentinel-2, Sentinel-1, any bands}
+\datafig{kind_bands}{One patch, band by band: six Sentinel-2 bands, the true- and false-colour composites, and Sentinel-1 VV and VH in
+dB (generated example).}{fig:kind-bands}
+\tabfig{data_s2}{Dataset tab: Sentinel-2 patches exported from Earth Engine (band order B1 \dots\ B12), six bands chosen.}{fig:data-s2}
+\begin{enumerate}[nosep]
+  \item Kaggle or \ui{My own files}; the files are GeoTIFF (\file{.tif}) or \file{.npy}, one per patch, in class folders (or images +
+        masks, or a CSV for multi-label).
+  \item \ui{Read folder} reads the band names from the first GeoTIFF when Earth Engine or GDAL wrote them; otherwise choose
+        \ui{Sentinel-2}, \ui{Sentinel-1} or \ui{other bands} and set \ui{Bands in the files} (\ui{EuroSAT-MS order} or \ui{Earth Engine
+        SR} fill it for Sentinel-2).
+  \item Tick the bands the network should see, or a preset (10\,m + 20\,m, true colour, colour + near infrared). Sentinel-1: tick
+        \ui{convert to decibels} only for linear values.
+  \item Set the image size; the channels are the ticked bands.
+\end{enumerate}
+Details: Sections~\ref{sec:bands} and~\ref{sec:own-files}.
+
+\subsection{A large exported scene with a label image (Google Earth Engine)}
+\datafig{kind_scene}{An export and its label image on the same grid, cut into tiles; mostly empty tiles (dotted) are left out
+(generated example).}{fig:kind-scene}
+\tabfig{data_scene}{Dataset tab: a scene layout with the Earth Engine export script opened (it exports exactly these bands, and the
+WorldCover map as labels).}{fig:data-scene}
+\begin{enumerate}[nosep]
+  \item \ui{Task: Segmentation}, \ui{Source: My own files}, the layout \ui{large images + a label image}.
+  \item \ui{Image file or folder} and \ui{Label file or folder} (the same file names when the export is split into several files).
+  \item The bands, and the image size = the tile size (e.g.\ $128\times128$). The class list: label value 0 first.
+  \item No data yet? Open \ui{Get Sentinel-1/2 data from Google Earth Engine}, set the dates, copy the script into the Earth Engine Code
+        Editor, draw the region, run both exports, download the two Drive folders into one folder, and press \ui{Set this tab to match
+        the export}.
+\end{enumerate}
+
+\subsection{Several classes per image (multi-label)}
+\datafig{kind_multilabel}{Patches with several classes each, and the CSV that lists them (generated examples).}{fig:kind-ml}
+\tabfig{data_multilabel}{Dataset tab: a BigEarthNet-like folder: Sentinel-2 patches in \file{s2/}, Sentinel-1 in \file{s1/}, labels in
+\file{labels.csv}.}{fig:data-ml}
+\begin{enumerate}[nosep]
+  \item \ui{Task: Multi-label}. Own files or Kaggle: the \ui{Labels file (CSV)} and, if the images are not next to it, the
+        \ui{Images folder}; \ui{Read labels} fills the class list. Hugging Face: a label column that is a list of classes.
+  \item Pictures or bands as above; the Output block gives one score per class.
+  \item The results are F1, mAP and exact match (Section~\ref{sec:multilabel}).
+\end{enumerate}
+
+\subsection{Two sensors: Sentinel-2 and Sentinel-1 together (fusion)}
+\datafig{kind_fusion}{The same place from both sensors, in two folders with the same file names, stacked into one input of 8 channels
+(generated example).}{fig:kind-fusion}
+\tabfig{data_fusion}{Dataset tab: Sentinel-2 (six bands, \file{s2/}) and, as the second band group, Sentinel-1 (VV, VH, \file{s1/}).}{fig:data-fusion}
+\begin{enumerate}[nosep]
+  \item Set up the first group (e.g.\ Sentinel-2) as above, with the \ui{Training folder} pointing at its files (\file{s2}).
+  \item Under \ui{Second band group (fusion)}: the sensor, the \ui{Folder with these files} (\file{s1}, mirroring \file{s2}: the same
+        subfolders and names) and its bands.
+  \item Design tab: keep one Input (early fusion), or select it, set \ui{Bands} to group 1 and press \ui{Add an Input for band group 2}
+        (mid fusion): give each Input its own layers and join them with Concat. In text: \texttt{input 1} and \texttt{input 2}.
+\end{enumerate}
+Section~\ref{sec:fusion} has the details.
 
 %=====================================================================================================================================
 \section{The Code tab: what the generated script does}

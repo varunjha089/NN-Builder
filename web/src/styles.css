@@ -35,7 +35,7 @@ textarea { width: 100%; font-family: ui-monospace, Menlo, monospace; font-size: 
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
 .form { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 9px 14px; margin: 10px 0; }
 .form label { display: flex; flex-direction: column; gap: 3px; color: var(--muted); font-size: 12px; }
-.form label.wide { grid-column: 1 / -1; }
+.form label.wide, .form .wide { grid-column: 1 / -1; }
 .form label.chk, label.chk { flex-direction: row; align-items: center; gap: 6px; color: var(--ink); }
 .radio { display: inline-flex; gap: 5px; align-items: center; margin-right: 14px; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 10px 14px; margin: 10px 0; }

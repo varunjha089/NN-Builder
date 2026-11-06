@@ -117,7 +117,7 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
       {(ds.source !== "builtin" || ds.resize) && <div className="form">
         <label>Image height<input type="number" min={8} max={1024} value={ds.image_size[0]} onChange={(e) => up({ image_size: [Number(e.target.value), ds.image_size[1]] })} /></label>
         <label>Image width<input type="number" min={8} max={1024} value={ds.image_size[1]} onChange={(e) => up({ image_size: [ds.image_size[0], Number(e.target.value)] })} /></label>
-        {ds.bands?.length ? <span className="muted small">Channels: {ds.bands.length} (the bands chosen above)</span>
+        {ds.bands?.length ? <span className="muted small">Channels: {ds.bands.length + (ds.bands2?.length ?? 0)} (the bands chosen above)</span>
           : <label>Channels<select value={ds.channels} onChange={(e) => up({ channels: Number(e.target.value) })}><option value={1}>1 (grey)</option><option value={3}>3 (colour)</option></select></label>}
         {ds.source !== "builtin" && <label className="wide">{ds.task === "multilabel" ? "Class names, one per line (from the labels CSV with Read labels, or typed)" : ds.task === "segment" ? "Classes, one per line (mask pixel value 0 = first line; with two classes any non-zero pixel is the second)" : "Class names, one per line, in label order"} ({ds.classes.length})
           <ClassBox classes={ds.classes} onChange={(classes) => up({ classes })} /></label>}
@@ -199,13 +199,13 @@ function BandsBox({ ds, up }: { ds: Dataset; up: (p: Partial<Dataset>) => void }
       empty pixels (NaN) are filled with the band's mean)</span>
     <p className="row">
       <label className="radio"><input type="radio" checked={sensor === ""} onChange={() => set("")} />ordinary pictures (grey / colour)</label>
-      <label className="radio"><input type="radio" checked={sensor === "s2"} onChange={() => set("s2")} />Sentinel-2 (13 bands)</label>
+      <label className="radio"><input type="radio" checked={sensor === "s2"} onChange={() => set("s2")} />Sentinel-2 (13 bands; Earth Engine: 12)</label>
       <label className="radio"><input type="radio" checked={sensor === "s1"} onChange={() => set("s1")} />Sentinel-1 radar (VV, VH)</label>
       <label className="radio"><input type="radio" checked={sensor === "other"} onChange={() => set("other")} />other bands</label>
     </p>
     {sensor !== "" && <>
-      <label className="wide">Bands in the files, in their order (space-separated; check the dataset's description)
-        <input value={order.join(" ")} onChange={(e) => { const o = e.target.value.split(/\s+/).filter((x) => x); up({ band_order: o, bands: chosen.filter((b) => o.includes(b)) }); }} /></label>
+      <label className="wide" style={{ display: "block" }}>Bands in the files, in their order (space-separated; check the dataset's description)
+        <input style={{ display: "block", width: "100%" }} value={order.join(" ")} onChange={(e) => { const o = e.target.value.split(/\s+/).filter((x) => x); up({ band_order: o, bands: chosen.filter((b) => o.includes(b)) }); }} /></label>
       {sensor === "s2" && <p className="row small"><span className="muted">Files:</span>
         <button className="small" onClick={() => up({ band_order: S2, bands: S2 })}>EuroSAT-MS order (13)</button>
         <button className="small" onClick={() => up({ band_order: S2_GEE, bands: S2_GEE })}>Earth Engine SR (12, B1 … B12)</button>
@@ -452,11 +452,11 @@ function SecondGroup({ ds, up }: { ds: Dataset; up: (p: Partial<Dataset>) => voi
       <label className="radio"><input type="radio" checked={ds.sensor2 === "other"} onChange={() => set("other")} />other</label>
     </p>
     {on && <>
-      <div className="form">
-        <label>Folder with these files (same file names as the first group's, any extension)
-          <input value={ds.fuse_dir ?? ""} onChange={(e) => up({ fuse_dir: e.target.value.trim() })} placeholder="e.g. s1  (s2/forest/x.tif ↔ s1/forest/x.tif)" /></label>
-        <label className="wide">Bands in these files, in their order
-          <input value={order.join(" ")} onChange={(e) => { const o = e.target.value.split(/\s+/).filter((x) => x); up({ band_order2: o, bands2: chosen.filter((b) => o.includes(b)) }); }} /></label>
+      <div>
+        <label style={{ display: "block", margin: "4px 0" }}>Folder with these files (the same file names as the first group's, any extension)
+          <input style={{ display: "block", width: "100%" }} value={ds.fuse_dir ?? ""} onChange={(e) => up({ fuse_dir: e.target.value.trim() })} placeholder="e.g. s1  (s2/forest/x.tif ↔ s1/forest/x.tif)" /></label>
+        <label style={{ display: "block", margin: "4px 0" }}>Bands in these files, in their order
+          <input style={{ display: "block", width: "100%" }} value={order.join(" ")} onChange={(e) => { const o = e.target.value.split(/\s+/).filter((x) => x); up({ band_order2: o, bands2: chosen.filter((b) => o.includes(b)) }); }} /></label>
       </div>
       <div className="bandgrid">{order.map((b) => <label key={b} className="chk"><input type="checkbox" checked={chosen.includes(b)} onChange={() => toggle(b)} />{b}</label>)}</div>
       {ds.sensor2 === "s1" && <label className="chk"><input type="checkbox" checked={!!ds.s1_db2} onChange={(e) => up({ s1_db2: e.target.checked })} />
