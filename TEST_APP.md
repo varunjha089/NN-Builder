@@ -14,7 +14,10 @@ How to use it:
   screenshot.
 
 Status column: **CI** = covered by the automatic tests on generated data (the logic is right; the window and real data are not checked) ·
-**Real** = already tried for real once · **Never** = never tried in any form outside the code.
+**Real** = already tried for real once · **Never** = never tried in any form outside the code · **✅ Window** = seen in the app ·
+**✅ GPU** = run on a real Kaggle GPU (T4) with generated data · **✅ Real data** = a real dataset on a real GPU. The ✅ lines of
+6 November 2026 were done by Claude through the app's own buttons (macOS accessibility) on 12 TEST projects; the owner approved the
+Keychain question.
 
 ---
 
@@ -22,15 +25,15 @@ Status column: **CI** = covered by the automatic tests on generated data (the lo
 
 | # | Test | Steps | Expect | Status |
 |---|---|---|---|---|
-| 0.1 | Updater | Your installed app says 0.3.0: Help → Check for Updates… → Install and restart | It downloads 0.4.0, restarts, About says 0.4.0; projects and settings unchanged | Never |
-| 0.2 | Keychain after update | Open Connection after the update | At most one Keychain question ("Always Allow"); tokens still there | Real (prompts seen) |
+| 0.1 | Updater | Your installed app says 0.3.0: Help → Check for Updates… → Install and restart | It downloads 0.4.0, restarts, About says 0.4.0; projects and settings unchanged | ✅ Done (owner, 6 Nov): 0.3.0 → 0.4.0 by the updater |
+| 0.2 | Keychain after update | Open Connection after the update | At most one Keychain question ("Always Allow"); tokens still there | ✅ Done: one "Always Allow" per new build |
 | 0.3 | Manual | Help → Documentation | The PDF opens (69 pages, dated 6 November 2026) | Real |
 
 ## 1. Projects, settings, menus
 
 | # | Test | Steps | Expect | Status |
 |---|---|---|---|---|
-| 1.1 | New / open / close | New project, close (File → Close Project), open it again | Same design and dataset come back | Real |
+| 1.1 | New / open / close | New project, close (File → Close Project), open it again | Same design and dataset come back | ✅ Window: 12 TEST projects opened and closed (File → Close Project) |
 | 1.2 | Demo | Projects → Start from a demo → ResNet-18 → ⌘S | Saved as a project; an unsaved demo vanishes when another opens | Real |
 | 1.3 | Delete | Delete the test project at the end | Its folder is in the Trash, off the list | Real |
 | 1.4 | Settings | ⚙ → night mode, panel colours, Design size | Applied at once, kept after restart | Never (checked by script only) |
@@ -43,14 +46,14 @@ warning text.
 
 | # | Test | Steps | Expect | Status |
 |---|---|---|---|---|
-| 2.1 | Palette groups | Look at the palette | Groups: Image, Up-sampling, Dense and outputs (incl. Detection output, Early exit), Normalise, Time series, Transformer (incl. Cross-attention, RMSNorm, SwiGLU, Mixture of experts), Branches (incl. Subtract, Shared weights), Your own (Custom) | Never |
-| 2.2 | Custom block | Add Custom (PyTorch) → Insert an example → Class: SE | The block shows the input's shape; the code box edits; the Text tab shows a `python """ … """` section | Never |
+| 2.1 | Palette groups | Look at the palette | Groups: Image, Up-sampling, Dense and outputs (incl. Detection output, Early exit), Normalise, Time series, Transformer (incl. Cross-attention, RMSNorm, SwiGLU, Mixture of experts), Branches (incl. Subtract, Shared weights), Your own (Custom) | ✅ Window: every group and button, incl. Twin branch |
+| 2.2 | Custom block | Add Custom (PyTorch) → Insert an example → Class: SE | The block shows the input's shape; the code box edits; the Text tab shows a `python """ … """` section | ✅ Window + GPU: class SE shown, trained on a T4 (TEST 1); "Insert an example" not pressed |
 | 2.3 | Custom shape error | In the code, change `# out: c, h, w` to `# out: c * 2, h, w` | The next block's shape follows (channels doubled); a wrong formula shows a red message | Never |
 | 2.4 | Twin branch | Fused dataset (2.x below or any), Input → conv → conv; select the last conv → Twin branch (shared weights) | A second Input (band group 2) and Shared-weights copies appear; parameters do not grow | Never |
 | 2.5 | Subtract | Subtract the two branches, tick absolute difference | Shape stays; the summary says \|a − b\| | Never |
-| 2.6 | Frozen / LoRA | Tick "frozen" on a conv; set LoRA rank 4 on a Dense | The design summary shows "N trained, M frozen" | Never |
-| 2.7 | MoE / exits | After To tokens add Mixture of experts; after a Global pool add Early exit | Shapes kept; an Early exit before Global pool says it needs a vector | Never |
-| 2.8 | Transformer options | Self-attention: causal, rotary; Class token + position: sinusoidal | The block summary shows causal · rotary; an odd head width with rotary is refused | Never |
+| 2.6 | Frozen / LoRA | Tick "frozen" on a conv; set LoRA rank 4 on a Dense | The design summary shows "N trained, M frozen" | ✅ Window: "146,328 trained, 24,576 frozen" (TEST 1) |
+| 2.7 | MoE / exits | After To tokens add Mixture of experts; after a Global pool add Early exit | Shapes kept; an Early exit before Global pool says it needs a vector | ✅ Window + GPU: MoE and exit shown and trained (TEST 1) |
+| 2.8 | Transformer options | Self-attention: causal, rotary; Class token + position: sinusoidal | The block summary shows causal · rotary; an odd head width with rotary is refused | ✅ Window: "4 heads · rotary"; summaries now also show sinusoidal and LoRA (fixed) |
 | 2.9 | Output for | With extra outputs (4.6), select an Output → "Output for" | The list shows the main task and each extra output | Never |
 | 2.10 | Large designs | Demo ViT-g/14 → Collapse repeated blocks | Fast; one ×40 node | Real |
 
@@ -60,7 +63,7 @@ warning text.
 |---|---|---|---|---|
 | 3.1 | Round trip | Paste `doc/examples/everything.nnb` (CIFAR-10 3×32×32) | 97 blocks, no warning, 217,396 parameters (16,832 frozen) | CI |
 | 3.2 | Time series text | Paste `doc/examples/timeseries.nnb` with a time-series dataset (4 bands, 6 dates, 32×32) | No error; Conv3D, Temporal pool, LSTM … on the canvas | CI |
-| 3.3 | New words | Type `5 shared 2`, `subtract abs`, `lstm 32 bi`, `moe 4 top 2 hidden 64`, `exit 0.3`, `dense 64 lora 4`, `conv 8 3x3 frozen`, `detect` | Each builds the right block; ⌘-click selects it | CI |
+| 3.3 | New words | Type `5 shared 2`, `subtract abs`, `lstm 32 bi`, `moe 4 top 2 hidden 64`, `exit 0.3`, `dense 64 lora 4`, `conv 8 3x3 frozen`, `detect` | Each builds the right block; ⌘-click selects it | ✅ Window: TEST 1's text shows python section, frozen, custom, exit, rotary, lora, moe |
 | 3.4 | Canvas → text | Change a setting on the canvas | Only that line changes; hand-written functions stay | CI |
 
 ## 4. Dataset tab, one kind of data at a time
@@ -69,19 +72,19 @@ Each: set the Dataset tab as described, then **Check data on Kaggle** (a few min
 
 | # | Test | Dataset | Expect | Status |
 |---|---|---|---|---|
-| 4.1 | Sentinel-2, Hugging Face | `giswqs/EuroSAT_MS`, 13 bands | 0 warnings, 10 classes, band means ~1000–2500 | **Real** (92.1 % after 5 epochs) |
-| 4.2 | Own files → Kaggle upload | A folder on this Mac with class subfolders of GeoTIFFs (e.g. a small Earth Engine export) | First run uploads a private Kaggle dataset, later runs reuse it; data check finds all classes | Never |
+| 4.1 | Sentinel-2, Hugging Face | `giswqs/EuroSAT_MS`, 13 bands | 0 warnings, 10 classes, band means ~1000–2500 | ✅ Real data: 0 warnings; 92.1 % (5 epochs) |
+| 4.2 | Own files → Kaggle upload | A folder on this Mac with class subfolders of GeoTIFFs (e.g. a small Earth Engine export) | First run uploads a private Kaggle dataset, later runs reuse it; data check finds all classes | ✅ GPU: 9 folders uploaded as private Kaggle datasets and trained (TEST 2–10) |
 | 4.3 | Earth Engine script | Dataset → "Get Sentinel-1/2 data from Google Earth Engine" → run the script in your GEE account | The exports land in Drive with the tab's band order; "Set this tab to match" fills it in | Never |
 | 4.4 | Cloud folder | Own files → in the cloud: a Drive link or gs:// bucket of the export | The machine fetches it; data check OK | Never (CI with file://) |
-| 4.5 | Multi-label | A labels CSV (or BigEarthNet preset with a BigEarthNet subset) | Classes read from the CSV; micro F1 / mAP after training | CI |
-| 4.6 | Extra outputs | Labels CSV with a class column + a number column; Dataset → Extra outputs → add "numbers" with that column | Design needs two Outputs; results show both scores | CI |
-| 4.7 | Regression | Task Regression, labels CSV with a numeric column (e.g. a biomass or yield table you have) | Read labels lists the numeric columns; R² / scatter after training | CI |
+| 4.5 | Multi-label | A labels CSV (or BigEarthNet preset with a BigEarthNet subset) | Classes read from the CSV; micro F1 / mAP after training | ✅ GPU: TEST 4, micro F1 / mAP 1.0 |
+| 4.6 | Extra outputs | Labels CSV with a class column + a number column; Dataset → Extra outputs → add "numbers" with that column | Design needs two Outputs; results show both scores | ✅ GPU: TEST 3, class 100 %, biomass R² 0.987, wet 97.5 % |
+| 4.7 | Regression | Task Regression, labels CSV with a numeric column (e.g. a biomass or yield table you have) | Read labels lists the numeric columns; R² / scatter after training | ✅ GPU: TEST 2, R² 0.998 (data check: both targets, 0 warnings) |
 | 4.8 | Segmentation, scene | Earth Engine scene + WorldCover label (layout "large images + label image"), test tiles "strip" | Tiles counted; mIoU after training | CI |
-| 4.9 | Fusion S2 + S1 | Second band group Sentinel-1 from a twin folder | Data check shows 2 groups; mid fusion trains | CI |
-| 4.10 | Own sizes | Same, tick "its own image size" (e.g. S1 at half) | Input 2 has the smaller size; an Input for all bands is refused | CI |
-| 4.11 | Before / after pairs | Two folders of the same bands at two dates, same file names | Accepted (names repeat); Siamese design trains | CI |
-| 4.12 | Time series | Tick "a time series", dates per sample; .npy (dates, bands, H, W) or GeoTIFF date by date | Input (bands, dates, H, W); data check pictures = median date | CI |
-| 4.13 | Detection | A YOLO-format set (images/ + labels/ .txt; e.g. a ship / car / building set from Kaggle or Roboflow, exported as YOLO) | Classes typed in label order; data check counts boxes per class | CI |
+| 4.9 | Fusion S2 + S1 | Second band group Sentinel-1 from a twin folder | Data check shows 2 groups; mid fusion trains | ✅ GPU: TEST 4 (S1 stacked with S2) |
+| 4.10 | Own sizes | Same, tick "its own image size" (e.g. S1 at half) | Input 2 has the smaller size; an Input for all bands is refused | ✅ GPU: TEST 5, S1 16×16 next to S2 32×32: 100 % |
+| 4.11 | Before / after pairs | Two folders of the same bands at two dates, same file names | Accepted (names repeat); Siamese design trains | ✅ GPU: TEST 6, Siamese 100 % (constant lr) |
+| 4.12 | Time series | Tick "a time series", dates per sample; .npy (dates, bands, H, W) or GeoTIFF date by date | Input (bands, dates, H, W); data check pictures = median date | ✅ GPU: TEST 7 (100 %, data check 0 warnings), TEST 8 (crop map 95.0 %, mIoU 0.869) |
+| 4.13 | Detection | A YOLO-format set (images/ + labels/ .txt; e.g. a ship / car / building set from Kaggle or Roboflow, exported as YOLO) | Classes typed in label order; data check counts boxes per class | ✅ GPU: TEST 9, data check 191 / 200 boxes, mAP@0.5 0.951 |
 | 4.14 | Class balance | Any unbalanced set → Read folder / Read labels | Counts per class and a 3:1 warning | CI |
 
 ## 5. Train tab settings (each needs one short **GPU** run, 3–5 epochs)
@@ -89,11 +92,11 @@ Each: set the Dataset tab as described, then **Check data on Kaggle** (a few min
 | # | Test | Steps | Expect | Status |
 |---|---|---|---|---|
 | 5.1 | Recipe | Use recommended → train | Cosine lr curve, warm-up visible in the lr of each epoch | CI |
-| 5.2 | Losses | Focal (classification), Dice + CE (segmentation), Huber (regression) | Run starts; Results say "Trained with … loss" | CI |
-| 5.3 | Custom loss | Loss: your own (Python) → keep the example | Run trains; a broken function gives a clear error | CI |
-| 5.4 | Class weights | Unbalanced classes: inverse frequency | Log lists the weights; rare-class recall rises | CI |
-| 5.5 | Thresholds | Multi-label + "a threshold per class" | Results list the thresholds | CI |
-| 5.6 | ImageNet weights + LoRA | ResNet-18 demo, weights resnet18, "train only the new layers"; or ViT-B/16 + LoRA on attention | Start event: far fewer trainable parameters; accuracy close to full fine-tuning | CI (weights load), Never (LoRA on a real GPU) |
+| 5.2 | Losses | Focal (classification), Dice + CE (segmentation), Huber (regression) | Run starts; Results say "Trained with … loss" | ✅ GPU: focal (TEST 1, 10), Dice + CE (TEST 8), Huber (TEST 2) |
+| 5.3 | Custom loss | Loss: your own (Python) → keep the example | Run trains; a broken function gives a clear error | ✅ GPU: TEST 6 |
+| 5.4 | Class weights | Unbalanced classes: inverse frequency | Log lists the weights; rare-class recall rises | ✅ GPU: sqrt (TEST 1), inverse 0.55 / 5.5 (TEST 10) |
+| 5.5 | Thresholds | Multi-label + "a threshold per class" | Results list the thresholds | ✅ GPU: TEST 4, threshold column in Results |
+| 5.6 | ImageNet weights + LoRA | ResNet-18 demo, weights resnet18, "train only the new layers"; or ViT-B/16 + LoRA on attention | Start event: far fewer trainable parameters; accuracy close to full fine-tuning | ✅ Real data: ViT-B/16 LoRA 93.6 % with 0.27 % of the weights trained vs full 96.8 % (after a fix) |
 | 5.7 | Save memory | ViT demo, "save memory" on | Run card memory drops, ~30 % slower | CI |
 | 5.8 | Seeds | 3 seeds → Compare selected → Export | Overlaid curves; CSV + LaTeX table with mean ± s.d. | CI |
 | 5.9 | GPU memory estimate | Change batch size | Estimate updates; warns above the target's memory | Real |
@@ -102,9 +105,9 @@ Each: set the Dataset tab as described, then **Check data on Kaggle** (a few min
 
 | # | Test | Steps | Expect | Status |
 |---|---|---|---|---|
-| 6.1 | Kaggle | Any design, Train on Kaggle | Live curves every 30 s; results downloaded; long project names work | **Real** |
+| 6.1 | Kaggle | Any design, Train on Kaggle | Live curves every 30 s; results downloaded; long project names work | ✅ Real: 15 runs on Kaggle (2 at a time: Kaggle's limit) |
 | 6.2 | College server (SSH) | Connection → add the server → Prepare → Train | SLURM / systemd / tmux chosen; run survives closing the app; results come back | Never |
-| 6.3 | Several GPUs | On a machine with ≥ 2 GPUs: GPUs = all → Train | Start event `gpus: N`; epochs ~N× faster; one set of curves | Never (CI with 2 CPU processes) |
+| 6.3 | Several GPUs | On a machine with ≥ 2 GPUs: GPUs = all → Train | Start event `gpus: N`; epochs ~N× faster; one set of curves | ✅ Real: Kaggle T4 x2, TEST 2: 2 workers, R² 0.998 in 20 s (after a fix: it did not exit) |
 | 6.4 | Several GPUs, stop | Same, press Stop mid-epoch | All workers stop; results written | Never (CI: spot notice) |
 | 6.5 | AWS on demand | Connection → AWS instance → Train | The app starts the instance, the run stops it at the end | Never |
 | 6.6 | AWS spot | Persistent spot request, interruption behaviour stop | After an interruption the run resumes by itself at the same batch | Never (CI: resume path) |
@@ -114,14 +117,14 @@ Each: set the Dataset tab as described, then **Check data on Kaggle** (a few min
 
 | # | Test | After a run of | Expect | Status |
 |---|---|---|---|---|
-| 7.1 | Classification | 4.1 | Accuracy, top-5, per-class, confusion matrix, Grad-CAM, mistakes | Real |
-| 7.2 | Multi-label | 4.5 | Micro / macro F1, mAP, exact match, per-class table, ✓ ✗ ○ samples | CI |
-| 7.3 | Regression | 4.7 | R², MAE, RMSE cards, per-target table, scatter plot, samples with both numbers | CI |
-| 7.4 | Segmentation | 4.8 | Pixel accuracy, mIoU, IoU per class, image / true / predicted masks | CI |
-| 7.5 | Detection | 4.13 | mAP@0.5, mAP@0.5:0.95, AP per class, images with green (found) and dashed (true) boxes | CI |
-| 7.6 | Extra outputs | 4.6 | "Extra outputs" table under the main cards | CI |
-| 7.7 | Early exits | A classifier with an Early exit | "Early exits" table: accuracy per exit, share leaving early | CI |
-| 7.8 | Data check | Any "Check data" | Sizes, counts, bands, warnings, sample images | Real |
+| 7.1 | Classification | 4.1 | Accuracy, top-5, per-class, confusion matrix, Grad-CAM, mistakes | ✅ Window: TEST 1 (confusion matrix, per class, mistakes, class weights, focal) |
+| 7.2 | Multi-label | 4.5 | Micro / macro F1, mAP, exact match, per-class table, ✓ ✗ ○ samples | ✅ Window: TEST 4 (micro / macro F1, mAP, exact match, thresholds) |
+| 7.3 | Regression | 4.7 | R², MAE, RMSE cards, per-target table, scatter plot, samples with both numbers | ✅ Window: TEST 2 (R², MAE, RMSE, scatter plot, Huber) |
+| 7.4 | Segmentation | 4.8 | Pixel accuracy, mIoU, IoU per class, image / true / predicted masks | ✅ Window: TEST 8 (mIoU, masks, Dice + CE) |
+| 7.5 | Detection | 4.13 | mAP@0.5, mAP@0.5:0.95, AP per class, images with green (found) and dashed (true) boxes | ✅ Window: TEST 9 (mAP cards, boxes "2 found · 2 true"; a stray classification section removed) |
+| 7.6 | Extra outputs | 4.6 | "Extra outputs" table under the main cards | ✅ Window: TEST 3 (Extra outputs table) |
+| 7.7 | Early exits | A classifier with an Early exit | "Early exits" table: accuracy per exit, share leaving early | ✅ Window: TEST 1 (exit 79.3 %; 23.8 % could stop there at 83.8 %) |
+| 7.8 | Data check | Any "Check data" | Sizes, counts, bands, warnings, sample images | ✅ Window: data checks of TEST 2, 7, 9 |
 | 7.9 | Export | "Also save … TorchScript and ONNX" | model.ts and model.onnx in Show files | CI |
 
 ## 8. Real-data experiments worth running (each a real test of a new feature)
@@ -133,7 +136,8 @@ Each: set the Dataset tab as described, then **Check data on Kaggle** (a few min
 4. **Biomass / yield regression:** patches with a number each (labels CSV), Huber loss; read R² and the scatter plot.
 5. **Ships or cars:** a YOLO-format detection set; Detection output on a ¼-size map; read mAP@0.5.
 6. **LoRA vs full fine-tuning:** ViT-B/16 with ImageNet weights on EuroSAT RGB: full fine-tuning against LoRA rank 4 on attention
-   (trainable parameters, accuracy, time).
+   (trainable parameters, accuracy, time). ✅ Done 6 Nov (1 epoch, 4,000 images, T4): LoRA 93.6 % training 228,874 weights (0.27 %),
+   full 96.8 % training 85.8 M; about 100 s per epoch both.
 
 ## 9. Known limits (expected, not bugs)
 
@@ -147,4 +151,16 @@ Each: set the Dataset tab as described, then **Check data on Kaggle** (a few min
 | Date | Test # | Result | Notes / run id |
 |---|---|---|---|
 | 2026-11-06 | 4.1, 6.1, 7.1, 7.8 | ✅ | EuroSAT-MS on Kaggle T4: data check 0 warnings (20261106-114810-check); 92.1 % (20261106-115114) |
+| 2026-11-06 | 5.6, 8.6 | ✅ | TEST 11 ViT-B/16 + LoRA 93.6 % (20261106-204440); TEST 12 full fine-tuning 96.8 % (20261106-204235); real EuroSAT RGB |
+| 2026-11-06 | 2.x, 7.1, 7.7 | ✅ | TEST 1 hybrid with every new block, real EuroSAT-MS 13 bands: 83.7 %, exit 79.3 % (20261106-205440) |
+| 2026-11-06 | 4.2, 4.7, 6.3 | ✅ | TEST 2: data check (20261106-205650-check); 2 GPUs: trained in 28 s but never exited (205947, cancelled) → fixed; again 214127: R² 0.998, ended by itself |
+| 2026-11-06 | 4.6, 7.6 | ✅ | TEST 3 extra outputs (20261106-210609) |
+| 2026-11-06 | 4.5, 4.9, 5.5, 7.2 | ✅ | TEST 4 multi-label + S1 (20261106-211340) |
+| 2026-11-06 | 4.10 | ✅ | TEST 5 own sizes 100 % (20261106-211652) |
+| 2026-11-06 | 4.11, 5.3 | ✅ | TEST 6 Siamese + custom loss: 62.5 % with cosine / batch 32 (212212, learning slowly); 100 % with constant lr / batch 16 (214630) |
+| 2026-11-06 | 4.12, 7.8 | ✅ | TEST 7 time series: data check (212428-check); 50 % with cosine / batch 32 (214303); 100 % with constant lr / batch 16 (215322) |
+| 2026-11-06 | 4.12, 5.2, 7.4 | ✅ | TEST 8 crop map 95.0 %, mIoU 0.869 (20261106-213013) |
+| 2026-11-06 | 4.13, 7.5 | ✅ | TEST 9 detection: data check (213229-check), mAP@0.5 0.951, @0.5:0.95 0.628 (213439) |
+| 2026-11-06 | 5.2, 5.4 | ✅ | TEST 10 unbalanced: weights 0.55 / 5.5, focal, 100 % (20261106-213656) |
+| 2026-11-06 | — | fixed | Found by these tests: LoRA + ImageNet weights refused (fixed, CI); block summaries missing positions / LoRA; a poll error stayed on finished runs; several GPUs did not exit; a stray section on detection results |
 | | | | |
