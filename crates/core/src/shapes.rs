@@ -78,6 +78,9 @@ pub fn limits(kind: &str) -> &'static [(&'static str, i64, i64)] {
         "groupnorm" => &[("groups", 1, MAX_FILTERS)],
         "attention" => &[("heads", 1, MAX_HEADS)],
         "dense" => &[("units", 1, 1 << 20)],
+        "conv3d" => &[("filters", 1, MAX_FILTERS), ("kernel", 1, 15), ("tkernel", 1, 15), ("stride", 1, 8)],
+        "lstm" | "gru" => &[("units", 1, 1 << 16)],
+        "conv1d" => &[("filters", 1, MAX_FILTERS), ("kernel", 1, 31), ("stride", 1, 16)],
         _ => &[],
     }
 }
@@ -113,7 +116,9 @@ fn out_of_range(node: &Node) -> Option<String> {
     None
 }
 pub fn int(p: &Map<String, Value>, key: &str, default: i64, lo: i64, hi: i64) -> usize {
-    let v = p.get(key).and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))).map(|f| f.round() as i64).unwrap_or(default);
+    // (a pair where one number is meant: its first value, never the default in silence)
+    let v = p.get(key).and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+        .or_else(|| v.as_array().and_then(|a| a.first()).and_then(|x| x.as_f64()))).map(|f| f.round() as i64).unwrap_or(default);
     v.clamp(lo, hi) as usize
 }
 
@@ -317,9 +322,11 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
             }
             if node.kind == "seg_output" {
                 if let Some(o) = r.out.clone() {
-                    if o[1] != input_shape[1] || o[2] != input_shape[2] {
+                    // the masks have the images' height and width (the last two sizes, also of a time series)
+                    let (mh, mw) = (input_shape[input_shape.len() - 2], input_shape[input_shape.len() - 1]);
+                    if o[1] != mh || o[2] != mw {
                         err(&mut r, &format!("The masks are {}×{} but this output is {}×{}: the decoder must return to the input size (Upsample / ConvTranspose2D).",
-                            input_shape[1], input_shape[2], o[1], o[2]));
+                            mh, mw, o[1], o[2]));
                         r.out = None;
                     }
                 }
@@ -405,10 +412,13 @@ fn macs(r: &NodeResult, bias: bool) -> u64 {
     let prod = |v: &[usize]| v.iter().map(|&x| x as u64).product::<u64>();
     match r.kind.as_str() {
         // weights (without the bias) × output positions; the output's first dimension is the channels
-        "conv2d" | "dwconv2d" => {
+        "conv2d" | "dwconv2d" | "conv3d" => {
             let w = r.params.saturating_sub(if bias { out[0] as u64 } else { 0 });
             w * prod(&out[1..])
         }
+        // a weight per (step, feature) pair along the sequence
+        "conv1d" => r.params.saturating_sub(if bias { out[1] as u64 } else { 0 }) * out[0] as u64,
+        "lstm" | "gru" => r.params * out[0] as u64,
         "seg_output" => r.params.saturating_sub(out[0] as u64) * prod(&out[1..]),
         // every input position meets every weight
         "convtranspose2d" => r.params.saturating_sub(out[0] as u64) * inp.map(|x| prod(&x[1..])).unwrap_or(0),
@@ -441,7 +451,7 @@ fn warn(r: &mut NodeResult, m: &str) {
 
 /// the kinds whose layer has weights another block can share
 pub const SHAREABLE: &[&str] = &["conv2d", "dwconv2d", "convtranspose2d", "dense", "batchnorm", "layernorm", "groupnorm", "attention", "cls_pos",
-    "custom", "output", "seg_output"];
+    "custom", "output", "seg_output", "conv3d", "lstm", "gru", "conv1d", "temporal_pool"];
 
 /// a Shared-weights block: the shape the shared block's layer gives on this input (which must have the shape that block's input has,
 /// or the weights would not fit); no parameters of its own
@@ -517,8 +527,12 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
     let x = ins[0].clone();
     let is3 = x.len() == 3;
     let is2 = x.len() == 2;
+    let is4 = x.len() == 4;
     let need3 = |r: &mut NodeResult| {
-        if x.len() == 2 {
+        if x.len() == 4 {
+            err(r, &format!("{} needs an image (channels, height, width), but its input is a time series (channels, dates, height, width) {}. \
+                Put Temporal pool (or To sequence) before it, or use Conv3D.", r.title, fmt(&x)));
+        } else if x.len() == 2 {
             err(r, &format!("{} needs an image (channels, height, width), but its input is a sequence of tokens {}. Put it before To tokens.", r.title, fmt(&x)));
         } else {
             err(r, &format!("{} needs an image (channels, height, width), but its input is already flat {}. Put it before Flatten / Global pool.", r.title, fmt(&x)));
@@ -557,7 +571,97 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
     };
     let id: &'a str = node.id.as_str();
     rfs.insert(id, rf_in);
+    // a time series (C, T, H, W) goes through these blocks only; the others need an image, tokens or a vector
+    if is4 && !matches!(k, "conv3d" | "temporal_pool" | "to_sequence" | "batchnorm" | "dropout" | "activation" | "add" | "subtract" | "multiply"
+        | "concat" | "flatten" | "global_pool" | "custom") {
+        need3(r);
+        return None;
+    }
     let out = match k {
+        "conv3d" => {
+            if !is4 {
+                err(r, &format!("Conv3D needs a time series (channels, dates, height, width), but its input is {}.", fmt(&x)));
+                return None;
+            }
+            let kernel = pair(p, "kernel", 3, 1, 15);
+            let tk = int(p, "tkernel", 3, 1, 15);
+            let stride = pair(p, "stride", 1, 1, 8);
+            let same = text(p, "padding", &["same", "valid"], "same") == "same";
+            if same && (tk.is_multiple_of(2) || kernel.iter().any(|k| k.is_multiple_of(2))) {
+                err(r, "'same' keeps the dates and the size with odd kernels only (3, 5, ...): use an odd kernel, or valid.");
+                return None;
+            }
+            let (pt, ph, pw) = if same { (tk / 2, kernel[0] / 2, kernel[1] / 2) } else { (0, 0, 0) };
+            let side = |n: usize, k: usize, s: usize, p: usize| ((n + 2 * p) as i64 - k as i64) / s as i64 + 1;
+            let (ot, oh, ow) = (side(x[1], tk, 1, pt), side(x[2], kernel[0], stride[0], ph), side(x[3], kernel[1], stride[1], pw));
+            r.formula = vec![format!("dates:  {} + 2×{pt} − {tk} + 1 = {ot}", x[1]),
+                format!("height: floor(({} + 2×{ph} − {}) / {}) + 1 = {oh}", x[2], kernel[0], stride[0]),
+                format!("width:  floor(({} + 2×{pw} − {}) / {}) + 1 = {ow}", x[3], kernel[1], stride[1])];
+            r.padding = Some([ph, pw]);
+            r.stride = Some(stride);
+            if ot < 1 || oh < 1 || ow < 1 {
+                err(r, &format!("The input {} is too small for a {tk}×{}×{} window (dates × height × width).", fmt(&x), kernel[0], kernel[1]));
+                return None;
+            }
+            let f = int(p, "filters", 16, 1, MAX_FILTERS);
+            let bias = p.get("bias").and_then(|v| v.as_bool()).unwrap_or(true) as u64;
+            r.params = (x[0] * tk * kernel[0] * kernel[1]) as u64 * f as u64 + bias * f as u64;
+            vec![f, ot as usize, oh as usize, ow as usize]
+        }
+        "temporal_pool" => {
+            if !is4 {
+                err(r, &format!("Temporal pool needs a time series (channels, dates, height, width), but its input is {}.", fmt(&x)));
+                return None;
+            }
+            if text(p, "mode", &["mean", "max", "attention"], "attention") == "attention" {
+                r.params = x[0] as u64 + 1; // a score per date and pixel from the channels (a 1×1×1 convolution)
+            }
+            vec![x[0], x[2], x[3]]
+        }
+        "to_sequence" => {
+            if !is4 {
+                err(r, &format!("To sequence needs a time series (channels, dates, height, width), but its input is {}.", fmt(&x)));
+                return None;
+            }
+            // the mean over the pixels of each date: one vector of the channels per date
+            vec![x[1], x[0]]
+        }
+        "lstm" | "gru" => {
+            if !is2 {
+                err(r, &format!("{} needs a sequence (steps, features), e.g. after To sequence, but its input is {}.", r.title, fmt(&x)));
+                return None;
+            }
+            let h = int(p, "units", 64, 1, 1 << 16);
+            let dirs = if p.get("bidirectional").and_then(|v| v.as_bool()).unwrap_or(false) { 2 } else { 1 };
+            let gates = if k == "lstm" { 4 } else { 3 };
+            // per direction: input and hidden weights of every gate, and PyTorch's two bias vectors
+            r.params = (dirs * gates * (h * (x[1] + h) + 2 * h)) as u64;
+            vec![x[0], h * dirs]
+        }
+        "conv1d" => {
+            if !is2 {
+                err(r, &format!("Conv1D works along a sequence (steps, features), e.g. after To sequence, but its input is {}.", fmt(&x)));
+                return None;
+            }
+            let kk = int(p, "kernel", 3, 1, 31);
+            let s = int(p, "stride", 1, 1, 16);
+            let same = text(p, "padding", &["same", "valid"], "same") == "same";
+            if same && kk.is_multiple_of(2) {
+                err(r, "'same' keeps the length with an odd kernel only: use 3, 5, ... or valid.");
+                return None;
+            }
+            let pd = if same { kk / 2 } else { 0 };
+            let ot = ((x[0] + 2 * pd) as i64 - kk as i64) / s as i64 + 1;
+            r.formula = vec![format!("steps: floor(({} + 2×{pd} − {kk}) / {s}) + 1 = {ot}", x[0])];
+            if ot < 1 {
+                err(r, &format!("The sequence has {} steps, too few for a kernel of {kk}.", x[0]));
+                return None;
+            }
+            let f = int(p, "filters", 64, 1, MAX_FILTERS);
+            let bias = p.get("bias").and_then(|v| v.as_bool()).unwrap_or(true) as u64;
+            r.params = (x[1] * kk) as u64 * f as u64 + bias * f as u64;
+            vec![ot as usize, f]
+        }
         "conv2d" | "dwconv2d" => {
             if !is3 {
                 need3(r);
@@ -633,7 +737,7 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
             vec![f, oh as usize, ow as usize]
         }
         "global_pool" => {
-            if !is3 {
+            if !is3 && !is4 {
                 need3(r);
                 return None;
             }
@@ -688,6 +792,10 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
             x.clone()
         }
         "batchnorm" | "layernorm" => {
+            if k == "layernorm" && is4 {
+                need3(r);
+                return None;
+            }
             if k == "batchnorm" && is2 {
                 err(r, "BatchNorm is for images and vectors; use LayerNorm on a sequence of tokens.");
                 return None;
@@ -734,12 +842,15 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
                 need2(r);
                 return None;
             }
+            text(p, "mode", &["cls", "mean", "last"], "cls");
             vec![x[1]]
         }
         "dropout" | "activation" => x.clone(),
         "flatten" => {
             if is2 {
                 vec![x[0] * x[1]]
+            } else if is4 {
+                vec![x[0] * x[1] * x[2] * x[3]]
             } else if !is3 {
                 warn(r, "The input is already flat: Flatten does nothing here.");
                 x.clone()
@@ -820,7 +931,14 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
                 err(r, "Concat cannot join an image and a flat vector.");
                 return None;
             }
-            if is3 {
+            if is4 {
+                if ins.iter().any(|s| s[1..] != x[1..]) {
+                    err(r, &format!("Concat joins time series along channels, so dates, height and width must match, but they are {}.",
+                        ins.iter().map(|s| fmt(&s[1..])).collect::<Vec<_>>().join(" and ")));
+                    return None;
+                }
+                vec![ins.iter().map(|s| s[0]).sum(), x[1], x[2], x[3]]
+            } else if is3 {
                 if ins.iter().any(|s| s[1] != x[1] || s[2] != x[2]) {
                     err(r, &format!("Concat joins along channels, so height and width must match, but they are {}.",
                         ins.iter().map(|s| format!("{}×{}", s[1], s[2])).collect::<Vec<_>>().join(" and ")));

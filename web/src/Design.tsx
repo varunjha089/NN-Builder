@@ -14,6 +14,7 @@ export const COLORS: Record<string, string> = {
   batchnorm: "#8e5bb5", layernorm: "#7d4fa3", groupnorm: "#a066c9", repeat: "#0e7490", dropout: "#9c6ac6", flatten: "#9a8c1c", dense: "#4b5bb5", activation: "#6c7a89", add: "#c0392b",
   concat: "#a93226", multiply: "#b03a5b", output: "#2e8b57", seg_output: "#1f7a4d",
   to_tokens: "#0f766e", cls_pos: "#0e7490", attention: "#7c3aed", token_pool: "#0369a1", custom: "#475569", subtract: "#9b2c2c", shared: "#64748b",
+  conv3d: "#b45309", temporal_pool: "#047857", to_sequence: "#0f766e", conv1d: "#c2410c", lstm: "#6d28d9", gru: "#7e22ce",
 };
 const GROUPS: [string, string[]][] = [
   ["Image", ["conv2d", "dwconv2d", "pool2d", "global_pool", "flatten"]],
@@ -21,6 +22,7 @@ const GROUPS: [string, string[]][] = [
   ["Dense and outputs", ["dense", "output", "seg_output"]],
   ["Normalise / regularise", ["batchnorm", "layernorm", "groupnorm", "dropout", "activation"]],
   ["Transformer", ["to_tokens", "cls_pos", "attention", "token_pool"]],
+  ["Time series", ["conv3d", "temporal_pool", "to_sequence", "conv1d", "lstm", "gru"]],
   ["Branches", ["add", "concat", "multiply", "subtract", "shared"]],
   ["Your own", ["custom"]],
 ];
@@ -46,10 +48,15 @@ function summary(kind: string, p: Params): string {
     case "to_tokens": return p.mode === "rows" ? "rows as tokens" : "pixels/patches as tokens";
     case "cls_pos": return p.cls === false ? "position embedding" : "class token + position embedding";
     case "attention": return `${p.heads} heads${Number(p.dropout) > 0 ? ` · dropout ${p.dropout}` : ""}`;
-    case "token_pool": return p.mode === "mean" ? "mean of tokens" : "class token";
+    case "token_pool": return p.mode === "mean" ? "mean of tokens" : p.mode === "last" ? "last step" : "class token";
     case "custom": return p.class ? `class ${p.class}` : "choose a class";
     case "output": return Number(p.head ?? 0) > 0 ? `output ${p.head}` : "";
     case "subtract": return p.abs ? "|a − b|" : "a − b";
+    case "conv3d": return `${p.filters} filters · ${p.tkernel} dates × ${k2(n2(p.kernel))} · ${p.padding} · ${p.activation}`;
+    case "temporal_pool": return `${p.mode} over the dates`;
+    case "to_sequence": return "one vector per date";
+    case "lstm": case "gru": return `${p.units} units${p.bidirectional ? " · both directions" : ""}`;
+    case "conv1d": return `${p.filters} filters · kernel ${p.kernel} · stride ${p.stride ?? 1} · ${p.activation}`;
     case "shared": return p.of ? "the weights of another block" : "choose the block";
     default: return "";
   }
@@ -811,9 +818,32 @@ function Inspector({ node, result, analysis, graph, st, setParam, setParams, can
           <Num label="Dropout" value={p.dropout} min={0} max={0.9} step={0.05} onChange={(v) => setParam("dropout", v)} />
           <p className="muted">Every token looks at every other token (multi-head self-attention). The token dimension must divide evenly by the number of heads. Parameters: 4·d² + 4·d.</p>
         </>}
-        {node.kind === "token_pool" && <Sel label="Use" value={p.mode} options={[["cls", "the class token (ViT)"], ["mean", "the mean of all tokens"]]} onChange={(v) => setParam("mode", v)} />}
+        {node.kind === "token_pool" && <Sel label="Use" value={p.mode} options={[["cls", "the class token (ViT)"], ["mean", "the mean of all tokens"], ["last", "the last step (after an LSTM / GRU)"]]} onChange={(v) => setParam("mode", v)} />}
         {node.kind === "activation" && <Sel label="Function" value={p.fn} options={acts.filter(([a]) => a !== "none")} onChange={(v) => setParam("fn", v)} />}
         {node.kind === "layernorm" && <p className="muted">On an image it normalises over (channels, height, width) (GroupNorm with one group); on a vector, over its features.</p>}
+        {node.kind === "conv3d" && <>
+          <Num label="Filters" value={p.filters} max={65536} onChange={(v) => setParam("filters", v)} />
+          <Pair label="Kernel (pixels)" value={p.kernel} max={15} onChange={(v) => setParam("kernel", v)} />
+          <Num label="Dates per window" value={p.tkernel} min={1} max={15} onChange={(v) => setParam("tkernel", v)} />
+          <Pair label="Stride (pixels)" value={p.stride} max={8} def={1} onChange={(v) => setParam("stride", v)} />
+          <Sel label="Padding" value={String(p.padding ?? "same")} options={[["same", "same (keep dates and size; odd kernels)"], ["valid", "valid (none)"]]} onChange={(v) => setParam("padding", v)} />
+          <Sel label="Activation" value={p.activation} options={acts} onChange={(v) => setParam("activation", v)} />
+          <p className="muted">A convolution over dates and pixels at once: each filter sees a few neighbouring dates of a small window.</p></>}
+        {node.kind === "temporal_pool" && <>
+          <Sel label="Combine the dates by" value={String(p.mode ?? "attention")} options={[["attention", "attention (learnt weights per pixel, U-TAE)"], ["mean", "mean"], ["max", "maximum"]]} onChange={(v) => setParam("mode", v)} />
+          <p className="muted">(channels, dates, height, width) → (channels, height, width): after it every image block works, e.g. a decoder to a crop-type map.</p></>}
+        {node.kind === "to_sequence" && <p className="muted">(channels, dates, height, width) → (dates, channels): the mean of every date's pixels. Then
+          Conv1D, LSTM / GRU or the transformer blocks work along the dates (a time series of the whole patch).</p>}
+        {(node.kind === "lstm" || node.kind === "gru") && <>
+          <Num label="Units" value={p.units} max={65536} onChange={(v) => setParam("units", v)} />
+          <label className="chk"><input type="checkbox" checked={!!p.bidirectional} onChange={(e) => setParam("bidirectional", e.target.checked)} />both directions (twice the units out)</label>
+          <p className="muted">A recurrent layer along the steps; it gives its output at every step (Token pool “last” or “mean” makes one vector).</p></>}
+        {node.kind === "conv1d" && <>
+          <Num label="Filters" value={p.filters} max={65536} onChange={(v) => setParam("filters", v)} />
+          <Num label="Kernel (steps)" value={p.kernel} min={1} max={31} onChange={(v) => setParam("kernel", v)} />
+          <Num label="Stride" value={p.stride ?? 1} min={1} max={16} onChange={(v) => setParam("stride", v)} />
+          <Sel label="Padding" value={String(p.padding ?? "same")} options={[["same", "same (odd kernels)"], ["valid", "valid"]]} onChange={(v) => setParam("padding", v)} />
+          <Sel label="Activation" value={p.activation} options={acts} onChange={(v) => setParam("activation", v)} /></>}
         {node.kind === "subtract" && <><label className="chk"><input type="checkbox" checked={!!p.abs} onChange={(e) => setParam("abs", e.target.checked)} />
           absolute difference |a − b|</label>
           <p className="muted">The first input minus the second (the order of the arrows); equal shapes. In a Siamese change-detection network the

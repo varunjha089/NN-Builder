@@ -389,6 +389,56 @@ def siamese(root):
     print(f"siamese: before/after pairs, shared encoder ({app_params} parameters, counted once), |a - b|, test accuracy {done['test_acc']}")
 
 
+PEAK = {"early": [0.2, 1.0, 1.6, 1.0, 0.2, 0.0], "late": [0.0, 0.2, 1.0, 1.6, 1.0, 0.2]}   # b1 over 6 dates: the same mean, a different order
+
+
+def series(kind, rng, shape):
+    """6 dates × 2 bands of one crop: b1 follows the crop's season, b2 is noise; plus a random brightness per place"""
+    a = rng.normal(0, 0.3, size=(6, 2) + shape).astype(np.float32) + rng.uniform(-1, 1)
+    a[:, 0] += np.array(PEAK[kind], dtype=np.float32).reshape(6, *([1] * len(shape)))
+    return a
+
+
+def make_timeseries(root):
+    import tifffile
+    rng = np.random.default_rng(16)
+    for kind in ("early", "late"):
+        os.makedirs(os.path.join(root, "ts_seq", "train", kind), exist_ok=True)
+        for i in range(150):
+            np.save(os.path.join(root, "ts_seq", "train", kind, f"{i}.npy"), series(kind, rng, (16, 16)))   # (dates, bands, H, W)
+    for part in ("images", "masks"):
+        os.makedirs(os.path.join(root, "ts_seg", part), exist_ok=True)
+    for i in range(80):
+        # fields: the left half one crop, the right half the other (which is which at random), a 3-pixel border of background
+        left, right = ("early", "late") if rng.random() < 0.5 else ("late", "early")
+        a = rng.normal(0, 0.3, size=(6, 2, 16, 16)).astype(np.float32)
+        mask = np.zeros((16, 16), dtype=np.int64)
+        for kind, cols in ((left, slice(3, 8)), (right, slice(8, 13))):
+            a[:, 0, 3:13, cols] += np.array(PEAK[kind], dtype=np.float32)[:, None, None]
+            mask[3:13, cols] = 1 if kind == "early" else 2
+        tifffile.imwrite(os.path.join(root, "ts_seg", "images", f"f{i}.tif"), a.reshape(12, 16, 16))   # bands date by date
+        np.save(os.path.join(root, "ts_seg", "masks", f"f{i}.npy"), mask)
+
+
+def timeseries(root):
+    """the order of the dates is learnt (a sequence path), and a crop map per pixel from Conv3D + temporal attention"""
+    root = os.path.abspath(root)
+    make_timeseries(os.path.join(root, "own"))
+    data = os.path.join(root, "data")
+    ev = run(os.path.join(root, "ts_seq"), data, "ts_seq")
+    assert next(e for e in ev if e["event"] == "check")["batch"][1:] == [2, 6, 16, 16]
+    st = json.load(open(os.path.join(root, "ts_seq", "band_stats.json")))
+    assert len(st["mean"]) == 2 and 0.3 < st["mean"][0] < 1.0, f"b1's mean over all dates: {st}"
+    done = next(e for e in ev if e["event"] == "done")
+    assert done["test_acc"] >= 0.9, f"ts_seq: {done}"
+    res = json.load(open(os.path.join(root, "ts_seq", "results.json")))
+    assert len(res["samples"][0]["image"]) == 3, "a composite picture of the dates"
+    ev = run(os.path.join(root, "ts_seg"), data, "ts_seg")
+    done2 = next(e for e in ev if e["event"] == "done")
+    assert done2["test_acc"] >= 0.85 and done2["miou"] >= 0.6, f"ts_seg: {done2}"
+    print(f"timeseries: sequence path accuracy {done['test_acc']}; crop map (GeoTIFF date by date) pixel accuracy {done2['test_acc']}, mIoU {done2['miou']}")
+
+
 def custom_blocks(root):
     """the design's own PyTorch classes train like any block, the custom loss is used, and a wrong '# out:' line stops the run at the
     one-batch check with a message naming the block"""
@@ -596,6 +646,7 @@ if __name__ == "__main__":
     custom_blocks(sys.argv[1])
     multitask(sys.argv[1])
     siamese(sys.argv[1])
+    timeseries(sys.argv[1])
     cloud(sys.argv[1])
     ben(sys.argv[1])
     pretrained_ms(sys.argv[1])

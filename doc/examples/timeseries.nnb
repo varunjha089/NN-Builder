@@ -1,0 +1,27 @@
+net "Time series net"
+# For a time series of satellite images: 4 bands × 6 dates × 32×32 pixels per sample (input (4, 6, 32, 32)). Two paths from the same
+# input: an image path (Conv3D over dates and pixels, then temporal attention per pixel to one image, then 2-D convolutions; U-TAE
+# style), and a sequence path (the mean of each date's pixels, then a 1-D convolution, an LSTM, a GRU and a transformer encoder over the
+# dates; TSViT style). Both end in one vector each, joined for the output. The tests build it and CI runs it in PyTorch.
+
+1 input
+2 conv3d 16 3x3 time 3
+3 bn
+4 conv3d 16 3x3 time 3 stride 2
+5 temporal_pool attention
+6 conv 32 3x3
+7 maxpool 2x2
+8 global_pool
+
+# the sequence path: one vector per date
+9 to_sequence <- 1
+10 conv1d 16 3
+11 lstm 16 bi
+12 gru 16
+13 cls_pos
+14 attention heads 2
+15 token_pool cls
+
+16 concat <- 8, 15
+17 dense 32
+18 output

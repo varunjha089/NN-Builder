@@ -124,6 +124,11 @@ pub struct Dataset {
     /// fills the top-left corner of its channels (NaN / 0 elsewhere), which the generated forward cuts out, so it may not be larger
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub image_size2: Vec<usize>,
+    /// time series: the number of dates per sample (0 = single images). Each file holds all dates: a .npy (dates, bands, H, W) or
+    /// (dates, H, W, bands), or a GeoTIFF whose bands go date by date (all bands of date 1, then date 2, ...); the network's input is
+    /// (bands, dates, height, width)
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub time_steps: usize,
 }
 
 /// Sentinel-2 L1C bands in the order EuroSAT-MS stores them (B8A last); `SENTINEL2_10_20` are the 10 m and 20 m bands
@@ -228,6 +233,10 @@ pub struct Head {
     pub weight: f64,
 }
 
+fn is_zero(v: &usize) -> bool {
+    *v == 0
+}
+
 fn one() -> f64 {
     1.0
 }
@@ -282,6 +291,7 @@ impl Default for Dataset {
             s1_db2: false,
             fuse_dir: String::new(),
             image_size2: vec![],
+            time_steps: 0,
         }
     }
 }
@@ -368,6 +378,7 @@ impl Dataset {
     pub fn input_shape(&self) -> Vec<usize> {
         match (self.source.as_str(), self.builtin_info()) {
             ("builtin", Some(b)) if !self.resize => b.shape.to_vec(),
+            _ if !self.bands.is_empty() && self.time_steps > 0 => vec![self.bands.len(), self.time_steps, self.image_size[0], self.image_size[1]],
             _ if !self.bands.is_empty() => vec![self.bands.len() + self.bands2.len(), self.image_size[0], self.image_size[1]],
             _ => vec![self.channels, self.image_size[0], self.image_size[1]],
         }
@@ -518,6 +529,23 @@ impl Dataset {
         }
         if !self.heads.is_empty() {
             p.extend(self.head_problems());
+        }
+        if self.time_steps > 0 {
+            if !self.multiband() {
+                p.push("A time series is a stack of satellite images: choose its bands (Dataset tab: bands).".into());
+            }
+            if self.time_steps < 2 || self.time_steps > 400 {
+                p.push("A time series has 2 to 400 dates per sample.".into());
+            }
+            if self.fused() {
+                p.push("Time series with a second band group are not supported yet: put all bands in one group.".into());
+            }
+            if self.source == "huggingface" {
+                p.push("Time series are read from files (own files or Kaggle), not from Hugging Face yet.".into());
+            }
+            if self.layout == "scene" {
+                p.push("Time series come as one file per sample (all dates in it), not as a large scene.".into());
+            }
         }
         if self.task == "segment" {
             match self.source.as_str() {

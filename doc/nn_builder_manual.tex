@@ -449,6 +449,14 @@ Self-attention & $(N,D)\rightarrow(N,D)$ & heads, dropout; multi-head scaled dot
 Token pool & $(N,D)\rightarrow(D)$ & the class token, or the mean of all tokens\\
 Output & $(n)\rightarrow(K)$ & $K$ = number of classes; softmax/cross-entropy is in the training script\\
 Segmentation output & $(C,H,W)\rightarrow(K,H,W)$ & a 1$\times$1 convolution giving a class score for every pixel; must match the mask size\\
+Conv3D & $(C,T,H,W)\rightarrow(F,T',H',W')$ & a time series: filters, kernel (pixels), dates per window, stride (pixels), padding same
+/ valid (Section~\ref{sec:timeseries})\\
+Temporal pool & $(C,T,H,W)\rightarrow(C,H,W)$ & the dates of every pixel combined: mean, maximum, or attention (weights learnt per
+pixel, as in U-TAE~\cite{garnot2021utae})\\
+To sequence & $(C,T,H,W)\rightarrow(T,C)$ & the mean of every date's pixels: one vector per date\\
+Conv1D & $(T,D)\rightarrow(T',F)$ & a convolution along a sequence: filters, kernel, stride, padding\\
+LSTM, GRU & $(T,D)\rightarrow(T,u)$ & recurrent layers along a sequence~\cite{hochreiter1997lstm}; units, both directions ($2u$ out); Token pool
+\emph{last} keeps the last step\\
 Subtract & equal shapes $\rightarrow$ same & the first input minus the second, or $|a-b|$: the difference of two branches (Siamese
 change detection)\\
 Shared weights & as the shared block & runs another block's layer, with the same weights, on its own input of the same shape; the weights
@@ -729,6 +737,32 @@ text \texttt{output 1}). Usually they share the body of the network and each has
 Output. The network returns all outputs; the run reports the main task as usual (and its score decides early stopping and the best
 epoch) and every extra output in a table: accuracy, micro F1 and mAP, or R$^2$, MAE and RMSE per number, in the numbers' own units. The
 Train tab's chart draws each output's validation score.
+
+\subsection{Time series of satellite images}
+\label{sec:timeseries}
+A field's crop shows in \emph{when} it greens up and is harvested, more than in any single image. A time series gives the network the
+same place at several dates. In the Dataset tab, after choosing the bands, tick \ui{a time series} and give the \ui{dates per sample}.
+Each file then holds one place at all its dates: a \file{.npy} of shape (dates, bands, height, width) (or (dates, height, width, bands)),
+or a GeoTIFF whose bands go date by date: all bands of the first date, then of the second, \dots{} (as Earth Engine exports a stack of
+monthly composites, \texttt{ee.ImageCollection.toBands()}). Class folders, a labels table (multi-label, regression, extra outputs) and
+images + masks (a crop-type map) all work; every band is normalised over all its dates, every date is resized like an image, and flips
+and turns apply to all dates alike. The result pictures show the median of the dates.
+
+The Input is then $(C, T, H, W)$: bands, dates, height, width. Image blocks do not take it directly; the Time series blocks do:
+\begin{itemize}[nosep]
+  \item \ui{Conv3D} convolves over neighbouring dates and pixels at once (\emph{dates per window}, e.g.\ 3);
+  \item \ui{Temporal pool} combines the dates of every pixel into one image $(C, H, W)$: the mean, the maximum, or \emph{attention}: a
+        score for every date and pixel from the pixel's channels, a softmax over the dates, and the weighted sum (the idea of
+        U-TAE~\cite{garnot2021utae}). After it every 2-D block works: convolutions, a U-Net decoder, a Segmentation output for a crop map;
+  \item \ui{To sequence} takes the mean of every date's pixels, one vector per date $(T, C)$: the time series of the whole patch. Then
+        \ui{Conv1D}, \ui{LSTM} and \ui{GRU} work along the dates, and so do the transformer blocks (Class token + position,
+        Self-attention, Token pool), which gives a small temporal transformer (as in TSViT~\cite{tarasiou2023tsvit}). Token pool's
+        \emph{last} keeps the last step of a recurrent layer.
+\end{itemize}
+Both kinds of path can start from the same Input and be joined (\file{doc/examples/timeseries.nnb}). BatchNorm, Dropout, the activations,
+Add / Subtract / Multiply, Concat (equal dates and size), Flatten and Global pool work on a time series too. Not yet: a date per image
+(the dates are taken as evenly spaced), missing dates, a second band group with a time series, Hugging Face time series, the Earth
+Engine script for a time stack.
 
 \subsection{Shared weights: Siamese networks and change detection}
 \label{sec:siamese}
@@ -1840,6 +1874,11 @@ not: no training results exist yet. Treat it as a starting point for experiments
 \bibitem{zhai2021scaling} X.~Zhai, A.~Kolesnikov, N.~Houlsby and L.~Beyer. Scaling Vision Transformers. 2021.
   \href{https://arxiv.org/abs/2106.04560}{arXiv:2106.04560}.
 
+\bibitem{garnot2021utae} V.~Sainte Fare Garnot and L.~Landrieu. Panoptic segmentation of satellite image time series with convolutional
+temporal attention networks. ICCV, 2021. arXiv:2107.07933.
+\bibitem{tarasiou2023tsvit} M.~Tarasiou, E.~Chavez and S.~Zafeiriou. ViTs for SITS: Vision transformers for satellite image time series. CVPR,
+2023. arXiv:2301.04944.
+\bibitem{hochreiter1997lstm} S.~Hochreiter and J.~Schmidhuber. Long short-term memory. Neural Computation 9(8), 1997.
 \end{thebibliography}
 
 \end{document}

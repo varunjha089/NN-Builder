@@ -367,6 +367,32 @@ the main task):
 7 output 2 <- 3            # extra output 2 (e.g. dry / wet)
 \end{verbatim}
 
+\subsubsection*{Time series: \texttt{conv3d}, \texttt{temporal\_pool}, \texttt{to\_sequence}, \texttt{conv1d}, \texttt{lstm}, \texttt{gru}}
+\begin{Verbatim}[fontsize=\small]
+LABEL conv3d FILTERS KxK [time T] [stride S] [same | valid] [ACTIVATION] [nobias]
+LABEL temporal_pool [attention | mean | max]           (also tpool)
+LABEL to_sequence                                       (also seq)
+LABEL conv1d FILTERS [KERNEL] [stride S] [same | valid] [ACTIVATION] [nobias]
+LABEL lstm UNITS [bi]  |  gru UNITS [bi]
+\end{Verbatim}
+For a time-series dataset, whose Input is (bands, dates, height, width). \texttt{conv3d}: filters (default 16), the pixel kernel (3x3),
+\texttt{time} = dates per window (\texttt{tkernel=}, default 3), stride over the pixels, padding same (odd kernels) or valid.
+\texttt{temporal\_pool}: to an image (\texttt{mode=}, default attention). \texttt{to\_sequence}: one vector per date. \texttt{conv1d}:
+filters and kernel (the first and second number; default 64 and 3), \texttt{stride}, padding. \texttt{lstm} / \texttt{gru}: units
+(default 64), \texttt{bi} for both directions (\texttt{bidirectional=true}). \texttt{token\_pool last} keeps the last step.
+\begin{verbatim}
+1 input                    # (4, 6, 32, 32): 4 bands at 6 dates
+2 conv3d 16 3x3 time 3
+3 temporal_pool attention  # (16, 32, 32): one image, the dates weighted per pixel
+4 conv 32 3x3
+5 global_pool
+6 seq <- 1                 # (6, 4): one vector per date
+7 lstm 16 bi
+8 token_pool last
+9 concat <- 5, 8
+10 output
+\end{verbatim}
+
 \subsubsection*{\texttt{subtract} (\texttt{sub}), \texttt{shared} --- comparing branches, shared weights}
 \begin{Verbatim}[fontsize=\small]
 LABEL subtract [abs] <- A, B

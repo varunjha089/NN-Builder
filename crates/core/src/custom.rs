@@ -59,8 +59,8 @@ pub fn classes(code: &str) -> Vec<PyClass> {
                     c.problem = Some(format!("{}: __init__ must start with self", c.name));
                 } else {
                     c.args = names[1..].to_vec();
-                    if c.args.is_empty() || c.args.len() > 3 || c.args.iter().any(|a| a.starts_with('*')) {
-                        c.problem = Some(format!("{}: __init__(self, …) takes the input shape: c, h, w for an image, t, d for tokens or n for a vector", c.name));
+                    if c.args.is_empty() || c.args.len() > 4 || c.args.iter().any(|a| a.starts_with('*')) {
+                        c.problem = Some(format!("{}: __init__(self, …) takes the input shape: c, h, w for an image, t, d for tokens, n for a vector or c, t, h, w for a time series", c.name));
                     }
                 }
             }
@@ -71,8 +71,8 @@ pub fn classes(code: &str) -> Vec<PyClass> {
         }
         if let Some(decl) = body.iter().find_map(|l| l.trim().strip_prefix("# out:")) {
             let dims: Vec<String> = decl.split(',').map(|d| d.trim().to_string()).collect();
-            if dims.is_empty() || dims.len() > 3 || dims.iter().any(|d| d.is_empty()) {
-                c.problem.get_or_insert(format!("{}: '# out:' lists 1 to 3 sizes separated by commas, e.g. # out: c, h // 2, w // 2", c.name));
+            if dims.is_empty() || dims.len() > 4 || dims.iter().any(|d| d.is_empty()) {
+                c.problem.get_or_insert(format!("{}: '# out:' lists 1 to 4 sizes separated by commas, e.g. # out: c, h // 2, w // 2", c.name));
             } else {
                 c.out = Some(dims);
             }
@@ -108,6 +108,7 @@ pub fn out_shape(c: &PyClass, input: &[usize]) -> Result<Vec<usize>, String> {
     }
     if c.args.len() != input.len() {
         let what = match input.len() {
+            4 => "a time series (c, t, h, w)",
             3 => "an image (c, h, w)",
             2 => "tokens (t, d)",
             _ => "a vector (n)",

@@ -226,7 +226,18 @@ function BandsBox({ ds, up }: { ds: Dataset; up: (p: Partial<Dataset>) => void }
       {sensor === "s1" && <label className="chk"><input type="checkbox" checked={!!ds.s1_db} onChange={(e) => up({ s1_db: e.target.checked })} />
         the files hold linear backscatter: convert to decibels (10·log10) first (Earth Engine's S1_GRD is already in decibels: such files are
         recognised by their negative values and left alone)</label>}
-      <SecondGroup ds={ds} up={up} />
+      <p className="row small">
+        <label className="chk"><input type="checkbox" checked={(ds.time_steps ?? 0) > 0} onChange={(e) => up({ time_steps: e.target.checked ? 6 : 0 })} />
+          a time series: every file holds several dates of these bands</label>
+        {(ds.time_steps ?? 0) > 0 && <label>dates per sample<input type="number" min={2} max={400} style={{ width: 70 }} value={ds.time_steps}
+          onChange={(e) => up({ time_steps: Number(e.target.value) })} /></label>}
+      </p>
+      {(ds.time_steps ?? 0) > 0 && <p className="muted small">Each file is one place at {ds.time_steps} dates: a .npy of shape (dates, bands, height, width)
+        (or (dates, height, width, bands)), or a GeoTIFF with {ds.time_steps}×{(ds.band_order ?? []).length} bands going date by date (all bands of the
+        first date, then the second, … as Earth Engine exports a stack of monthly composites). The network's Input is then (bands, dates, height,
+        width): use Conv3D, Temporal pool (to an image: then any 2-D block, up to a crop-type map) or To sequence (one vector per date: then
+        Conv1D, LSTM, GRU or a transformer over the dates). Classes from folders, a labels table, or images + masks all work.</p>}
+      {!(ds.time_steps ?? 0) && <SecondGroup ds={ds} up={up} />}
       <p className="muted small">The network receives {chosen.length + (ds.bands2?.length ?? 0)} channels ({[...chosen, ...(ds.bands2 ?? [])].join(" ") || "none"}). Every band is normalised by its own mean and
         spread, measured on the training images on the GPU machine. Flips and quarter turns are used for augmentation; the result pictures
         show {sensor === "s2" ? "true colour (B04 B03 B02)" : sensor === "s1" ? "VV / VH / VV−VH" : "the first three bands"}.</p>

@@ -79,5 +79,14 @@ fn main() {
     let a = analyze(&g, &ds);
     assert!(a.ok, "everything.nnb: {:?}", a.problems);
     cases.push(json!({"case": "everything.nnb", "ok": true, "code": model_code(&g, &a).unwrap(), "input": a.input, "params": a.total_params}));
+    // every time-series block on (bands, dates, height, width) (doc/examples/timeseries.nnb)
+    let text = include_str!("../../../doc/examples/timeseries.nnb");
+    let g = nnb_core::dsl::apply(text, &nnb_core::model::Graph::default()).expect("timeseries.nnb");
+    let b = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    let ds = Dataset { source: "local".into(), local_dir: "/x".into(), image_size: [32, 32], sensor: "s2".into(), time_steps: 6,
+        band_order: b(&["B2", "B3", "B4", "B8"]), bands: b(&["B2", "B3", "B4", "B8"]), classes: b(&["a", "b", "c"]), ..Default::default() };
+    let a = analyze(&g, &ds);
+    assert!(a.ok, "timeseries.nnb: {:?}", a.problems);
+    cases.push(json!({"case": "timeseries.nnb", "ok": true, "code": model_code(&g, &a).unwrap(), "input": a.input, "params": a.total_params}));
     println!("{}", serde_json::to_string(&cases).unwrap());
 }

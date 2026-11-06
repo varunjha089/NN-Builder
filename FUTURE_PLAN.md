@@ -97,7 +97,10 @@ escape hatch, 2-D only, supervised only, one GPU. The steps below, in this order
    before/after pairs as a second band group with the same bands. Left: a pair layout of its own (two files listed in a table, or two
    dates in one file), change-map datasets like OSCD tried for real, contrastive / triplet losses.* The plan: a block that reuses another block's weights (or a whole branch: Siamese / twin networks); with step 4 this
    gives change detection from before / after image pairs (OSCD-style), with a pair dataset layout.
-6. **Time dimension:** time-series data (a stack of dated Sentinel-2 / Sentinel-1 images per place: a folder per patch, or a band
+6. **Time dimension:** *Done 2026-11-06 (CI-tested, not yet on real data): time-series datasets (dates per sample, .npy or GeoTIFF
+   date by date), Conv3D, Temporal pool (mean / max / attention, U-TAE-like), To sequence, Conv1D, LSTM / GRU, Token pool last; the
+   transformer blocks work along the dates. Left: real dates (date encodings, uneven spacing), missing dates (masks: step 7), the Earth
+   Engine script for a monthly stack, Hugging Face time series, a second band group with a time series, PASTIS tried for real.* The plan: time-series data (a stack of dated Sentinel-2 / Sentinel-1 images per place: a folder per patch, or a band
    axis of T×C in one GeoTIFF; Earth Engine script for monthly composites), Conv3d / Conv1d and their pools, temporal attention over
    the date axis per pixel (U-TAE-style) and over tokens (TSViT-style), LSTM / GRU, date encodings; per-pixel crop-type
    segmentation (PASTIS-style) and per-patch classification.

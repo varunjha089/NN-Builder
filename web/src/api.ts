@@ -34,7 +34,7 @@ export interface Dataset {
   local_dir?: string; local_on_machine?: boolean; cloud_url?: string; layout?: "" | "scene"; scene_image?: string; scene_label?: string;
   scene_split?: "" | "strip" | "files"; scene_test_image?: string; scene_test_label?: string;
   /** multi-label: the CSV with each image's classes; fusion: a second band group from files with the same names in fuse_dir */
-  labels_csv?: string; heads?: Head[]; label_column?: string; bands2?: string[]; band_order2?: string[]; sensor2?: "" | "s2" | "s1" | "other"; s1_db2?: boolean; fuse_dir?: string; image_size2?: number[];
+  labels_csv?: string; heads?: Head[]; label_column?: string; bands2?: string[]; band_order2?: string[]; sensor2?: "" | "s2" | "s1" | "other"; s1_db2?: boolean; fuse_dir?: string; image_size2?: number[]; time_steps?: number;
 }
 
 export interface TrainSettings {

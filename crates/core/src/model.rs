@@ -63,6 +63,12 @@ pub const KINDS: &[(&str, &str)] = &[
     ("cls_pos", "Class token + position"),
     ("attention", "Self-attention"),
     ("token_pool", "Token pool"),
+    ("conv3d", "Conv3D (time × space)"),
+    ("temporal_pool", "Temporal pool"),
+    ("to_sequence", "To sequence"),
+    ("lstm", "LSTM"),
+    ("gru", "GRU"),
+    ("conv1d", "Conv1D (over time)"),
     ("output", "Output"),
     ("seg_output", "Segmentation output"),
     ("custom", "Custom (PyTorch)"),
@@ -91,6 +97,13 @@ pub fn defaults(kind: &str) -> Value {
         "cls_pos" => json!({"cls": true}),
         "attention" => json!({"heads": 4, "dropout": 0.0}),
         "token_pool" => json!({"mode": "cls"}),
+        // time series (channels, dates, height, width): a convolution over dates and pixels; tkernel = dates per window
+        "conv3d" => json!({"filters": 16, "kernel": [3, 3], "tkernel": 3, "stride": [1, 1], "padding": "same", "activation": "relu", "bias": true}),
+        // (C, T, H, W) -> (C, H, W): the dates of every pixel combined (mean, max, or attention weights learnt per pixel)
+        "temporal_pool" => json!({"mode": "attention"}),
+        "lstm" => json!({"units": 64, "bidirectional": false}),
+        "gru" => json!({"units": 64, "bidirectional": false}),
+        "conv1d" => json!({"filters": 64, "kernel": 3, "stride": 1, "padding": "same", "activation": "relu", "bias": true}),
         // 0 = all channels; 1 / 2 = one band group of a fused dataset (Sentinel-2 + Sentinel-1: one Input per sensor)
         "input" => json!({"group": 0}),
         // the name of a class in the design's PyTorch code (Graph::python)

@@ -649,19 +649,47 @@ def band_key(b):
 DB_NOTE = [False]  # the "already in decibels" note is given once
 
 
-def read_array(path, order=None):
-    """a GeoTIFF / .npy file as a float32 array, bands first when the band axis can be told by the number of bands of the files"""
+def load_raw(path):
+    """a GeoTIFF / .npy file as it is stored"""
     import numpy as np
     if path.lower().endswith(".npy"):
-        a = np.load(path)
-    else:
-        try:
-            import tifffile
-        except ImportError:
-            subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "tifffile", "imagecodecs"], check=False)
-            import tifffile
-        a = tifffile.imread(path)
-    return orient(a, order, os.path.basename(path))
+        return np.load(path)
+    try:
+        import tifffile
+    except ImportError:
+        subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "tifffile", "imagecodecs"], check=False)
+        import tifffile
+    return tifffile.imread(path)
+
+
+def read_array(path, order=None):
+    """a GeoTIFF / .npy file as a float32 array, bands first when the band axis can be told by the number of bands of the files"""
+    return orient(load_raw(path), order, os.path.basename(path))
+
+
+# time series: every file holds all dates of one sample; the network gets (bands, dates, H, W)
+TIME = int(DATASET.get("time_steps") or 0)
+
+
+def time_orient(a, order, name="a sample"):
+    """a time series as float32 (bands of the files, dates, H, W), from (dates, bands, H, W), (dates, H, W, bands), (bands, dates, H, W),
+    or a GeoTIFF whose bands go date by date ((dates·bands, H, W) or (H, W, dates·bands): all bands of date 1, then of date 2, ...)"""
+    import numpy as np
+    a = np.asarray(a, dtype=np.float32)
+    c, t = len(order), TIME
+    if a.ndim == 4:
+        if a.shape[0] == t and a.shape[1] == c:
+            return a.transpose(1, 0, 2, 3)
+        if a.shape[0] == t and a.shape[-1] == c:
+            return a.transpose(3, 0, 1, 2)
+        if a.shape[0] == c and a.shape[1] == t:
+            return a
+    if a.ndim == 3 and a.shape[0] == t * c:
+        return a.reshape(t, c, *a.shape[1:]).transpose(1, 0, 2, 3)
+    if a.ndim == 3 and a.shape[-1] == t * c:
+        return a.transpose(2, 0, 1).reshape(t, c, *a.shape[:2]).transpose(1, 0, 2, 3)
+    raise SystemExit(f"DATA: {name} has shape {tuple(a.shape)}, but a sample should hold {t} dates of {c} bands ({' '.join(order)}): "
+                     f"(dates, bands, H, W) in a .npy, or {t * c} bands date by date in a GeoTIFF; check the dates and the band order.")
 
 
 def orient(a, order=None, name="an image"):
@@ -751,6 +779,16 @@ def read_groups(path, resize=True):
     out = []
     for k, g in enumerate(GROUPS):
         p = path if k == 0 else fuse_path(path)
+        if TIME:
+            # (bands, dates, H, W): the chosen bands of every date, each date resized like an image
+            t = torch.from_numpy(np.ascontiguousarray(pick_bands(time_orient(load_raw(p), g["order"], os.path.basename(p)), g)))
+            h, w = DATASET["image_size"]
+            if resize and tuple(t.shape[2:]) != (h, w):
+                c, n = t.shape[:2]
+                t = nn.functional.interpolate(t.reshape(1, c * n, *t.shape[2:]), size=(h, w), mode="bilinear", align_corners=False,
+                                              antialias=True)[0].reshape(c, n, h, w)
+            out.append(t)
+            continue
         a = read_patch_folder(p, g) if os.path.isdir(p) else pick_bands(read_array(p, g["order"]), g)
         t = torch.from_numpy(np.ascontiguousarray(a))
         h, w = SIZE2 if k == 1 and SIZE2 else DATASET["image_size"]
@@ -779,7 +817,8 @@ def normalise(x):
     """per-band (x - mean) / std; empty pixels (NaN / infinite) become 0 = the band's mean"""
     if BAND_STATS is not None:
         m, s = BAND_STATS
-        x = (x - torch.tensor(m).view(-1, 1, 1)) / torch.tensor(s).view(-1, 1, 1)
+        shape = (-1,) + (1,) * (x.dim() - 1)   # (bands, H, W), or (bands, dates, H, W) for a time series
+        x = (x - torch.tensor(m).view(shape)) / torch.tensor(s).view(shape)
     return torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
 
 
@@ -870,7 +909,7 @@ class BandPairs(torch.utils.data.Dataset):
     def __getitem__(self, i):
         img, mask = self.pairs[i]
         x = normalise(read_bands(img))
-        y = read_mask(mask, x.shape[1:])
+        y = read_mask(mask, x.shape[-2:])
         if self.train:
             x, y = flips(x, y)
         return x, y
@@ -1243,6 +1282,12 @@ def multiband_stats(files, seed, load=None):
 
 
 def composite(x):
+    if x.dim() == 4:   # a time series: the median of its dates
+        x = x.median(1).values
+    return composite_image(x)
+
+
+def composite_image(x):
     """a picture (3 or 1 channels, 0..1) of a normalised multiband image: true colour B04 B03 B02 for Sentinel-2, VV / VH / VV-VH for
     Sentinel-1, else the first three bands; each channel stretched between its 2nd and 98th percentile"""
     m, s = BAND_STATS
@@ -2117,7 +2162,9 @@ def main():
     precision = ("bf16" if bf16 else "fp16") if amp else "fp32"
     scaler = torch.amp.GradScaler("cuda", enabled=amp and not bf16)
     # channels-last memory layout: faster convolutions with mixed precision on NVIDIA GPUs
-    channels_last = device.type == "cuda" and any(isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)) for m in model.modules())
+    # (not with Conv3D: its 5-D weights have no channels-last layout)
+    channels_last = device.type == "cuda" and any(isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)) for m in model.modules()) \
+        and not any(isinstance(m, nn.Conv3d) for m in model.modules())
     if channels_last:
         model.to(memory_format=torch.channels_last)
     # a batch that does not fit is processed in `parts` pieces whose gradients add up to the batch's (kept in the checkpoint)

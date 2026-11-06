@@ -143,6 +143,16 @@ crates/core/src/
                            BANDS names the second copy B04_2). UI: Design "Twin branch (shared weights)" (addTwin), inspectors. Tests:
                            design.rs siamese_shared_weights, text.rs shared_weights_and_subtract, everything.nnb (tw / df), CI siamese
                            (before/after pairs, PyTorch's parameter count = the app's).
+                           Time series: Dataset.time_steps (dates per sample; input_shape (C, T, H, W); not fused / HF / scenes);
+                           kinds conv3d (tkernel, same | valid), temporal_pool (mean | max | attention: TemporalPool), to_sequence
+                           ((T, C): ToSequence), lstm / gru (Recurrent, units, bidirectional), conv1d (Conv1dSteps; kernel / stride
+                           are numbers: dsl::effective keeps them so, shapes::int reads a pair's first value), token_pool "last";
+                           shapes guards rank 4 (only these and the elementwise / join / flatten / global_pool / batchnorm / custom
+                           blocks), seg_output checks the last two sizes; codegen TIME_MODULES, BatchNorm3d, AdaptivePool3d. Harness
+                           TIME: load_raw + time_orient ((T,C,H,W), (T,H,W,C), (C,T,H,W), GeoTIFF T·C bands date by date) -> (C, T, H, W),
+                           per-date resize, normalise any rank, composite = median of the dates, no channels-last with Conv3d. DatasetTab
+                           "a time series" + dates; Design palette "Time series". Tests: text.rs timeseries_design (doc/examples/
+                           timeseries.nnb, also in dump_cases = CI PyTorch compare), time_series_blocks_in_text; CI ts_seq + ts_seg.
                            Sentinel step finished: scene_split ("" random | strip = eastern tenth, one tile column gap | files =
                            scene_test_image/_label) in harness scene_split(); BigEarthNet layout: read_patch_folder (one GeoTIFF per band,
                            <patch>_<band>.tif, bands resized to the largest), label tables via read_table (CSV/TSV/Parquet, pyarrow on

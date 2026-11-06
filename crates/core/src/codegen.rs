@@ -268,7 +268,52 @@ class TokenPool(nn.Module):
         self.mode = mode
 
     def forward(self, x):
-        return x[:, 0] if self.mode == "cls" else x.mean(dim=1)
+        return x[:, 0] if self.mode == "cls" else x[:, -1] if self.mode == "last" else x.mean(dim=1)
+
+
+"#;
+
+const TIME_MODULES: &str = r#"class TemporalPool(nn.Module):
+    """(batch, channels, dates, H, W) -> (batch, channels, H, W): the dates of every pixel combined by their mean, their maximum, or
+    weights learnt from the pixel's channels (a score per date, softmax over the dates: temporal attention, as in U-TAE)"""
+    def __init__(self, mode, channels):
+        super().__init__()
+        self.mode = mode
+        self.score = nn.Conv3d(channels, 1, 1) if mode == "attention" else None
+
+    def forward(self, x):
+        if self.mode == "mean":
+            return x.mean(2)
+        if self.mode == "max":
+            return x.amax(2)
+        w = torch.softmax(self.score(x), dim=2)
+        return (x * w).sum(2)
+
+
+class ToSequence(nn.Module):
+    """(batch, channels, dates, H, W) -> (batch, dates, channels): the mean of every date's pixels, one vector per date"""
+    def forward(self, x):
+        return x.mean((3, 4)).transpose(1, 2)
+
+
+class Recurrent(nn.Module):
+    """an LSTM / GRU along the steps of a sequence (batch, steps, features), giving its output at every step"""
+    def __init__(self, kind, features, units, bidirectional):
+        super().__init__()
+        self.rnn = (nn.LSTM if kind == "lstm" else nn.GRU)(features, units, batch_first=True, bidirectional=bidirectional)
+
+    def forward(self, x):
+        return self.rnn(x)[0]
+
+
+class Conv1dSteps(nn.Module):
+    """a 1-D convolution along the steps of a sequence (batch, steps, features)"""
+    def __init__(self, features, filters, kernel, stride, padding, bias):
+        super().__init__()
+        self.conv = nn.Conv1d(features, filters, kernel, stride=stride, padding=padding, bias=bias)
+
+    def forward(self, x):
+        return self.conv(x.transpose(1, 2)).transpose(1, 2)
 
 
 "#;
@@ -330,7 +375,8 @@ fn modules(n: &Node, a: &Analysis, classes: usize) -> Vec<String> {
             m.push(format!("{cls}({})", args.join(", ")));
         }
         "global_pool" => {
-            m.push(if shapes::text(p, "mode", &["avg", "max"], "avg") == "max" { "nn.AdaptiveMaxPool2d(1)".into() } else { "nn.AdaptiveAvgPool2d(1)".into() });
+            let d = if inp.len() == 4 { "3d" } else { "2d" };
+            m.push(if shapes::text(p, "mode", &["avg", "max"], "avg") == "max" { format!("nn.AdaptiveMaxPool{d}(1)") } else { format!("nn.AdaptiveAvgPool{d}(1)") });
             m.push("nn.Flatten()".into());
         }
         "upsample" => {
@@ -342,7 +388,34 @@ fn modules(n: &Node, a: &Analysis, classes: usize) -> Vec<String> {
             });
         }
         "groupnorm" => m.push(format!("nn.GroupNorm({}, {})", shapes::int(p, "groups", 8, 1, crate::shapes::MAX_FILTERS), inp[0])),
-        "batchnorm" => m.push(if inp.len() == 3 { format!("nn.BatchNorm2d({})", inp[0]) } else { format!("nn.BatchNorm1d({})", inp[0]) }),
+        "batchnorm" => m.push(match inp.len() {
+            4 => format!("nn.BatchNorm3d({})", inp[0]),
+            3 => format!("nn.BatchNorm2d({})", inp[0]),
+            _ => format!("nn.BatchNorm1d({})", inp[0]),
+        }),
+        "conv3d" => {
+            let o = r.out.as_ref().unwrap();
+            let kk = pair(p, "kernel", 3, 1, 15);
+            let tk = int(p, "tkernel", 3, 1, 15);
+            let st = r.stride.unwrap();
+            let pd = r.padding.unwrap();
+            let pt = if pd == [0, 0] && shapes::text(p, "padding", &["same", "valid"], "same") == "valid" { 0 } else { tk / 2 };
+            let bias = p.get("bias").and_then(|v| v.as_bool()).unwrap_or(true);
+            m.push(format!("nn.Conv3d({}, {}, kernel_size=({tk}, {}, {}), stride=(1, {}, {}), padding=({pt}, {}, {}){})", inp[0], o[0], kk[0], kk[1],
+                st[0], st[1], pd[0], pd[1], if bias { "" } else { ", bias=False" }));
+            m.extend(act(activation(p, "activation")).map(String::from));
+        }
+        "temporal_pool" => m.push(format!("TemporalPool({:?}, {})", shapes::text(p, "mode", &["mean", "max", "attention"], "attention"), inp[0])),
+        "to_sequence" => m.push("ToSequence()".into()),
+        "lstm" | "gru" => m.push(format!("Recurrent({:?}, {}, {}, {})", n.kind, inp[1], int(p, "units", 64, 1, 1 << 16),
+            if p.get("bidirectional").and_then(|v| v.as_bool()).unwrap_or(false) { "True" } else { "False" })),
+        "conv1d" => {
+            let kk = int(p, "kernel", 3, 1, 31);
+            let pd = if shapes::text(p, "padding", &["same", "valid"], "same") == "same" { kk / 2 } else { 0 };
+            m.push(format!("Conv1dSteps({}, {}, {kk}, {}, {pd}, {})", inp[1], r.out.as_ref().unwrap()[1], int(p, "stride", 1, 1, 16),
+                if p.get("bias").and_then(|v| v.as_bool()).unwrap_or(true) { "True" } else { "False" }));
+            m.extend(act(activation(p, "activation")).map(String::from));
+        }
         "layernorm" => m.push(if inp.len() == 3 { format!("nn.GroupNorm(1, {})   # LayerNorm over (channels, height, width)", inp[0]) } else { format!("nn.LayerNorm({})", inp.last().unwrap()) }),
         "to_tokens" => m.push(format!("ToTokens({:?})", shapes::text(p, "mode", &["patches", "rows"], "patches"))),
         "cls_pos" => {
@@ -353,7 +426,7 @@ fn modules(n: &Node, a: &Analysis, classes: usize) -> Vec<String> {
             let drop = p.get("dropout").and_then(|v| v.as_f64()).unwrap_or(0.0).clamp(0.0, 0.9);
             m.push(format!("SelfAttention(dim={}, heads={}, dropout={})", inp[1], int(p, "heads", 4, 1, crate::shapes::MAX_HEADS), drop));
         }
-        "token_pool" => m.push(format!("TokenPool({:?})", shapes::text(p, "mode", &["cls", "mean"], "cls"))),
+        "token_pool" => m.push(format!("TokenPool({:?})", shapes::text(p, "mode", &["cls", "mean", "last"], "cls"))),
         "dropout" => {
             let rate = p.get("rate").and_then(|v| v.as_f64()).unwrap_or(0.25).clamp(0.0, 0.95);
             m.push(format!("nn.Dropout(p={rate})"));
@@ -487,7 +560,7 @@ fn model_code_opts(g: &Graph, a: &Analysis, save_memory: bool) -> Result<String>
                 init.push(if mods.len() == 1 { format!("        self.{name} = {}", mods[0]) } else { format!("        self.{name} = nn.Sequential(\n            {},\n        )", mods.join(",\n            ")) });
                 fwd.push(format!("        {v} = self.{name}({})", ins.join(", ")));
                 module_of.insert(n.id.as_str(), name.clone());
-                let conv = matches!(n.kind.as_str(), "conv2d" | "dwconv2d" | "convtranspose2d");
+                let conv = matches!(n.kind.as_str(), "conv2d" | "dwconv2d" | "convtranspose2d" | "conv3d");
                 layers.push(json!([name, label, conv]));
                 expected.insert(name, json!(r.out));
             }
@@ -507,6 +580,9 @@ fn model_code_opts(g: &Graph, a: &Analysis, save_memory: bool) -> Result<String>
     let mut s = String::new();
     if g.nodes.iter().any(|n| order.contains(&n.id.as_str()) && matches!(n.kind.as_str(), "to_tokens" | "cls_pos" | "attention" | "token_pool")) {
         s += TOKEN_MODULES;
+    }
+    if g.nodes.iter().any(|n| order.contains(&n.id.as_str()) && matches!(n.kind.as_str(), "temporal_pool" | "to_sequence" | "lstm" | "gru" | "conv1d")) {
+        s += TIME_MODULES;
     }
     if g.nodes.iter().any(|n| order.contains(&n.id.as_str()) && n.kind == "custom") {
         s += "# ---- the design's own PyTorch code (Custom blocks), as written in NN Builder\n";

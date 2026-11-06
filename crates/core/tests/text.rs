@@ -312,9 +312,9 @@ fn everything_design() {
     // not even a warning (an unused block, rows lost to a stride) at 3×32×32
     let warns: Vec<_> = a.nodes.iter().filter(|n| n.status != "ok").map(|n| (g.node(&n.id).unwrap().label.clone(), n.messages.clone())).collect();
     assert!(warns.is_empty(), "{warns:?}");
-    // every block kind except the segmentation output
+    // every block kind except the segmentation output and the time-series blocks (doc/examples/timeseries.nnb has those)
     for (kind, _) in model::KINDS {
-        if *kind != "seg_output" {
+        if !matches!(*kind, "seg_output" | "conv3d" | "temporal_pool" | "to_sequence" | "lstm" | "gru" | "conv1d") {
             assert!(g.nodes.iter().any(|n| n.kind == *kind), "no {kind} block");
         }
     }
@@ -702,4 +702,59 @@ fn shared_weights_and_subtract() {
     assert_eq!(by_label(&f, "2.b").params["of"], json!(by_label(&f, "2.a").id.clone()));
     assert!(err("1 input\n2 shared 7\n").message.contains("no block has the label 7"));
     assert!(err("1 input\n2 conv 8 3x3\n3 subtract wrong <- 1, 2\n").message.contains("abs"));
+}
+
+#[test]
+fn time_series_blocks_in_text() {
+    let g = build("1 input\n2 conv3d 16 3x3 time 3\n3 bn\n4 tpool attention\n5 conv 8 3x3 <- 4\n6 seq <- 3\n7 lstm 32 bi\n8 gru 16\n\
+        9 conv1d 8 5 stride 2 valid gelu nobias\n10 token_pool last\n");
+    let p = |l: &str| by_label(&g, l).params.clone();
+    assert_eq!((p("2")["filters"].clone(), p("2")["kernel"].clone(), p("2")["tkernel"].clone()), (json!(16), json!([3, 3]), json!(3)));
+    assert_eq!((p("4")["mode"].clone(), p("7")["units"].clone(), p("7")["bidirectional"].clone()), (json!("attention"), json!(32), json!(true)));
+    assert_eq!((p("9")["kernel"].clone(), p("9")["stride"].clone(), p("9")["padding"].clone(), p("9")["bias"].clone()), (json!(5), json!(2), json!("valid"), json!(false)));
+    assert_eq!(p("10")["mode"], json!("last"));
+    let printed = print(&g).0;
+    for l in ["conv3d 16 3x3 time 3", "temporal_pool", "to_sequence", "lstm 32 bi", "gru 16", "conv1d 8 5 stride 2 valid gelu nobias", "token_pool last"] {
+        assert!(printed.contains(l), "{l} in\n{printed}");
+    }
+    assert!(err("1 input\n2 conv3d 8 3x3 pad 1\n").message.contains("same or valid"));
+    assert!(err("1 input\n2 conv3d 8 3x3 dil 2\n").message.contains("no dil setting"));
+}
+
+/// doc/examples/timeseries.nnb: every time-series block on a (bands, dates, height, width) input
+#[test]
+fn timeseries_design() {
+    let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../doc/examples/timeseries.nnb")).unwrap();
+    let g = build(&text);
+    let ds = Dataset { source: "local".into(), local_dir: "/x".into(), image_size: [32, 32], sensor: "s2".into(), time_steps: 6,
+        band_order: vec!["B2".into(), "B3".into(), "B4".into(), "B8".into()], bands: vec!["B2".into(), "B3".into(), "B4".into(), "B8".into()],
+        classes: vec!["a".into(), "b".into(), "c".into()], ..Default::default() };
+    assert!(ds.problems().is_empty(), "{:?}", ds.problems());
+    let a = analyze(&g, &ds);
+    let bad: Vec<_> = a.nodes.iter().filter(|n| n.status != "ok").map(|n| (g.node(&n.id).unwrap().label.clone(), n.messages.clone())).collect();
+    assert!(a.ok && bad.is_empty(), "{:?} {bad:?}", a.problems);
+    for kind in ["conv3d", "temporal_pool", "to_sequence", "lstm", "gru", "conv1d"] {
+        assert!(g.nodes.iter().any(|n| n.kind == kind), "no {kind} block");
+    }
+    let out = |l: &str| a.get(&by_label(&g, l).id).unwrap().out.clone().unwrap();
+    assert_eq!(a.input, vec![4, 6, 32, 32]);
+    assert_eq!((out("2"), out("4"), out("5"), out("9"), out("11"), out("15")),
+        (vec![16, 6, 32, 32], vec![16, 6, 16, 16], vec![16, 16, 16], vec![6, 4], vec![6, 32], vec![16]));
+    // parameters by hand: conv3d (4·3·3·3 + 1)·16, temporal attention 16 + 1, LSTM 2 directions · 4 gates · (16·(16 + 16) + 2·16)
+    assert_eq!(a.get(&by_label(&g, "2").id).unwrap().params, (4 * 27 + 1) * 16);
+    assert_eq!(a.get(&by_label(&g, "5").id).unwrap().params, 17);
+    assert_eq!(a.get(&by_label(&g, "11").id).unwrap().params, 2 * 4 * (16 * 32 + 32));
+    let code = nnb_core::codegen::train_script(&g, &ds, &a, &nnb_core::codegen::TrainSettings::default(), "ts").unwrap();
+    assert!(code.contains("nn.Conv3d(4, 16, kernel_size=(3, 3, 3)") && code.contains("TemporalPool(\"attention\", 16)") && code.contains("Recurrent(\"lstm\", 16, 16, True)"));
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("t.py"), &code).unwrap();
+    if let Some(out) = ["python3", "python"].iter().find_map(|py| std::process::Command::new(py).args(["-m", "py_compile"]).arg(dir.path().join("t.py")).output().ok()) {
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    }
+    assert_eq!(sync(&g).text, text);
+    // 2-D blocks on the time series and time-series blocks on an image say what to put between
+    let msg = |t: &str, l: &str| { let g = build(t); analyze(&g, &ds).get(&by_label(&g, l).id).unwrap().messages.join(" ") };
+    assert!(msg("1 input\n2 conv 8 3x3\n", "2").contains("Temporal pool"));
+    assert!(msg("1 input\n2 tpool\n3 conv3d 8 3x3\n", "3").contains("needs a time series"));
+    assert!(msg("1 input\n2 lstm 8\n", "2").contains("To sequence"));
 }

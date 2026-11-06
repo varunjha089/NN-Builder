@@ -616,6 +616,8 @@ const ALIASES: &[(&str, (&str, &str))] = &[
     ("to_tokens", ("to_tokens", "")), ("cls_pos", ("cls_pos", "")), ("attention", ("attention", "")), ("attn", ("attention", "")),
     ("token_pool", ("token_pool", "")), ("output", ("output", "")), ("seg_output", ("seg_output", "")), ("custom", ("custom", "")),
     ("subtract", ("subtract", "")), ("sub", ("subtract", "")), ("shared", ("shared", "")),
+    ("conv3d", ("conv3d", "")), ("temporal_pool", ("temporal_pool", "")), ("tpool", ("temporal_pool", "")),
+    ("to_sequence", ("to_sequence", "")), ("seq", ("to_sequence", "")), ("lstm", ("lstm", "")), ("gru", ("gru", "")), ("conv1d", ("conv1d", "")),
 ];
 
 fn kind_of(word: &str) -> Option<(&'static str, &'static str)> {
@@ -664,7 +666,8 @@ pub fn effective(kind: &str, params: &Map<String, Value>) -> Map<String, Value> 
     }
     for (k, v) in p.iter_mut() {
         if let Some(f) = v.as_f64() {
-            *v = if PAIR_KEYS.contains(&k.as_str()) { json!([num(f), num(f)]) } else { num(f) };
+            // (conv1d's kernel and stride are one number along the sequence)
+            *v = if PAIR_KEYS.contains(&k.as_str()) && kind != "conv1d" { json!([num(f), num(f)]) } else { num(f) };
         } else if let Some(a) = v.as_array() {
             if a.iter().all(|x| x.is_number()) {
                 *v = Value::Array(a.iter().map(|x| num(x.as_f64().unwrap_or(0.0))).collect());
@@ -712,7 +715,7 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
         }
         _ => {}
     }
-    let conv_like = matches!(kind, "conv2d" | "dwconv2d" | "convtranspose2d");
+    let conv_like = matches!(kind, "conv2d" | "dwconv2d" | "convtranspose2d" | "conv3d");
     let mut numbers = 0;
     let mut i = 0;
     let next_val = |i: &mut usize, what: &str| -> Result<Val, String> {
@@ -732,6 +735,54 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
             p.insert("of".into(), json!(match v { Val::Num(n) => fmt_num(*n), Val::Word(w) => w.clone() }));
             i += 1;
             continue;
+        }
+        // time series: conv3d's dates per window, the recurrent layers' direction, conv1d's own words (whole numbers, not pairs)
+        if let (None, Val::Word(w)) = (key, v) {
+            match (kind, w.as_str()) {
+                ("conv3d", "time") => {
+                    let t = next_val(&mut i, "time")?;
+                    p.insert("tkernel".into(), to_json("tkernel", &t));
+                    i += 1;
+                    continue;
+                }
+                ("lstm" | "gru", "bi") => {
+                    p.insert("bidirectional".into(), json!(true));
+                    i += 1;
+                    continue;
+                }
+                ("temporal_pool", "mean" | "max" | "attention") => {
+                    p.insert("mode".into(), json!(w));
+                    i += 1;
+                    continue;
+                }
+                ("conv1d", "stride") => {
+                    let t = next_val(&mut i, "stride")?;
+                    p.insert("stride".into(), to_json("units", &t));
+                    i += 1;
+                    continue;
+                }
+                ("conv1d", "same" | "valid") => {
+                    p.insert("padding".into(), json!(w));
+                    i += 1;
+                    continue;
+                }
+                ("conv1d", "nobias") => {
+                    p.insert("bias".into(), json!(false));
+                    i += 1;
+                    continue;
+                }
+                ("conv1d", a) if ACTS.contains(&a) => {
+                    p.insert("activation".into(), json!(a));
+                    i += 1;
+                    continue;
+                }
+                ("token_pool", "last") => {
+                    p.insert("mode".into(), json!("last"));
+                    i += 1;
+                    continue;
+                }
+                _ => {}
+            }
         }
         if let (None, Val::Word(w), "subtract") = (key, v, kind) {
             if w != "abs" {
@@ -787,6 +838,14 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
                     ("attention", 1) => "heads",
                     ("input", 1) => "group",
                     ("output", 1) => "head",
+                    ("conv3d", 1) => "filters",
+                    ("lstm" | "gru", 1) => "units",
+                    ("conv1d", 1) => "filters",
+                    ("conv1d", 2) => {
+                        p.insert("kernel".into(), num(*n));
+                        i += 1;
+                        continue;
+                    }
                     _ => return Err(format!("what is the number {}? write it as name=value (e.g. filters={})", fmt_num(*n), fmt_num(*n))),
                 };
                 p.insert(key.into(), to_json(key, v));
@@ -812,7 +871,7 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
                     p.insert("fn".into(), json!(lw));
                 } else {
                     match (kind, lw.as_str()) {
-                        (_, "same" | "valid") if matches!(kind, "conv2d" | "dwconv2d") => {
+                        (_, "same" | "valid") if matches!(kind, "conv2d" | "dwconv2d" | "conv3d") => {
                             p.insert("padding".into(), json!(lw));
                         }
                         (_, "stride") if conv_like || kind == "pool2d" => {
@@ -911,6 +970,17 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
             let word = match k.as_str() { "padding" => "pad / same / valid", "dilation" => "dil", "bias" => "nobias / bias", "output_padding" => "outpad", o => o };
             return Err(format!("{} has no {word} setting (its settings: {})", kind_word(kind), if known.is_empty() { "none".into() } else { known.join(", ") }));
         }
+    }
+    if kind == "conv1d" {
+        // whole numbers along the sequence (a "kernel=5" read as a size pair is one number here)
+        for key in ["kernel", "stride"] {
+            if let Some(Value::Array(a)) = p.get(key).cloned() {
+                p.insert(key.into(), a[0].clone());
+            }
+        }
+    }
+    if kind == "conv3d" && p.get("padding").is_some_and(|v| !v.is_string()) {
+        return Err("conv3d: padding is same or valid".into());
     }
     if matches!(kind, "convtranspose2d" | "pool2d") && p.get("padding").is_some_and(|v| v.is_string()) {
         return Err(format!("{}: padding is a number of pixels here ('same' / 'valid' are for conv and dwconv)", kind_word(kind)));
@@ -1020,6 +1090,28 @@ fn block_text(kind: &str, params: &Map<String, Value>) -> String {
         "cls_pos" => take("cls", if get("cls") == json!(false) { "nocls".into() } else { String::new() }, &mut words),
         "input" => take("group", if differs("group") { fmt_value(&get("group")) } else { String::new() }, &mut words),
         "custom" => take("class", get("class").as_str().unwrap_or("").to_string(), &mut words),
+        "conv3d" => {
+            take("filters", fmt_value(&get("filters")), &mut words);
+            take("kernel", fmt_value(&get("kernel")), &mut words);
+            take("tkernel", format!("time {}", fmt_value(&get("tkernel"))), &mut words);
+            take("stride", if differs("stride") { format!("stride {}", pair_text(&get("stride"))) } else { String::new() }, &mut words);
+            take("padding", if differs("padding") { fmt_value(&get("padding")) } else { String::new() }, &mut words);
+            take("activation", if differs("activation") { get("activation").as_str().unwrap_or("relu").to_string() } else { String::new() }, &mut words);
+            take("bias", if get("bias") == json!(false) { "nobias".into() } else { String::new() }, &mut words);
+        }
+        "temporal_pool" => take("mode", if differs("mode") { fmt_value(&get("mode")) } else { String::new() }, &mut words),
+        "lstm" | "gru" => {
+            take("units", fmt_value(&get("units")), &mut words);
+            take("bidirectional", if get("bidirectional") == json!(true) { "bi".into() } else { String::new() }, &mut words);
+        }
+        "conv1d" => {
+            take("filters", fmt_value(&get("filters")), &mut words);
+            take("kernel", pair_text(&get("kernel")), &mut words);
+            take("stride", if differs("stride") { format!("stride {}", pair_text(&get("stride"))) } else { String::new() }, &mut words);
+            take("padding", if differs("padding") { fmt_value(&get("padding")) } else { String::new() }, &mut words);
+            take("activation", if differs("activation") { get("activation").as_str().unwrap_or("relu").to_string() } else { String::new() }, &mut words);
+            take("bias", if get("bias") == json!(false) { "nobias".into() } else { String::new() }, &mut words);
+        }
         // printed as "@<id>" and replaced by that block's label once all labels are known (resolve_shared)
         "shared" => take("of", format!("@{}", get("of").as_str().unwrap_or("")), &mut words),
         "subtract" => take("abs", if get("abs") == json!(true) { "abs".into() } else { String::new() }, &mut words),

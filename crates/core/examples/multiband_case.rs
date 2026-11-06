@@ -144,6 +144,28 @@ fn main() {
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(format!("{d}/train.py"), train_script(&g, &ds, &a, &t, "siamese").unwrap()).unwrap();
     }
+    // time series: 6 dates of 2 bands. Classes that differ only in when they green up (the season's mean is the same): a sequence path
+    // (.npy class folders); and a crop-type map per pixel from GeoTIFFs whose bands go date by date, with masks (Conv3D + temporal attention)
+    {
+        let ts = |name: &str, task: &str| Dataset { source: "local".into(), task: task.into(), local_dir: format!("{dir}/own/{name}"), local_on_machine: true,
+            image_size: [16, 16], sensor: "other".into(), band_order: s(&["b1", "b2"]), bands: s(&["b1", "b2"]), time_steps: 6,
+            classes: s(&["early", "late"]), ..Default::default() };
+        let seq = Dataset { kaggle_train_dir: "train".into(), ..ts("ts_seq", "classify") };
+        let seg = Dataset { kaggle_train_dir: "images".into(), kaggle_mask_dir: "masks".into(), classes: s(&["background", "early", "late"]), ..ts("ts_seg", "segment") };
+        for (name, ds, text) in [
+            ("ts_seq", seq, "net \"time series ci\"\n1 input\n2 to_sequence\n3 conv1d 16 3\n4 gru 16\n5 token_pool mean\n6 output\n"),
+            ("ts_seg", seg, "net \"crop map ci\"\n1 input\n2 conv3d 16 3x3 time 3\n3 temporal_pool attention\n4 conv 16 3x3\n5 seg_output\n"),
+        ] {
+            let g = nnb_core::dsl::apply(text, &Default::default()).unwrap();
+            let a = analyze(&g, &ds);
+            assert!(a.ok && ds.problems().is_empty(), "{name}: {:?} {:?}", a.problems, ds.problems());
+            assert_eq!(a.input, vec![2, 6, 16, 16]);
+            let t = TrainSettings { epochs: if name == "ts_seg" { 12 } else { 10 }, batch_size: 16, amp: false, aug_hflip: true, aug_rotate: 10.0, ..Default::default() }.clean();
+            let d = format!("{dir}/{name}");
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(format!("{d}/train.py"), train_script(&g, &ds, &a, &t, name).unwrap()).unwrap();
+        }
+    }
     for (name, ds) in cases {
         assert!(ds.problems().is_empty(), "{name}: {:?}", ds.problems());
         let g = if ds.task == "segment" { &seg } else if name == "fusion" { &mid } else if name == "fusion_sizes" { &mid_sizes } else { &g };
