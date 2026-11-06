@@ -2859,6 +2859,8 @@ def main():
          **({"test_map": round(confusion["map"], 5)} if DETECT else {}),
          **({"heads": [{"name": h["name"], "metric": h["metric"], "score": round(h["score"], 5)} for h in HEAD_SCORES]} if HEAD_SCORES else {}),
          **({"best_epoch": es["best_epoch"]} if early else {}), **({"test_top5": round(test_top5, 5)} if test_top5 is not None else {}))
+    if WORLD > 1 and torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()   # (an open NCCL group can keep the process from exiting)
     if ON_KAGGLE:
         # a Kaggle run is never resumed: the checkpoint would only make the output the app downloads bigger
         for f in (ck_path, best_path):
@@ -2890,10 +2892,6 @@ def run_parallel(n):
         with open(os.path.join(OUT, "py_pid.txt"), "w") as f:
             f.write(str(os.getpid()))
     env = {**os.environ, "NNB_WORLD": str(n), "MASTER_ADDR": "127.0.0.1", "MASTER_PORT": str(port)}
-    # GPUs without a direct link (Kaggle's T4 x2, most cloud PCIe machines) can hang in NCCL's peer-to-peer transfers (seen on Kaggle:
-    # the first broadcast never returned): exchange through the host instead, a little slower with NVLink but safe. NNB_NCCL_P2P=1 keeps P2P.
-    if os.environ.get("NNB_NCCL_P2P") != "1":
-        env.setdefault("NCCL_P2P_DISABLE", "1")
     procs = [subprocess.Popen([sys.executable, os.path.abspath(__file__)], env={**env, "NNB_RANK": str(r)}) for r in range(n)]
 
     def forward(signum, frame):
@@ -2905,8 +2903,9 @@ def run_parallel(n):
             signal.signal(sg, forward)
     failed_at = None
     while any(p.poll() is None for p in procs):
-        # a worker that ends with an error leaves the others waiting for it: give them a minute, then end them
-        if failed_at is None and any(p.poll() not in (None, 0, RESUME_EXIT) for p in procs):
+        # a worker that ends with an error leaves the others waiting for it, and once rank 0 has written the results nothing is left to
+        # wait for (a worker that hangs on its way out kept a Kaggle notebook running): give them a minute, then end them
+        if failed_at is None and (procs[0].poll() is not None or any(p.poll() not in (None, 0, RESUME_EXIT) for p in procs)):
             failed_at = time.time()
         if failed_at is not None and time.time() - failed_at > 60:
             for p in procs:

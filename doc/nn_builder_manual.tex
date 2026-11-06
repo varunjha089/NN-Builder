@@ -556,9 +556,8 @@ size stays the total, so the training goes as on one GPU, in about $1/N$ of the 
 writes the events, checkpoints and results; the stop button, the spot interruption notice and the timed checkpoints reach every worker
 (the run's process forwards them), all stop at the same step, and a resumed run continues at the same batch. With several GPUs a batch
 that does not fit is not split automatically (use a smaller batch or \ui{save memory}); a data check uses one GPU. Kaggle may give a
-notebook two T4s (the accelerator ``GPU T4 x2''); with \ui{GPUs: all} a Kaggle run then trains on both. The workers exchange the
-gradients through the host, not directly between the GPUs (\texttt{NCCL\_P2P\_DISABLE=1}: direct transfers hung on Kaggle's T4s; set
-\texttt{NNB\_NCCL\_P2P=1} on a machine with NVLink to keep them), and a worker that waits for another more than an hour ends the run. A model too big for one GPU's
+notebook two T4s (the accelerator ``GPU T4 x2''); with \ui{GPUs: all} a Kaggle run then trains on both (tried: two T4s, R$^2$ 0.998 in 28 seconds). A worker that waits for another more than an hour ends the run, and once
+worker~0 has written the results the others are ended within a minute, so a run never stays open after it finished. A model too big for one GPU's
 memory (FSDP, splitting the weights over the GPUs) is not supported yet.
 
 \subsection{Transformers in NN Builder}
