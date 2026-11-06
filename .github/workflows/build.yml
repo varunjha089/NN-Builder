@@ -75,7 +75,7 @@ jobs:
                      cp target/release/bundle/appimage/*.AppImage "out/nn-builder_${version}_amd64.AppImage" ;;
           esac
           ls -l out
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: NN-Builder-${{ matrix.name }}
           path: out/
@@ -90,7 +90,7 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
