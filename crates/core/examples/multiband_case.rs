@@ -154,13 +154,13 @@ fn main() {
         let seg = Dataset { kaggle_train_dir: "images".into(), kaggle_mask_dir: "masks".into(), classes: s(&["background", "early", "late"]), ..ts("ts_seg", "segment") };
         for (name, ds, text) in [
             ("ts_seq", seq, "net \"time series ci\"\n1 input\n2 to_sequence\n3 conv1d 16 3\n4 gru 16\n5 token_pool mean\n6 output\n"),
-            ("ts_seg", seg, "net \"crop map ci\"\n1 input\n2 conv3d 16 3x3 time 3\n3 temporal_pool attention\n4 conv 16 3x3\n5 seg_output\n"),
+            ("ts_seg", seg, "net \"crop map ci\"\n1 input\n2 conv3d 16 3x3 time 3\n3 conv3d 16 3x3 time 3\n4 temporal_pool attention\n5 conv 16 3x3\n6 seg_output\n"),
         ] {
             let g = nnb_core::dsl::apply(text, &Default::default()).unwrap();
             let a = analyze(&g, &ds);
             assert!(a.ok && ds.problems().is_empty(), "{name}: {:?} {:?}", a.problems, ds.problems());
             assert_eq!(a.input, vec![2, 6, 16, 16]);
-            let t = TrainSettings { epochs: if name == "ts_seg" { 12 } else { 10 }, batch_size: 16, amp: false, aug_hflip: true, aug_rotate: 10.0, ..Default::default() }.clean();
+            let t = TrainSettings { epochs: if name == "ts_seg" { 20 } else { 10 }, batch_size: 16, amp: false, aug_hflip: true, aug_rotate: 10.0, ..Default::default() }.clean();
             let d = format!("{dir}/{name}");
             std::fs::create_dir_all(&d).unwrap();
             std::fs::write(format!("{d}/train.py"), train_script(&g, &ds, &a, &t, name).unwrap()).unwrap();

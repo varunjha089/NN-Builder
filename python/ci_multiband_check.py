@@ -408,7 +408,7 @@ def make_timeseries(root):
             np.save(os.path.join(root, "ts_seq", "train", kind, f"{i}.npy"), series(kind, rng, (16, 16)))   # (dates, bands, H, W)
     for part in ("images", "masks"):
         os.makedirs(os.path.join(root, "ts_seg", part), exist_ok=True)
-    for i in range(80):
+    for i in range(160):
         # fields: the left half one crop, the right half the other (which is which at random), a 3-pixel border of background
         left, right = ("early", "late") if rng.random() < 0.5 else ("late", "early")
         a = rng.normal(0, 0.3, size=(6, 2, 16, 16)).astype(np.float32)
