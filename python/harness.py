@@ -317,6 +317,11 @@ class HFBands(torch.utils.data.Dataset):
     def __init__(self, ds, train):
         self.ds, self.train = ds, train
         self.names = {n: i for i, n in enumerate(CLASSES)}
+        try:
+            # array columns as NumPy arrays (an Array3D read row by row as nested lists is many times slower)
+            self.ds = ds.with_format("numpy", columns=[DATASET["hf_image_col"]], output_all_columns=True)
+        except Exception:
+            pass
 
     def __len__(self):
         return len(self.ds)
