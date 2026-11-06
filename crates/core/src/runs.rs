@@ -830,6 +830,9 @@ fn kaggle_fetch(c: &KaggleCreds, d: &Path, info: &mut RunInfo) -> Result<()> {
     save(d, info)
 }
 
+/// the start of the note a run gets while Kaggle cannot be asked about it (cleared when it answers again)
+const KAGGLE_DOWN: &str = "Kaggle could not be reached";
+
 pub fn status(pr: &Project, id: &str, since: usize, creds: &Creds) -> Result<Status> {
     let d = run_dir(pr, id)?;
     let mut info = info(&d);
@@ -842,9 +845,13 @@ pub fn status(pr: &Project, id: &str, since: usize, creds: &Creds) -> Result<Sta
             info.last_poll = now();
             if info.kind == "kaggle" {
                 if let Some(c) = &creds.kaggle {
+                    let was_down = info.error.starts_with(KAGGLE_DOWN);
                     match cloud::kaggle_status(c, &info.kernel) {
                         Ok((s, _)) => {
                             info.reachable = true;
+                            if was_down {
+                                info.error.clear(); // Kaggle answers again: the earlier poll's error is over
+                            }
                             if s != "running" {
                                 if kaggle_fetch(c, &d, &mut info).is_err() && s == "error" {
                                     info.error = format!("The notebook failed on Kaggle: see {}", info.url);
@@ -857,8 +864,11 @@ pub fn status(pr: &Project, id: &str, since: usize, creds: &Creds) -> Result<Sta
                             }
                         }
                         Err(e) => {
+                            // (no network for a moment, or Kaggle busy: the run on Kaggle goes on; the next poll tries again)
                             info.reachable = false;
-                            info.error = e.to_string();
+                            let why = e.to_string();
+                            info.error = format!("{KAGGLE_DOWN} ({}); the run itself is not affected and the app tries again.",
+                                if why.contains("NameResolution") || why.contains("ConnectionError") { "no connection".to_string() } else { why.chars().take(200).collect() });
                         }
                     }
                 }
