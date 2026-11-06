@@ -3,6 +3,10 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 06_11_26_13_36_14
+
+**Shared weights (Siamese networks): Shared-weights and Subtract blocks, Twin branch button, before/after pairs as data** (`7de152b`)
+
 ## 06_11_26_13_20_35
 
 **Inputs at their own sizes: the second band group keeps its own image size and reaches the network as a separate input** (`76fa306`)

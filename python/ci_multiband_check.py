@@ -363,7 +363,7 @@ def make_change(root):
     for cls in ("changed", "same"):
         for part in ("before", "after"):
             os.makedirs(os.path.join(root, part, cls), exist_ok=True)
-        for i in range(150):
+        for i in range(200):
             base = rng.normal(0, 1, size=(2, 24, 24)).astype(np.float32) + rng.uniform(-2, 2)
             after = base + rng.normal(0, 0.2, size=base.shape).astype(np.float32)
             if cls == "changed":
