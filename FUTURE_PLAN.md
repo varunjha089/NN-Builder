@@ -17,6 +17,20 @@ What is still open, in the suggested order. Done work is in git and CLAUDE.md; t
 6. **Release 0.4.0** with housekeeping: upload-artifact action update (Node.js 20 warning), delete the local backup branch, the first
    real updater test (see section 1).
 
+## 0b. Why the architecture steps (section 1b) are in this order
+
+- First the real-data run and release 0.4.0 (section 0, tasks 5 and 6): nothing below is worth building on untested data paths.
+- Losses (2) are the smallest change and help the owner's segmentation now; they also define the per-output loss that steps 4 and 8 use.
+- The custom block (3) comes next because it unblocks everything the app lacks while the rest is built, and its one-batch shape check
+  is reused by every later block.
+- Several inputs / outputs (4) is the big structural change (a batch becomes a dict); weight sharing (5), cross-attention (7) and
+  detection heads (8) all need it, so it goes before them.
+- Time series (6) after 4–5 because it reuses the multi-input data path and pairs; it is the step most useful for remote sensing.
+- Transformer additions (7) after 6, because masks are needed there for missing dates and cross-attention needs 4.
+- Detection (8) needs losses (2), several heads (4) and a new dataset kind, so it is late.
+- Multi-GPU (9) is independent of the model; it pays off once large ViTs and time series exist.
+- Fine-tuning and MoE (10) are refinements on top of everything else.
+
 ## 1. Needs the owner (cannot be done from here)
 
 - **Stable signing certificate.** Create a self-signed code-signing certificate in Keychain Access; the build then uses it through an
@@ -54,16 +68,39 @@ What is still open, in the suggested order. Done work is in git and CLAUDE.md; t
      text: `input 1`, `input 2`), each a branch, joined by Concat / Add; the generated forward slices the stacked tensor per group, so
      the data path stays one tensor. Sentinel-1 dB per group; statistics per band; pictures from the first group.
      Real multi-input (different sizes / sources per Input) stays step 2.
-2. **Several inputs and outputs:** more than one Input block (each bound to a data source or a band group: S1 + S2 fusion, Siamese
-   pairs) and more than one Output (multi-task heads, each with its loss and weight); shapes, codegen, text language and harness.
-3. **Weight sharing:** a block that reuses another block's weights (Siamese / twin networks).
-4. **Losses and custom blocks:** BCE, focal, Dice, MSE / L1 (regression), contrastive / triplet per output; a "custom PyTorch" block
-   (code plus a declared output shape, checked on the GPU machine by the one-batch check).
-5. **Transformer additions:** cross-attention (two inputs), attention masks (causal / padding), sinusoidal and rotary positions, RMSNorm.
-6. **Other data:** Conv1d / Conv3d and their pools (signals, volumes, video), LSTM / GRU, token embeddings for text.
-7. **Object detection:** an anchor-free head (FCOS / CenterNet style) with box losses and mAP, and box datasets.
-8. **Dynamic structures:** mixture-of-experts layers (top-k routing), early-exit heads.
-9. **Multi-GPU training:** DistributedDataParallel / FSDP on machines with several GPUs (college server, multi-GPU EC2).
+Reordered 2026-11-06 (the owner asked "can it handle all modern architectures?"). Today it covers 2-D image classification,
+multi-label and segmentation: CNNs (VGG / ResNet / MobileNet-style), U-Net, ViTs from Tiny to g/14, hybrids, ImageNet weights, S1 + S2
+fusion. What limits it is less the block list than the fixed training setup: one input, one output, cross-entropy / BCE only, no
+escape hatch, 2-D only, supervised only, one GPU. The steps below, in this order, each building on the ones before
+(why the order: section 0b):
+
+2. **Losses:** Dice, focal, Dice + CE, MSE / L1 / Huber (regression, a "regress" task), chosen in the Train tab; Dice / focal first,
+   for unbalanced Sentinel segmentation. Harness `loss_of` gains the cases; class weights keep working.
+3. **Custom PyTorch block (escape hatch):** a block holding a few lines of PyTorch (`__init__` and `forward` bodies) plus a declared
+   output shape (formula in the input shape); shapes trusts the declaration, codegen pastes the code into the model class, the
+   one-batch check on the GPU machine compares the real shape with the declared one. Also a custom loss (a function of logits and
+   targets). Saved in the .nnb and the text language (`custom name { ... }`); no Python ever runs on the Mac.
+4. **Several inputs and outputs:** more than one Input (each bound to a data source or band group; inputs of different sizes, e.g.
+   10 m S2 and 20 m bands, or S1 and S2 at their own sizes) and more than one Output (multi-task heads, each with its task, loss
+   and weight, and its own scores in Results); shapes, codegen, text language, harness (a batch becomes a dict of tensors).
+5. **Weight sharing:** a block that reuses another block's weights (or a whole branch: Siamese / twin networks); with step 4 this
+   gives change detection from before / after image pairs (OSCD-style), with a pair dataset layout.
+6. **Time dimension:** time-series data (a stack of dated Sentinel-2 / Sentinel-1 images per place: a folder per patch, or a band
+   axis of T×C in one GeoTIFF; Earth Engine script for monthly composites), Conv3d / Conv1d and their pools, temporal attention over
+   the date axis per pixel (U-TAE-style) and over tokens (TSViT-style), LSTM / GRU, date encodings; per-pixel crop-type
+   segmentation (PASTIS-style) and per-patch classification.
+7. **Transformer additions:** cross-attention (two inputs, needs step 4), attention masks (causal / padding; needed by step 6 for
+   missing dates), sinusoidal and rotary positions, RMSNorm, gated MLP (SwiGLU); token embeddings for text.
+8. **Object detection:** an anchor-free head (FCOS / CenterNet style) with box losses and box mAP, box datasets (COCO / YOLO txt),
+   boxes drawn in the mistakes gallery; needs steps 2 and 4.
+9. **Multi-GPU training:** DistributedDataParallel / FSDP on machines with several GPUs (college server, multi-GPU EC2), for the large
+   ViTs and long time series.
+10. **Fine-tuning and dynamic structures:** LoRA / adapters on pretrained backbones, freezing by layer group; mixture-of-experts layers
+    (top-k routing), early-exit heads.
+
+**Left out on purpose:** diffusion models, GANs, VAEs, LLM pretraining and self-supervised pretraining (MAE, DINO, CLIP). Each needs its
+own training loop (noise schedules and sampling, two optimisers, KL terms, augmented views); that is research code, which suits a code
+editor better than a canvas. With step 3 their parts (a U-Net block with timestep input, a projection head) can still be prototyped.
 
 ## 2. The text language (details in [PROGRAMMING_LANGUAGE.md](PROGRAMMING_LANGUAGE.md), section 9)
 
