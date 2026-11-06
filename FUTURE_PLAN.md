@@ -2,6 +2,21 @@
 
 What is still open, in the suggested order. Done work is in git and CLAUDE.md; this file lists only what is left.
 
+## 0. Next six tasks (asked 2026-11-06, in this order)
+
+1. **Check data** (being built): a run that only loads the data and runs the one-batch check on the training machine, no training;
+   it reports files per class, band names and value ranges per band, empty pixels, CSV rows without a file, already-dB radar,
+   constant or all-empty bands, class balance, and shows a few composites; minutes instead of a wasted GPU hour.
+2. **Unbalanced classes**: class counts from Read folder / Read labels in the Dataset tab, an option to weight the loss by class
+   (inverse frequency; BCE pos_weight for multi-label), and per-class thresholds for multi-label chosen on the validation data.
+3. **Finish the Sentinel step**: a spatially separate test region for scenes (honest scores), BigEarthNet's own layout (a folder of
+   single-band GeoTIFFs per patch), ImageNet weights for more than 3 bands (first convolution expanded), Hugging Face band arrays.
+4. **Google Drive / Cloud Storage source**: Earth Engine exports reach the training machine directly (rclone / gsutil on the machine),
+   without passing through the Mac.
+5. **Real-data run** (needs the owner): Check data and a short training run on a real Sentinel export; the Earth Engine script run once.
+6. **Release 0.4.0** with housekeeping: upload-artifact action update (Node.js 20 warning), delete the local backup branch, the first
+   real updater test (see section 1).
+
 ## 1. Needs the owner (cannot be done from here)
 
 - **Stable signing certificate.** Create a self-signed code-signing certificate in Keychain Access; the build then uses it through an
