@@ -3,6 +3,10 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 06_11_26_18_43_29
+
+**Several GPUs: train.py starts a DistributedDataParallel worker per GPU, forwards signals, syncs flags; rank 0 evaluates and checkpoints** (`2a18877`)
+
 ## 06_11_26_17_24_48
 
 **CI: the loss formula check knows the detection flag** (`417eece`)
