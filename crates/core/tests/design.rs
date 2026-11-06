@@ -394,7 +394,9 @@ fn multiband_datasets() {
     let bad = |f: &dyn Fn(&mut Dataset)| { let mut d = ds.clone(); f(&mut d); d.problems().join(" ") };
     assert!(bad(&|d| d.bands = s(&["B04", "B99"])).contains("B99 is not in the bands of the files"));
     assert!(bad(&|d| d.bands = s(&["B04", "B04"])).contains("chosen twice"));
-    assert!(bad(&|d| d.source = "huggingface".into()).contains("your own files or a Kaggle dataset"));
+    // Hugging Face band arrays are allowed; the built-in sets are not
+    assert!(!bad(&|d| { d.source = "huggingface".into(); d.hf_repo = "owner/bands".into(); }).contains("Multispectral"));
+    assert!(bad(&|d| { d.source = "builtin".into(); d.resize = true; }).contains("Hugging Face dataset with band arrays"));
     // Sentinel-1: two bands
     let s1 = Dataset { sensor: "s1".into(), s1_db: true, band_order: s(SENTINEL1_BANDS), bands: s(SENTINEL1_BANDS), ..ds.clone() };
     assert!(s1.problems().is_empty());

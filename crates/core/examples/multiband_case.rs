@@ -25,7 +25,7 @@ fn main() {
         ("s1gee", Dataset { source: "local".into(), local_dir: format!("{dir}/own/s1"), local_on_machine: true, image_size: [32, 32], sensor: "s1".into(),
             s1_db: true, band_order: s(&["VV", "VH", "angle"]), bands: s(SENTINEL1_BANDS), classes: s(&["flood", "land"]), ..Default::default() }),
         ("scene", Dataset { source: "local".into(), task: "segment".into(), layout: "scene".into(), local_dir: format!("{dir}/own/scene"),
-            local_on_machine: true, scene_image: "nnb_image".into(), scene_label: "nnb_label".into(), image_size: [16, 16], sensor: "s2".into(),
+            local_on_machine: true, scene_image: "nnb_image".into(), scene_label: "nnb_label".into(), scene_split: "strip".into(), image_size: [16, 16], sensor: "s2".into(),
             band_order: s(&["B2", "B3", "B4", "B8"]), bands: s(&["B4", "B8"]), classes: s(&["land", "water", "forest"]), ..Default::default() }),
         ("segfiles", Dataset { source: "local".into(), task: "segment".into(), local_dir: format!("{dir}/own/segfiles"), local_on_machine: true,
             kaggle_train_dir: "images".into(), kaggle_mask_dir: "masks".into(), image_size: [16, 16], sensor: "other".into(),
@@ -43,6 +43,17 @@ fn main() {
         // unbalanced classes (10 : 1), trained with inverse-frequency class weights
         ("imbalanced", Dataset { source: "local".into(), local_dir: format!("{dir}/own/imb"), local_on_machine: true, image_size: [16, 16],
             sensor: "other".into(), band_order: s(&["b1", "b2"]), bands: s(&["b1", "b2"]), classes: s(&["common", "rare"]), ..Default::default() }),
+        // BigEarthNet v2's layout: a folder of single-band GeoTIFFs per patch (10 m and 20 m sizes), metadata.parquet with label lists, a
+        // split column and s1_name pairing the Sentinel-1 patch folders (fusion); a class name with commas
+        ("ben", Dataset { source: "local".into(), task: "multilabel".into(), local_dir: format!("{dir}/own/ben"), local_on_machine: true,
+            labels_csv: "metadata.parquet".into(), kaggle_train_dir: "BigEarthNet-S2".into(), image_size: [24, 24], sensor: "s2".into(),
+            band_order: s(SENTINEL2_BANDS), bands: s(&["B02", "B03", "B04", "B05", "B08"]), sensor2: "s1".into(), band_order2: s(&["VV", "VH"]),
+            bands2: s(&["VV", "VH"]), fuse_dir: "BigEarthNet-S1".into(),
+            classes: s(&["Beaches, dunes, sands", "Coniferous forest", "Inland waters"]), ..Default::default() }),
+        // a Hugging Face dataset whose image column holds band arrays (a local copy in parquet, so CI needs no network for it)
+        ("hfbands", Dataset { source: "huggingface".into(), hf_repo: "ci/hfbands".into(), hf_test_split: "test".into(), hf_image_col: "bands".into(),
+            image_size: [16, 16], sensor: "other".into(), band_order: s(&["b1", "b2", "b3", "b4"]), bands: s(&["b2", "b4"]),
+            classes: s(&["dark", "bright"]), ..Default::default() }),
         // Check data on Sentinel-1 left in linear units (the report must say so), with an extra constant band
         ("check", Dataset { source: "kaggle".into(), kaggle_slug: "ci/sentinel1".into(), image_size: [32, 32], sensor: "s1".into(),
             band_order: s(SENTINEL1_BANDS), bands: s(SENTINEL1_BANDS), classes: s(&["flood", "land"]), ..Default::default() }),
@@ -50,6 +61,18 @@ fn main() {
     let mid = nnb_core::dsl::apply("net \"mid fusion ci\"\n1 input 1\n2 conv 16 3x3\n3 maxpool 2x2\n4 input 2\n5 conv 8 3x3\n6 maxpool 2x2\n\
         7 concat <- 3, 6\n8 conv 32 3x3\n9 global_pool\n10 output\n", &Default::default()).unwrap();
     let seg = nnb_core::dsl::apply("net \"multiband seg ci\"\n1 input\n2 conv 16 3x3\n3 conv 16 3x3\n4 seg_output\n", &Default::default()).unwrap();
+    // ImageNet's ResNet-18 on 4 Sentinel-2 bands: its first convolution widened from 3 to 4 channels
+    {
+        let ds = Dataset { source: "kaggle".into(), kaggle_slug: "ci/sentinel2".into(), image_size: [32, 32], sensor: "s2".into(),
+            band_order: s(SENTINEL2_BANDS), bands: s(&["B02", "B03", "B04", "B08"]), classes: s(&["forest", "water"]), ..Default::default() };
+        let g = nnb_core::templates::build("resnet18").unwrap();
+        let a = analyze(&g, &ds);
+        assert!(a.ok, "resnet18 on 4 bands: {:?}", a.problems);
+        let t = TrainSettings { pretrained: "resnet18".into(), epochs: 1, batch_size: 16, amp: false, ..Default::default() }.clean();
+        let d = format!("{dir}/pretrained_ms");
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(format!("{d}/train.py"), train_script(&g, &ds, &a, &t, "pretrained_ms").unwrap()).unwrap();
+    }
     for (name, ds) in cases {
         assert!(ds.problems().is_empty(), "{name}: {:?}", ds.problems());
         let g = if ds.task == "segment" { &seg } else if name == "fusion" { &mid } else { &g };

@@ -45,7 +45,7 @@ jobs:
           python python/ci_memory_check.py ci_memory ci_split_a ci_split_b
       - name: Multispectral and radar images (Sentinel-2 / Sentinel-1 folders; real PyTorch on CPU)
         run: |
-          pip install tifffile
+          pip install tifffile pandas pyarrow datasets
           cargo run -q -p nnb-core --example multiband_case -- ci_multiband
           python python/ci_multiband_check.py ci_multiband
       - name: ImageNet weights in the demos (real PyTorch, downloads torchvision weights)

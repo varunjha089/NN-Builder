@@ -187,12 +187,18 @@ def load_pretrained(model, name):
         if owner(key) in my_bn:
             continue
         j = next((j for j, (k, st) in enumerate(src) if not used[j] and owner(k) not in ref_bn and st.shape == t.shape), None)
+        widen = False
+        if j is None and MULTI and t.dim() == 4 and t.shape[1] != 3:
+            # the first convolution of a multiband design: ImageNet's 3-channel filters, widened to the bands (expand_rgb)
+            j = next((j for j, (k, st) in enumerate(src) if not used[j] and owner(k) not in ref_bn and st.dim() == 4 and st.shape[1] == 3
+                      and st.shape[0] == t.shape[0] and st.shape[2:] == t.shape[2:]), None)
+            widen = j is not None
         if j is None:
             missing.append(key)
             continue
         used[j] = True
         pairs.setdefault(owner(key), owner(src[j][0]))
-        dst[key] = src[j][1].to(t.dtype)
+        dst[key] = (expand_rgb(src[j][1], t.shape[1]) if widen else src[j][1]).to(t.dtype)
         loaded.append(key)
     index = {k: j for j, (k, _) in enumerate(src)}
     for bn in [n for n, _ in model.named_modules() if n in my_bn]:  # BatchNorm: the one after the matching convolution
@@ -214,6 +220,17 @@ def load_pretrained(model, name):
                          f"a counterpart. Use ImageNet weights with the unchanged demo (its layers may be widened only at the output).")
     emit("pretrained", weights=name, loaded=len(loaded), total=len(dst), new=[k for k in missing if not k.endswith("num_batches_tracked")][:20])
     return loaded
+
+
+def expand_rgb(w, c):
+    """ImageNet's first-layer filters (out, 3, k, k) for c bands: the red, green and blue filters go to B04, B03 and B02 when the bands
+    include them (by name), every other band gets the mean of the three; all scaled by 3 / c so the layer's output keeps its size"""
+    names = BANDS if c == len(BANDS) else next((g["bands"] for g in GROUPS if len(g["bands"]) == c), [""] * c)
+    rgb = {"B04": 0, "B03": 1, "B02": 2}
+    out = torch.stack([w[:, rgb[band_key(b)]] if band_key(b) in rgb else w.mean(1) for b in names], 1)
+    emit("info", message=f"ImageNet's first-layer filters widened from 3 to {c} channels "
+                         f"({sum(band_key(b) in rgb for b in names)} from red / green / blue, the others from their mean)")
+    return out * (3.0 / c)
 
 
 # ---------------------------------------------------------------- data
@@ -270,6 +287,67 @@ class HFImages(torch.utils.data.Dataset):
         if isinstance(label, str):
             label = self.names[label]
         return self.tfm(to_pil(row[DATASET["hf_image_col"]])), int(label)
+
+
+def hf_array(v):
+    """a Hugging Face cell holding a multiband image as a NumPy array: an array / nested list, GeoTIFF or .npy bytes, or a picture"""
+    import io
+    import numpy as np
+    if isinstance(v, dict) and v.get("bytes") is not None:
+        data = v["bytes"]
+        if data[:4] in (b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+"):
+            try:
+                import tifffile
+            except ImportError:
+                subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "tifffile", "imagecodecs"], check=False)
+                import tifffile
+            return tifffile.imread(io.BytesIO(data))
+        if data[:6] == b"\x93NUMPY":
+            return np.load(io.BytesIO(data))
+        from PIL import Image
+        return np.asarray(Image.open(io.BytesIO(data)))
+    if isinstance(v, dict) and v.get("path"):
+        return read_array(v["path"])
+    return np.asarray(v)
+
+
+class HFBands(torch.utils.data.Dataset):
+    """multiband images from a Hugging Face split (an array column, or GeoTIFF bytes): bands picked by name, normalised per band; labels
+    as for pictures (a class, a list of classes for multi-label, or a mask column for segmentation)"""
+    def __init__(self, ds, train):
+        self.ds, self.train = ds, train
+        self.names = {n: i for i, n in enumerate(CLASSES)}
+
+    def __len__(self):
+        return len(self.ds)
+
+    def raw(self, i):
+        import numpy as np
+        a = pick_bands(orient(hf_array(self.ds[i][DATASET["hf_image_col"]]), GROUPS[0]["order"], f"row {i}"), GROUPS[0])
+        t = torch.from_numpy(np.ascontiguousarray(a))
+        h, w = DATASET["image_size"]
+        if tuple(t.shape[1:]) != (h, w):
+            t = nn.functional.interpolate(t[None], size=(h, w), mode="bilinear", align_corners=False, antialias=True)[0]
+        return t
+
+    def __getitem__(self, i):
+        import numpy as np
+        row = self.ds[i]
+        x = normalise(self.raw(i))
+        if SEG:
+            y = mask_classes(np.asarray(hf_array(row[DATASET["hf_mask_col"]])).squeeze(), x.shape[1:])
+        elif MULTILABEL:
+            y = torch.zeros(len(CLASSES))
+            v = row[DATASET["hf_label_col"]]
+            for c in (v if isinstance(v, (list, tuple)) else [v]):
+                y[self.names[c] if isinstance(c, str) else int(c)] = 1.0
+        else:
+            v = row[DATASET["hf_label_col"]]
+            y = self.names[v] if isinstance(v, str) else int(v)
+        if self.train:
+            x, y2 = flips(x, y if SEG else None)
+            y = y2 if SEG else y
+        return x, y
 
 
 class HFPairs:
@@ -418,6 +496,12 @@ def read_array(path, order=None):
             subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "tifffile", "imagecodecs"], check=False)
             import tifffile
         a = tifffile.imread(path)
+    return orient(a, order, os.path.basename(path))
+
+
+def orient(a, order=None, name="an image"):
+    """an array as float32 (bands, H, W): the band axis is the one that matches the number of bands of the files"""
+    import numpy as np
     a = np.asarray(a, dtype=np.float32)
     if a.ndim == 2:
         a = a[None]
@@ -426,7 +510,7 @@ def read_array(path, order=None):
     if a.ndim == 3 and a.shape[0] != len(order) and a.shape[-1] == len(order):
         a = a.transpose(2, 0, 1)
     if a.ndim != 3 or a.shape[0] != len(order):
-        raise SystemExit(f"DATA: {os.path.basename(path)} has shape {tuple(a.shape)}, but the files should have {len(order)} bands "
+        raise SystemExit(f"DATA: {name} has shape {tuple(a.shape)}, but the files should have {len(order)} bands "
                          f"({' '.join(order)}); check the band order in the Dataset tab.")
     return a
 
@@ -450,9 +534,38 @@ def pick_bands(a, g=None):
     return a
 
 
+def read_patch_folder(folder, g):
+    """BigEarthNet's layout: a folder per patch with one GeoTIFF per band (<patch>_B02.tif, <patch>_VV.tif, …); the chosen bands of group
+    g, each brought to the largest band's size (Sentinel-2 has 10, 20 and 60 m bands), in the chosen order"""
+    import numpy as np
+    files = {}
+    for f in os.listdir(folder):
+        stem, ext = os.path.splitext(f)
+        if ext.lower() in BAND_EXT:
+            files[band_key(stem.rsplit("_", 1)[-1])] = os.path.join(folder, f)
+    planes = []
+    for b in g["bands"]:
+        f = files.get(band_key(b))
+        if f is None:
+            raise SystemExit(f"DATA: {os.path.basename(folder)} has no file for band {b} (found: {', '.join(sorted(files)) or 'none'}).")
+        a = read_array(f, [b])
+        planes.append(torch.from_numpy(np.ascontiguousarray(a[0], dtype=np.float32)))
+    size = max((p.shape for p in planes), key=lambda s: s[0] * s[1])
+    planes = [p if tuple(p.shape) == tuple(size) else
+              nn.functional.interpolate(p[None, None], size=tuple(size), mode="bilinear", align_corners=False)[0, 0] for p in planes]
+    a = torch.stack(planes).numpy()
+    g2 = dict(g, idx=list(range(len(g["bands"]))))       # already in the chosen order: only the dB step of pick_bands is left
+    return pick_bands(a, g2)
+
+
+FUSE_BY_PATH = {}  # labels tables that name the second group's file per row (BigEarthNet: s1_name): first path -> second path
+
+
 def fuse_path(path):
     """the second band group's file for a first-group file: the same path relative to the first group's folder, in the second group's
     folder, with any of the extensions .tif / .tiff / .npy"""
+    if path in FUSE_BY_PATH:
+        return FUSE_BY_PATH[path]
     base1, base2 = FUSE
     stem = os.path.splitext(os.path.relpath(path, base1))[0]
     for ext in BAND_EXT + tuple(e.upper() for e in BAND_EXT):
@@ -467,7 +580,8 @@ def read_groups(path, resize=True):
     out = []
     for k, g in enumerate(GROUPS):
         p = path if k == 0 else fuse_path(path)
-        t = torch.from_numpy(np.ascontiguousarray(pick_bands(read_array(p, g["order"]), g)))
+        a = read_patch_folder(p, g) if os.path.isdir(p) else pick_bands(read_array(p, g["order"]), g)
+        t = torch.from_numpy(np.ascontiguousarray(a))
         h, w = DATASET["image_size"]
         if resize and tuple(t.shape[1:]) != (h, w):
             t = nn.functional.interpolate(t[None], size=(h, w), mode="bilinear", align_corners=False, antialias=True)[0]
@@ -623,8 +737,16 @@ def split_labels(cell, names):
     cell = cell.strip()
     if not cell:
         return []
-    parts = [x.strip() for x in re.split(r"[;,|]", cell)] if re.search(r"[;,|]", cell) else ([cell] if cell in names else cell.split())
     out = []
+    # class names that themselves contain , ; | (BigEarthNet: "Beaches, dunes, sands") are taken whole first
+    for name in sorted((n for n in names if re.search(r"[;,|]", n)), key=len, reverse=True):
+        if name in cell:
+            out.append(names[name])
+            cell = cell.replace(name, "")
+    cell = cell.strip(" ;,|")
+    if not cell:
+        return out
+    parts = [x.strip() for x in re.split(r"[;,|]", cell)] if re.search(r"[;,|]", cell) else ([cell] if cell in names else cell.split())
     for x in parts:
         x = x.strip().strip("'\"[]")
         if x in names:
@@ -636,51 +758,111 @@ def split_labels(cell, names):
     return out
 
 
-def label_rows(root):
-    """(image file, multi-hot tensor) for every row of the labels CSV whose image exists; files are found relative to the CSV's folder,
-    then the training folder, with or without their extension"""
+SPLIT_COLS = ("split", "set", "subset", "fold")
+FUSE_COLS = ("s1_name", "s1_patch", "s1", "fuse", "second")
+
+
+def read_table(path):
+    """the labels table as (header, rows of strings or lists): CSV / TSV, or Parquet (BigEarthNet's metadata.parquet; needs pyarrow,
+    installed when missing)"""
+    if path.lower().endswith(".parquet"):
+        try:
+            import pandas as pd
+            import pyarrow  # noqa: F401
+        except ImportError:
+            subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "pandas", "pyarrow"], check=False)
+            import pandas as pd
+        df = pd.read_parquet(path)
+        head = [str(c) for c in df.columns]
+        rows = [[v.tolist() if hasattr(v, "tolist") and not isinstance(v, str) else v for v in r] for r in df.itertuples(index=False, name=None)]
+        return head, rows
     import csv
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        rows = list(csv.reader(f, delimiter="\t" if path.lower().endswith(".tsv") else ","))
+    return [h.strip() for h in rows[0]], rows[1:]
+
+
+def folder_index(base, depth=3):
+    """name -> path of every folder up to `depth` levels below base (BigEarthNet keeps patches in <tile>/<patch>/)"""
+    index, level = {}, [base]
+    for _ in range(depth):
+        nxt = []
+        for d in level:
+            try:
+                for e in os.scandir(d):
+                    if e.is_dir():
+                        index.setdefault(e.name, e.path)
+                        nxt.append(e.path)
+            except OSError:
+                pass
+        level = nxt
+    return index
+
+
+def label_rows(root):
+    """(image file or patch folder, multi-hot tensor, split or None) for every row of the labels table whose image exists; files are
+    found relative to the table's folder, then the training folder (also below it, for patch folders), with or without their extension.
+    A split column (train / validation / test) is used as given; a column naming the second band group's patch (s1_name) pairs them."""
     path = os.path.join(root, DATASET["labels_csv"])
     if not os.path.isfile(path):
         found = glob.glob(os.path.join(root, "**", DATASET["labels_csv"]), recursive=True)
         if not found:
             raise SystemExit(f"DATA: the labels file {DATASET['labels_csv']!r} is not in the dataset.")
         path = found[0]
-    with open(path, newline="", encoding="utf-8-sig") as f:
-        rows = list(csv.reader(f, delimiter="\t" if path.lower().endswith(".tsv") else ","))
-    head = [h.strip() for h in rows[0]]
+    head, rows = read_table(path)
     low = [h.lower() for h in head]
     names = {c: k for k, c in enumerate(CLASSES)}
     fcol = next((i for i, h in enumerate(low) if h in FILE_COLS), 0)
+    scol = next((i for i, h in enumerate(low) if h in SPLIT_COLS), None)
+    ucol = next((i for i, h in enumerate(low) if h in FUSE_COLS), None) if len(GROUPS) > 1 else None
     onehot = [head.index(c) for c in CLASSES if c in head]
-    lcol = None if len(onehot) == len(CLASSES) else next((i for i, h in enumerate(low) if h in LABEL_COLS and i != fcol),
-                                                          next((i for i in range(len(head)) if i != fcol), None))
+    skip = {fcol, scol, ucol}
+    lcol = None if len(onehot) == len(CLASSES) else next((i for i, h in enumerate(low) if h in LABEL_COLS and i not in skip),
+                                                          next((i for i in range(len(head)) if i not in skip), None))
     if lcol is None and len(onehot) != len(CLASSES):
-        raise SystemExit("DATA: the labels CSV needs a file column and a labels column (or one 0/1 column per class).")
-    bases = [os.path.dirname(path)] + ([kaggle_folder(root, DATASET["kaggle_train_dir"])] if DATASET.get("kaggle_train_dir") else []) + [root]
+        raise SystemExit("DATA: the labels table needs a file column and a labels column (or one 0/1 column per class).")
+    train_dir = kaggle_folder(root, DATASET["kaggle_train_dir"]) if DATASET.get("kaggle_train_dir") else None
+    bases = [os.path.dirname(path)] + ([train_dir] if train_dir else []) + [root]
     exts = ("",) + (BAND_EXT if MULTI else IMAGE_EXT)
+    index, fuse_index = None, None
     items, missing = [], 0
-    for r in rows[1:]:
-        if not r or len(r) <= fcol or not r[fcol].strip():
+    for r in rows:
+        if not r or len(r) <= fcol or not str(r[fcol]).strip():
             continue
         y = torch.zeros(len(CLASSES))
         if lcol is None:
             for k, c in enumerate(CLASSES):
-                y[k] = float(r[onehot[k]].strip() not in ("", "0", "0.0", "false", "False"))
+                y[k] = float(str(r[onehot[k]]).strip() not in ("", "0", "0.0", "false", "False"))
         else:
-            for k in split_labels(r[lcol] if lcol < len(r) else "", names):
+            cell = r[lcol] if lcol < len(r) else ""
+            ks = [names[v] if v in names else split_labels(str(v), names)[0] for v in cell] if isinstance(cell, (list, tuple)) \
+                else split_labels(str(cell), names)
+            for k in ks:
                 y[k] = 1.0
-        f = r[fcol].strip()
-        p = next((os.path.join(b, f + e) for b in bases for e in exts if os.path.isfile(os.path.join(b, f + e))), None)
+        f = str(r[fcol]).strip()
+        p = next((os.path.join(b, f + e) for b in bases for e in exts if os.path.exists(os.path.join(b, f + e))), None)
+        if p is None and MULTI:
+            if index is None:   # patch folders deeper down (BigEarthNet: <tile>/<patch>/)
+                index = folder_index(train_dir or os.path.dirname(path))
+            p = index.get(f)
         if p is None:
             missing += 1
             continue
-        items.append((p, y))
+        if ucol is not None and len(FUSE) == 2:
+            if fuse_index is None:
+                fuse_index = folder_index(FUSE[1])
+            q = fuse_index.get(str(r[ucol]).strip())
+            if q is None:
+                missing += 1
+                continue
+            FUSE_BY_PATH[p] = q
+        sp = str(r[scol]).strip().lower() if scol is not None else None
+        items.append((p, y, {"val": "validation", "valid": "validation"}.get(sp, sp)))
     if missing:
         emit("warning", message=f"{missing} rows of {os.path.basename(path)} name files that are not in the dataset (left out)")
     if len(items) < 2:
         raise SystemExit(f"DATA: {os.path.basename(path)}: no row names an image that is in the dataset (looked in {', '.join(bases)}).")
-    counts = sum(y for _, y in items)
+    counts = sum(it[1] for it in items)
     emit("info", message=f"{len(items)} images with labels; per class: " + ", ".join(f"{c} {int(n)}" for c, n in zip(CLASSES, counts)))
     return items
 
@@ -704,6 +886,40 @@ class LabelFiles(torch.utils.data.Dataset):
         return self.tfm(Image.open(path)), y
 
 
+def scene_split(root, tiles, seed):
+    """train and test tiles. "" = 10 % of the tiles at random (neighbours of training tiles: optimistic); "strip" = the eastern tenth of
+    every image, with one column of tiles left out between, so no test tile touches a training tile; "files" = a separately exported test
+    region (scene_test_image / scene_test_label)"""
+    how = DATASET.get("scene_split", "")
+    if how == "files":
+        te = scene_tiles(root, DATASET["scene_test_image"], DATASET["scene_test_label"])
+        emit("info", message=f"test region: {len(te)} tiles from {DATASET['scene_test_image']}")
+        return tiles, te
+    if how == "strip":
+        h, w = DATASET["image_size"]
+        widest = {}
+        for img, _, _, x0 in tiles:
+            widest[img] = max(widest.get(img, 0), x0 + w)
+        tr, te, gap = [], [], 0
+        for t in tiles:
+            cols = widest[t[0]] // w
+            cut = max(2, cols - max(1, round(cols * 0.1)))   # the first test column
+            col = t[3] // w
+            if col >= cut:
+                te.append(t)
+            elif col == cut - 1:
+                gap += 1                                    # touches the test strip: used for neither
+            else:
+                tr.append(t)
+        if not te or not tr:
+            raise SystemExit("DATA: the images are too narrow for a test strip (at least 3 columns of tiles): use a smaller image size, "
+                             "or a separate test region.")
+        emit("info", message=f"test strip: the eastern {len(te)} tiles; {gap} tiles next to it left out; {len(tr)} for training")
+        return tr, te
+    tr_i, te_i = split(len(tiles), seed)
+    return [tiles[i] for i in tr_i], [tiles[i] for i in te_i]
+
+
 def scene_files(root, what):
     p = os.path.join(root, what)
     if os.path.isfile(p):
@@ -715,13 +931,13 @@ def scene_files(root, what):
     return files
 
 
-def scene_tiles(root):
+def scene_tiles(root, image_what=None, label_what=None):
     """(image .npy, label .npy, row, column) of every tile with enough data: at least half of its pixels have a value in the image and at
     least one has a class in the label image. A large Earth Engine export may be split into several files (name-0000000000-0000000000.tif):
     each image file needs a label file with the same name (or one image file and one label file)."""
     import hashlib
     import numpy as np
-    imgs, labs = scene_files(root, DATASET["scene_image"]), scene_files(root, DATASET["scene_label"])
+    imgs, labs = scene_files(root, image_what or DATASET["scene_image"]), scene_files(root, label_what or DATASET["scene_label"])
     if len(imgs) == 1 and len(labs) == 1:
         pairs = [(imgs[0], labs[0])]
     else:
@@ -833,6 +1049,7 @@ def split(n, seed, part=0.1):
 def load_data(cfg):
     from torch.utils.data import Subset
     src = DATASET["source"]
+    given_val = None   # validation data given by the dataset itself (a split column)
     train_t, test_t = (None, None) if MULTI else (image_transform(True), image_transform(False))
     if src == "builtin":
         if SEG:
@@ -852,20 +1069,20 @@ def load_data(cfg):
         else:
             parts = tr.train_test_split(test_size=0.1, seed=cfg["seed"])
             tr, te = parts["train"], parts["test"]
-        if SEG:
+        if MULTI:
+            train, test, train_eval = HFBands(tr, True), HFBands(te, False), HFBands(tr, False)
+            multiband_stats(list(range(len(train))), cfg["seed"], load=train_eval.raw)
+        elif SEG:
             train, test, train_eval = SegPairs(HFPairs(tr), True), SegPairs(HFPairs(te), False), SegPairs(HFPairs(tr), False)
         else:
             train, test, train_eval = HFImages(tr, train_t), HFImages(te, test_t), HFImages(tr, test_t)
     elif MULTI and SEG:
-        if TRAIN.get("pretrained"):
-            raise SystemExit("DATA: ImageNet weights expect 3-channel pictures; train multispectral images from scratch for now.")
         root = data_root()
         if DATASET.get("layout") == "scene":
             first = os.path.join(root, DATASET["scene_image"])
             set_fuse(root, first if os.path.isdir(first) else os.path.dirname(first))
             tiles = scene_tiles(root)
-            tr_i, te_i = split(len(tiles), cfg["seed"])
-            tr, te = [tiles[i] for i in tr_i], [tiles[i] for i in te_i]
+            tr, te = scene_split(root, tiles, cfg["seed"])
             plain = SceneTiles(tr, False)
             multiband_stats(list(range(len(tr))), cfg["seed"], load=plain.raw)
             train, test, train_eval = SceneTiles(tr, True), SceneTiles(te, False), SceneTiles(tr, False)
@@ -877,21 +1094,27 @@ def load_data(cfg):
             multiband_stats(tr, cfg["seed"])
             train, test, train_eval = BandPairs(tr, True), BandPairs(te, False), BandPairs(tr, False)
     elif MULTILABEL:
-        if MULTI and TRAIN.get("pretrained"):
-            raise SystemExit("DATA: ImageNet weights expect 3-channel pictures; train multispectral images from scratch for now.")
         root = data_root()
-        items = label_rows(root)
         if MULTI:
             set_fuse(root, os.path.dirname(os.path.join(root, DATASET["labels_csv"])) if not DATASET.get("kaggle_train_dir")
                      else kaggle_folder(root, DATASET["kaggle_train_dir"]))
-        tr_i, te_i = split(len(items), cfg["seed"])
-        tr, te = [items[i] for i in tr_i], [items[i] for i in te_i]
+        rows = label_rows(root)
+        items = [(p, y) for p, y, _ in rows]
+        if any(sp in ("train", "test") for _, _, sp in rows):
+            # the table's own split (BigEarthNet: train / validation / test)
+            tr = [(p, y) for p, y, sp in rows if sp == "train"]
+            te = [(p, y) for p, y, sp in rows if sp == "test"]
+            va = [(p, y) for p, y, sp in rows if sp == "validation"]
+            emit("info", message=f"split from the labels table: {len(tr)} train, {len(va)} validation, {len(te)} test")
+            if va:
+                given_val = LabelFiles(va, False, test_t)
+        else:
+            tr_i, te_i = split(len(items), cfg["seed"])
+            tr, te = [items[i] for i in tr_i], [items[i] for i in te_i]
         if MULTI:
             multiband_stats(tr, cfg["seed"])
         train, test, train_eval = LabelFiles(tr, True, train_t), LabelFiles(te, False, test_t), LabelFiles(tr, False, test_t)
     elif MULTI:
-        if TRAIN.get("pretrained"):
-            raise SystemExit("DATA: ImageNet weights expect 3-channel pictures; train multispectral images from scratch for now.")
         root = data_root()
         set_fuse(root, kaggle_folder(root, DATASET["kaggle_train_dir"]))
         files = band_files(kaggle_folder(root, DATASET["kaggle_train_dir"]))
@@ -922,8 +1145,8 @@ def load_data(cfg):
                 tr_i, te_i = split(len(full_train), cfg["seed"])
                 train, test, train_eval = Subset(full_train, tr_i), Subset(full_test, te_i), Subset(full_test, tr_i)
     # a validation part of the training data (the same images without augmentation), so that the test data is used only once, at the end
-    val = None
-    if cfg.get("val_fraction"):
+    val = given_val
+    if val is None and cfg.get("val_fraction"):
         tr_i, va_i = split(len(train), cfg["seed"] + 7, cfg["val_fraction"])
         train, val = Subset(train, tr_i), Subset(train_eval, va_i)
     if cfg.get("limit_train"):
@@ -1235,7 +1458,7 @@ def labels_of(ds):
         return [l for _, l in ds.files]
     if isinstance(ds, LabelFiles):
         return [y for _, y in ds.items]
-    if isinstance(ds, HFImages):
+    if isinstance(ds, (HFImages, HFBands)) and not SEG:
         return list(ds.ds[DATASET["hf_label_col"]])
     for attr in ("targets", "labels"):
         if isinstance(getattr(ds, attr, None), (list, tuple)) or torch.is_tensor(getattr(ds, attr, None)):
@@ -1258,7 +1481,10 @@ def class_counts(ds, sample=64):
         labels = [ds[i][1] for i in random.Random(0).sample(range(len(ds)), min(500, len(ds)))]
     counts = [0] * k
     for y in labels:
-        if MULTILABEL:
+        if MULTILABEL and isinstance(y, (list, tuple)):   # a Hugging Face list of classes
+            for c in y:
+                counts[CLASSES.index(c) if isinstance(c, str) else int(c)] += 1
+        elif MULTILABEL:
             for c in range(k):
                 counts[c] += int(float(y[c]) > 0.5)
         elif isinstance(y, str):
@@ -1277,7 +1503,7 @@ def band_report(ds, sample=48):
     if files is not None:
         for p in random.Random(1).sample(files, min(sample, len(files))):
             raws.append(read_bands(p).numpy())
-    elif isinstance(ds, SceneTiles):
+    elif isinstance(ds, (SceneTiles, HFBands)):
         for i in random.Random(1).sample(range(len(ds)), min(sample, len(ds))):
             raws.append(ds.raw(i).numpy())
     if not raws:

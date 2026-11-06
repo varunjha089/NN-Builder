@@ -586,7 +586,15 @@ $3\times3$ convolution with 16 filters: $13\cdot9\cdot16+16 = 1\,888$). On the G
   \item shows the result pictures as composites: true colour (B04 B03 B02) for Sentinel-2, VV / VH / VV$-$VH for Sentinel-1, else the
         first three bands, each stretched between its 2nd and 98th percentile.
 \end{itemize}
-Not yet: ImageNet weights for more than three bands and Hugging Face datasets with band arrays (next steps in \file{FUTURE\_PLAN.md}).
+\textbf{ImageNet weights with bands.} \ui{Start from ImageNet weights} (Train tab) also works for satellite images: the first
+convolution's red, green and blue filters go to B04, B03 and B02 (matched by name), every other band gets the mean of the three, and all
+are scaled by $3/C$ for $C$ bands so the layer's output keeps its size; the rest of the network loads as usual. The images are still
+normalised per band (not with ImageNet's colour statistics).
+
+\textbf{Hugging Face.} A Hugging Face dataset whose image column holds band arrays (an array feature, or GeoTIFF / \file{.npy} bytes)
+is read the same way: choose the bands under \ui{Image bands} (type the band order, since it cannot be read on the Mac). Classification,
+multi-label (a list column) and segmentation (a mask column) work; two band groups need files (own files or Kaggle).
+
 Several classes per image (Section~\ref{sec:multilabel}) and Sentinel-1 with Sentinel-2 (Section~\ref{sec:fusion}) are below.
 GitHub Actions trains on generated Sentinel-2 (mixed \file{.tif} and \file{.npy}) and Sentinel-1 folders on every change and checks the
 bands, the statistics and the accuracy; it also trains on every layout of the next section.
@@ -610,8 +618,9 @@ and reads the first GeoTIFF's header: its size, number of bands and, when GEE or
   \item[Segmentation: a large image and a label image.] What GEE exports for a region: one image (possibly split into several files named
         \file{scene-0000000000-0000000000.tif} \dots) and a label image on the same grid with the same file names (in another folder). The
         images are cut into tiles of the image size; a tile is used when at least half of its pixels have data and at least one has a
-        class, and 10\,\% of the tiles are the test data (neighbouring tiles are alike, so this test is optimistic; a test region exported
-        separately is the honest check). The arrays are kept as \file{.npy} files in the data folder and read with memory mapping, so a
+        class. \ui{Test tiles}: 10\,\% at random (quick, but neighbouring tiles are alike, so the score is optimistic), the eastern
+        tenth of every image with one column of tiles left out between it and the training tiles (\emph{strip}: no test tile touches a
+        training tile), or a test region exported separately (\emph{files}: the most honest). The arrays are kept as \file{.npy} files in the data folder and read with memory mapping, so a
         scene larger than the memory works.
 \end{description}
 GEE's conventions are handled: band names B1 \dots\ B9 are the same as B01 \dots\ B09 everywhere in the app (\ui{Earth Engine SR (12,
@@ -627,7 +636,15 @@ The labels come from a CSV file (own files or Kaggle): one row per image, a file
 \texttt{path}, \texttt{patch\_id} \dots; with or without the extension, relative to the CSV's folder or the images folder) and either a
 labels column with the classes separated by \texttt{;} \texttt{,} \texttt{|} or spaces, or one 0/1 column per class. \ui{Read labels}
 reads the class names and how many images have each. From Hugging Face, choose a column that is a list of class labels. Rows that name
-a missing file are left out (with a warning).
+a missing file are left out (with a warning). A \texttt{split} column (\texttt{train} / \texttt{validation} / \texttt{test}) is used as
+given instead of a random split.
+
+\textbf{BigEarthNet v2 as it is downloaded.} Each patch is a folder of single-band GeoTIFFs (\file{<patch>/<patch>\_B02.tif} \dots, the
+20\,m and 60\,m bands at their own sizes) below a tile folder, and the labels are in \file{metadata.parquet} (a list of class names per
+patch, the split, and \texttt{s1\_name}, the matching Sentinel-1 patch). Choose \ui{BigEarthNet (19 classes, metadata.parquet)}, set the
+\ui{Images folder} to the Sentinel-2 folder, and for fusion add Sentinel-1 as the second band group with its folder: the patch folders are
+found below them, every band is brought to the largest band's size, and \texttt{s1\_name} pairs the two sensors. Parquet tables are read
+on the training machine only (the class names come from the preset or are typed).
 
 The network ends in the ordinary Output block, one score per class, but every class is its own yes/no: the score goes through a sigmoid,
 a class is predicted when it is at least 50\,\%, and the loss is binary cross-entropy summed over the classes (label smoothing pulls the

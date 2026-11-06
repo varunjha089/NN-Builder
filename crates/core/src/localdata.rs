@@ -59,7 +59,7 @@ pub fn describe(dir: &Path) -> Result<Value> {
     dirs.sort();
     dirs.dedup();
     let tifs: Vec<&String> = fs.iter().map(|f| &f.0).filter(|f| { let l = f.to_ascii_lowercase(); l.ends_with(".tif") || l.ends_with(".tiff") }).collect();
-    let csvs: Vec<&String> = fs.iter().map(|f| &f.0).filter(|f| { let l = f.to_ascii_lowercase(); l.ends_with(".csv") || l.ends_with(".tsv") }).take(20).collect();
+    let csvs: Vec<&String> = fs.iter().map(|f| &f.0).filter(|f| { let l = f.to_ascii_lowercase(); l.ends_with(".csv") || l.ends_with(".tsv") || l.ends_with(".parquet") }).take(20).collect();
     let tif = tifs.first().and_then(|f| tiff_info(&dir.join(f)).ok().map(|i| json!({"file": f, "width": i.width, "height": i.height,
         "bands": i.bands, "bits": i.bits, "float": i.float, "names": i.names})));
     Ok(json!({
@@ -202,6 +202,9 @@ const LABEL_COLS: &[&str] = &["labels", "label", "tags", "classes", "class", "ca
 /// a multi-label CSV (the same reading as the harness's label_rows): its columns, rows, the file column, and the class names: the 0/1
 /// columns, or every name found in the labels column (sorted), with how many images have each
 pub fn csv_classes(path: &Path) -> Result<Value> {
+    if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("parquet")) {
+        bail!("A Parquet table is read on the training machine only: type the class names, or use the BigEarthNet preset.");
+    }
     let text = std::fs::read_to_string(path)?;
     let text = text.trim_start_matches('\u{feff}');
     let sep = if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("tsv")) { '\t' } else { ',' };

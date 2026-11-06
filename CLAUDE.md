@@ -103,6 +103,14 @@ crates/core/src/
                            (clean() forces val_fraction ≥ 0.1) -> tune_thresholds() per-class F1-best threshold on validation, THRESH used
                            by multilabel_scores and pictures, thresholds.json; cloud::folder_counts -> "counts" in kaggle_files / local
                            describe, DatasetTab FolderCounts. CI: imbalanced case (10:1) and multilabel thresholds + sqrt pos_weight.
+                           Sentinel step finished: scene_split ("" random | strip = eastern tenth, one tile column gap | files =
+                           scene_test_image/_label) in harness scene_split(); BigEarthNet layout: read_patch_folder (one GeoTIFF per band,
+                           <patch>_<band>.tif, bands resized to the largest), label tables via read_table (CSV/TSV/Parquet, pyarrow on
+                           demand), folder_index for nested patch folders, split column used as given (given_val), s1_name pairs the
+                           fusion group (FUSE_BY_PATH), class names with commas matched whole (split_labels); DatasetTab BigEarthNet 19
+                           preset; ImageNet weights on bands: load_pretrained widens the first conv (expand_rgb: B04/B03/B02 get R/G/B,
+                           others the mean, ×3/C); HF band arrays: HFBands + hf_array (arrays, GeoTIFF / .npy bytes), problems() allows
+                           huggingface (not fused). CI cases: scene strip, ben, pretrained_ms, hfbands (local parquet as the HF repo).
                            Kaggle runs: data in /tmp/nnb_data (not /kaggle/working, the notebook output), checkpoint removed at the
                            end, kaggle_output deleted after metrics/results/model/log are copied; the run card shows the last check.
   dataset.rs               Multispectral / radar: bands, band_order, sensor (s2 | s1 | other), s1_db; SENTINEL2_BANDS (EuroSAT order),

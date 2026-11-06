@@ -91,6 +91,7 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
         {hf && conf?.columns.some((c) => c.type === "Image") && <HfPreview repo={ds.hf_repo} config={ds.hf_config || conf.name} split={ds.hf_train_split}
           labelCol={ds.task === "segment" ? "" : ds.hf_label_col} names={ds.classes} />}
         {!st.secrets.huggingface && <p className="muted small">Gated or private datasets need your Hugging Face token (Connection tab).</p>}
+        <BandsBox ds={ds} up={up} />
       </>}
 
       {ds.source === "kaggle" && <>
@@ -292,9 +293,17 @@ function LocalBox({ ds, up, toast }: { ds: Dataset; up: (p: Partial<Dataset>) =>
     </div> : scene ? <div className="form">
       <label>Image file or folder<input value={ds.scene_image ?? ""} onChange={(e) => up({ scene_image: e.target.value.trim() })} placeholder="e.g. nnb_image" /></label>
       <label>Label file or folder (class numbers 0, 1, 2 …)<input value={ds.scene_label ?? ""} onChange={(e) => up({ scene_label: e.target.value.trim() })} placeholder="e.g. nnb_label" /></label>
+      <label className="wide">Test tiles<select value={ds.scene_split ?? ""} onChange={(e) => up({ scene_split: e.target.value as Dataset["scene_split"] })}>
+        <option value="">10% of the tiles at random (quick, but optimistic: they touch training tiles)</option>
+        <option value="strip">the eastern tenth of every image, one column of tiles left out between (honest)</option>
+        <option value="files">a separately exported test region (most honest)</option></select></label>
+      {ds.scene_split === "files" && <>
+        <label>Test image file or folder<input value={ds.scene_test_image ?? ""} onChange={(e) => up({ scene_test_image: e.target.value.trim() })} placeholder="e.g. nnb_test_image" /></label>
+        <label>Test label file or folder<input value={ds.scene_test_label ?? ""} onChange={(e) => up({ scene_test_label: e.target.value.trim() })} placeholder="e.g. nnb_test_label" /></label>
+      </>}
       <p className="muted small wide">An export split into several files (name-0000000000-0000000000.tif) is fine: image and label files are paired by name. The
         images are cut into tiles of the image size below; tiles that are mostly empty are left out, and label pixels that are not a class
-        (no data, 255) are not scored. 10% of the tiles are the test data.{scan ? ` Seen: ${[...scan.dirs, ...scan.top].slice(0, 10).join(", ")}` : ""}</p>
+        (no data, 255) are not scored.{scan ? ` Seen: ${[...scan.dirs, ...scan.top].slice(0, 10).join(", ")}` : ""}</p>
     </div> : <div className="form">
       <label>Images folder<input value={ds.kaggle_train_dir} onChange={(e) => up({ kaggle_train_dir: e.target.value.trim() })} placeholder="e.g. images" /></label>
       <label>Masks folder (same file names)<input value={ds.kaggle_mask_dir} onChange={(e) => up({ kaggle_mask_dir: e.target.value.trim() })} placeholder="e.g. masks" /></label>
@@ -407,6 +416,11 @@ print("started", i + 1, "exports: see the Tasks tab or ee.batch.Task.list()")`;
   </details>;
 }
 
+const BIGEARTHNET19 = ["Urban fabric", "Industrial or commercial units", "Arable land", "Permanent crops", "Pastures", "Complex cultivation patterns",
+  "Land principally occupied by agriculture, with significant areas of natural vegetation", "Agro-forestry areas", "Broad-leaved forest",
+  "Coniferous forest", "Mixed forest", "Natural grassland and sparsely vegetated areas", "Moors, heathland and sclerophyllous vegetation",
+  "Transitional woodland, shrub", "Beaches, dunes, sands", "Inland wetlands", "Coastal wetlands", "Inland waters", "Marine waters"];
+
 /** multi-label: the CSV with each image's classes (a file column and a labels column, or one 0/1 column per class) */
 function LabelsCsv({ ds, up, scan, toast }: { ds: Dataset; up: (p: Partial<Dataset>) => void; scan?: LocalScan | null; toast?: (m: string) => void }) {
   const [info, setInfo] = useState<string>("");
@@ -419,10 +433,14 @@ function LabelsCsv({ ds, up, scan, toast }: { ds: Dataset; up: (p: Partial<Datas
     } catch (e) { toast?.(errText(e)); }
   };
   return <div className="form">
-    <label>Labels file (CSV)
+    <label>Labels file (CSV, TSV or Parquet)
       {scan?.csvs?.length ? <select value={ds.labels_csv ?? ""} onChange={(e) => up({ labels_csv: e.target.value })}>
         <option value="">choose…</option>{scan.csvs.map((c) => <option key={c} value={c}>{c}</option>)}</select>
         : <input value={ds.labels_csv ?? ""} onChange={(e) => up({ labels_csv: e.target.value.trim() })} placeholder="e.g. labels.csv" />}</label>
+    <p className="row small wide"><button className="small" onClick={() => up({ classes: BIGEARTHNET19, labels_csv: ds.labels_csv || "metadata.parquet" })}>
+      BigEarthNet (19 classes, metadata.parquet)</button>
+      <span className="muted">BigEarthNet v2: the patch folders (one GeoTIFF per band) are found below the images folder; its split column is used; with
+        Sentinel-1 as the second band group, the s1_name column pairs the patches.</span></p>
     <label>Images folder (optional)<input value={ds.kaggle_train_dir} onChange={(e) => up({ kaggle_train_dir: e.target.value.trim() })} placeholder="empty = next to the CSV" /></label>
     {ds.source === "local" && !ds.local_on_machine && <p className="row small wide"><button className="small" disabled={!ds.labels_csv || !ds.local_dir} onClick={read}>Read labels</button>
       <span className="muted">{info}</span></p>}

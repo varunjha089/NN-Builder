@@ -213,6 +213,9 @@ def own_files(root):
     ev = run(os.path.join(root, "scene"), data, "scene")
     tiles = next(e for e in ev if e["event"] == "info" and "tiles of 16×16" in e.get("message", ""))
     assert tiles["message"].startswith("126 tiles"), tiles  # 2 × 64 tiles, one without data in each
+    strip = next(e for e in ev if e["event"] == "info" and e.get("message", "").startswith("test strip"))
+    # 8 columns of tiles per image: the eastern one (8 rows × 2 images) is test, the one next to it is left out, the rest trains
+    assert strip["message"] == "test strip: the eastern 16 tiles; 16 tiles next to it left out; 94 for training", strip
     check = next(e for e in ev if e["event"] == "check")
     assert check["batch"][1:] == [2, 16, 16], check
     done = next(e for e in ev if e["event"] == "done")
@@ -279,6 +282,83 @@ def imbalanced(root):
     print(f"imbalanced: counts {c}, weights {w}, rare-class recall {rare_recall:.2f}, test accuracy {res['test_acc']:.3f}")
 
 
+def make_ben(root):
+    """BigEarthNet-like: S2 patch folders <tile>/<patch>/<patch>_<band>.tif (10 m bands 24×24, B05 12×12), S1 folders named differently,
+    metadata.parquet with label lists, split and s1_name"""
+    import pandas as pd
+    import tifffile
+    rng = np.random.default_rng(9)
+    classes = ["Beaches, dunes, sands", "Coniferous forest", "Inland waters"]
+    rows = []
+    for i in range(240):
+        has = [c for c in classes if rng.random() < 0.4]
+        patch, s1 = f"S2A_T{i % 3}_{i:04d}", f"S1B_X_{i:04d}"
+        pdir, sdir = os.path.join(root, "BigEarthNet-S2", f"tile{i % 3}", patch), os.path.join(root, "BigEarthNet-S1", f"tile{i % 3}", s1)
+        os.makedirs(pdir, exist_ok=True)
+        os.makedirs(sdir, exist_ok=True)
+        for b in ["B01", "B02", "B03", "B04", "B05", "B06", "B07", "B08", "B09", "B11", "B12", "B8A"]:
+            size = 24 if b in ("B02", "B03", "B04", "B08") else 12 if b != "B01" and b != "B09" else 4
+            a = rng.normal(1000, 120, size=(size, size)).astype(np.uint16 if b != "B05" else np.float32)
+            if b == "B08" and "Coniferous forest" in has:
+                a = a + 1500
+            if b == "B05" and classes[0] in has:
+                a = a + 800
+            tifffile.imwrite(os.path.join(pdir, f"{patch}_{b}.tif"), a.astype(np.float32))
+        for b in ("VV", "VH"):
+            r = rng.normal(-9, 1, size=(24, 24)).astype(np.float32)
+            if "Inland waters" in has:
+                r -= 10
+            tifffile.imwrite(os.path.join(sdir, f"{s1}_{b}.tif"), r)
+        rows.append({"patch_id": patch, "labels": has, "split": ["train", "train", "train", "validation", "test"][i % 5], "s1_name": s1})
+    pd.DataFrame(rows).to_parquet(os.path.join(root, "metadata.parquet"))
+
+
+def ben(root):
+    root = os.path.abspath(root)
+    make_ben(os.path.join(root, "own", "ben"))
+    ev = run(os.path.join(root, "ben"), os.path.join(root, "data"), "ben")
+    sp = next(e for e in ev if e["event"] == "info" and e.get("message", "").startswith("split from the labels table"))
+    assert sp["message"] == "split from the labels table: 144 train, 48 validation, 48 test", sp
+    check = next(e for e in ev if e["event"] == "check")
+    assert check["batch"][1:] == [7, 24, 24], check
+    done = next(e for e in ev if e["event"] == "done")
+    assert done["test_map"] >= 0.85, f"BigEarthNet-like: {done}"
+    print(f"ben: patch folders + parquet + s1_name fusion, {sp['message']}, mAP {done['test_map']}, micro F1 {done['test_acc']}")
+
+
+def pretrained_ms(root):
+    root = os.path.abspath(root)
+    ev = run(os.path.join(root, "pretrained_ms"), os.path.join(root, "data"), "pretrained_ms")
+    widened = next(e for e in ev if e["event"] == "info" and "widened" in e.get("message", ""))
+    assert "from 3 to 4 channels (3 from red / green / blue" in widened["message"], widened
+    pre = next(e for e in ev if e["event"] == "pretrained")
+    assert pre["loaded"] >= 0.8 * pre["total"] - 10, pre
+    print(f"pretrained_ms: {widened['message']}; {pre['loaded']} of {pre['total']} tensors loaded")
+
+
+def hfbands(root):
+    """a Hugging Face dataset (a local parquet copy) whose 'bands' column holds 4-band arrays; 'bright' is brighter in b4"""
+    import pandas as pd
+    root = os.path.abspath(root)
+    rng = np.random.default_rng(10)
+    d = os.path.join(root, "hfbands", "ci", "hfbands")
+    os.makedirs(d, exist_ok=True)
+    for split, n in (("train", 160), ("test", 40)):
+        rows = []
+        for i in range(n):
+            y = i % 2
+            a = rng.normal(0, 1, size=(4, 16, 16)).astype(np.float32)
+            a[3] += 3 * y
+            rows.append({"bands": a.tolist(), "label": y})
+        pd.DataFrame(rows).to_parquet(os.path.join(d, f"{split}.parquet"))
+    ev = run(os.path.join(root, "hfbands"), os.path.join(root, "data"), "hfbands")
+    check = next(e for e in ev if e["event"] == "check")
+    assert check["batch"][1:] == [2, 16, 16], check
+    done = next(e for e in ev if e["event"] == "done")
+    assert done["test_acc"] >= 0.9, done
+    print(f"hfbands: Hugging Face band arrays, bands b2 b4 -> {check['batch'][1:]}, test accuracy {done['test_acc']}")
+
+
 def check_data(root):
     """Check data: no training, a report that sees the linear Sentinel-1 values and counts the classes, and the one-batch check"""
     root = os.path.abspath(root)
@@ -301,3 +381,6 @@ if __name__ == "__main__":
     own_files(sys.argv[1])
     check_data(sys.argv[1])
     imbalanced(sys.argv[1])
+    ben(sys.argv[1])
+    pretrained_ms(sys.argv[1])
+    hfbands(sys.argv[1])

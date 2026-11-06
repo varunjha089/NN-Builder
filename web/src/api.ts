@@ -28,6 +28,7 @@ export interface Dataset {
   /** multispectral / radar images: the bands the model uses (in order), the bands in the files, the sensor, Sentinel-1 in dB */
   bands?: string[]; band_order?: string[]; sensor?: "" | "s2" | "s1" | "other"; s1_db?: boolean;
   local_dir?: string; local_on_machine?: boolean; layout?: "" | "scene"; scene_image?: string; scene_label?: string;
+  scene_split?: "" | "strip" | "files"; scene_test_image?: string; scene_test_label?: string;
   /** multi-label: the CSV with each image's classes; fusion: a second band group from files with the same names in fuse_dir */
   labels_csv?: string; bands2?: string[]; band_order2?: string[]; sensor2?: "" | "s2" | "s1" | "other"; s1_db2?: boolean; fuse_dir?: string;
 }

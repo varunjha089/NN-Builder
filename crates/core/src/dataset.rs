@@ -80,6 +80,14 @@ pub struct Dataset {
     pub scene_image: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub scene_label: String,
+    /// scene: how the test tiles are chosen: "" = 10 % at random (optimistic: they touch training tiles) | "strip" = the eastern tenth of
+    /// every image, one column of tiles left out between | "files" = a separately exported test region (scene_test_image / _label)
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub scene_split: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub scene_test_image: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub scene_test_label: String,
     /// multilabel (kaggle / local): the CSV with the labels, relative to the dataset: a file column (path relative to the CSV's folder or
     /// the training folder, with or without extension) and either a column of class names separated by ; , | or spaces, or one 0/1
     /// column per class. Hugging Face: the label column is a list of class labels.
@@ -193,6 +201,9 @@ impl Default for Dataset {
             layout: String::new(),
             scene_image: String::new(),
             scene_label: String::new(),
+            scene_split: String::new(),
+            scene_test_image: String::new(),
+            scene_test_label: String::new(),
             labels_csv: String::new(),
             bands2: vec![],
             band_order2: vec![],
@@ -304,6 +315,17 @@ impl Dataset {
                     if self.scene_image.is_empty() || self.scene_label.is_empty() {
                         p.push("Give the image (file or folder) and the label image (file or folder with the same file names).".into())
                     }
+                    if !matches!(self.scene_split.as_str(), "" | "strip" | "files") {
+                        p.push("Choose how the test tiles are chosen.".into())
+                    }
+                    if self.scene_split == "files" && (self.scene_test_image.is_empty() || self.scene_test_label.is_empty()) {
+                        p.push("Give the test region's image and label image (exported separately).".into())
+                    }
+                    for d in [&self.scene_test_image, &self.scene_test_label] {
+                        if !d.is_empty() && !ok_id(d) {
+                            p.push("Folders and files inside the dataset may contain letters, digits and - _ . / only.".into())
+                        }
+                    }
                 }
             }
             _ => p.push("Choose where the data comes from.".into()),
@@ -373,8 +395,11 @@ impl Dataset {
                         p.push("Give the folder with the second group's files (same file names as the first).".into())
                     }
                 }
-                if !matches!(self.source.as_str(), "kaggle" | "local") {
-                    p.push("Multispectral and radar images are read from GeoTIFF (.tif) or .npy files: your own files or a Kaggle dataset.".into())
+                if !matches!(self.source.as_str(), "kaggle" | "local" | "huggingface") {
+                    p.push("Multispectral and radar images come from your own files, a Kaggle dataset or a Hugging Face dataset with band arrays.".into())
+                }
+                if self.fused() && self.source == "huggingface" {
+                    p.push("Two band groups (fusion) are read from files: use your own files or Kaggle.".into())
                 }
             } else if !(1..=3).contains(&self.channels) || self.channels == 2 {
                 p.push("Channels must be 1 (grey) or 3 (colour).".into())
