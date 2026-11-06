@@ -65,7 +65,7 @@ pub fn describe(dir: &Path) -> Result<Value> {
     Ok(json!({
         "files": fs.len(), "bytes": fs.iter().map(|f| f.1).sum::<u64>(), "complete": fs.len() < MAX_LISTED,
         "tifs": tifs.len(), "npys": fs.iter().filter(|f| f.0.to_ascii_lowercase().ends_with(".npy")).count(),
-        "folders": folders.iter().map(|(p, c)| json!({"folder": p, "classes": c})).collect::<Vec<_>>(),
+        "folders": folders.iter().map(|(p, c)| json!({"folder": p, "classes": c, "counts": cloud::folder_counts(&listed, p, c)})).collect::<Vec<_>>(),
         "dirs": dirs.into_iter().take(40).collect::<Vec<_>>(),
         "csvs": csvs,
         "top": fs.iter().filter(|f| !f.0.contains('/')).map(|f| &f.0).take(40).collect::<Vec<_>>(),

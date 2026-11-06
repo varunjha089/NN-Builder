@@ -931,20 +931,71 @@ def load_data(cfg):
     return train, val, test
 
 
+LOSS_WEIGHT = None   # unbalanced classes: a weight per class (multi-label: pos_weight), set by class_weights()
+THRESH = None        # multi-label: a decision threshold per class chosen on the validation data (tune_thresholds), else 0.5
+
+
 def loss_of(out, y, smoothing=0.0):
     """cross-entropy (one class per image / pixel), or binary cross-entropy per class for multi-label (smoothing pulls the targets
-    towards 0.5)"""
+    towards 0.5); weighted by class when the Train tab asks for it"""
+    w = None if LOSS_WEIGHT is None else LOSS_WEIGHT.to(out.device)
     if MULTILABEL:
         t = y.float()
         if smoothing:
             t = t * (1 - smoothing) + 0.5 * smoothing
-        return nn.functional.binary_cross_entropy_with_logits(out.float(), t)
-    return nn.functional.cross_entropy(out, y, label_smoothing=smoothing)
+        return nn.functional.binary_cross_entropy_with_logits(out.float(), t, pos_weight=w)
+    return nn.functional.cross_entropy(out, y, weight=w, label_smoothing=smoothing)
+
+
+def class_weights(train, how):
+    """the weight of each class against imbalance: 'inverse' = N / (K·n_c) (multi-label: pos_weight = negatives / positives per class),
+    'sqrt' = its square root; a class without examples gets the largest weight; kept between 0.05 and 50 (pos_weight: 100)"""
+    global LOSS_WEIGHT
+    counts, _ = class_counts(train)
+    n = torch.tensor(counts, dtype=torch.float64)
+    if MULTILABEL:
+        total = float(len(train)) if labels_of(train) is not None else max(1.0, float(n.sum()))
+        w = (total - n).clamp_min(0) / n.clamp_min(1)
+        w = w.sqrt() if how == "sqrt" else w
+        w = w.clamp(0.05, 100)
+    else:
+        w = n.sum() / (len(counts) * n.clamp_min(1))
+        w = w.sqrt() if how == "sqrt" else w
+        w[n == 0] = w[n > 0].max() if bool((n > 0).any()) else 1.0
+        w = w.clamp(0.05, 50)
+    LOSS_WEIGHT = w.float()
+    emit("class_weights", how=how, counts=counts, weights=[round(float(v), 4) for v in LOSS_WEIGHT],
+         kind="pos_weight" if MULTILABEL else "weight")
+
+
+def tune_thresholds(model, data, device, batch=128):
+    """multi-label: for each class the threshold (0.05 … 0.95) with the highest F1 on the validation data (ties: the one nearest 0.5)"""
+    global THRESH
+    from torch.utils.data import DataLoader
+    model.eval()
+    probs, ys = [], []
+    with torch.no_grad():
+        for x, y in DataLoader(data, batch_size=batch, shuffle=False):
+            probs.append(torch.sigmoid(model(x.to(device)).float()).cpu())
+            ys.append(y > 0.5)
+    p, y = torch.cat(probs), torch.cat(ys)
+    grid = [round(0.05 * i, 2) for i in range(1, 20)]
+    best = []
+    for c in range(p.shape[1]):
+        def f1(t):
+            pred = p[:, c] >= t
+            tp, fp, fn = int((pred & y[:, c]).sum()), int((pred & ~y[:, c]).sum()), int((~pred & y[:, c]).sum())
+            return 2 * tp / max(1, 2 * tp + fp + fn)
+        best.append(max(grid, key=lambda t: (round(f1(t), 6), -abs(t - 0.5))) if bool(y[:, c].any()) else 0.5)
+    THRESH = torch.tensor(best)
+    emit("thresholds", thresholds=best)
+    with open(os.path.join(OUT, "thresholds.json"), "w") as f:
+        json.dump({"classes": CLASSES, "thresholds": best}, f)
 
 
 def multilabel_scores(prob, y):
     """micro / macro F1 at 0.5, mean average precision, exact match, and per class precision / recall / F1 / AP / support"""
-    pred, y = prob >= 0.5, y > 0.5
+    pred, y = prob >= (0.5 if THRESH is None else THRESH.view(1, -1)), y > 0.5
     tp, fp, fn = (pred & y).sum(0).float(), (pred & ~y).sum(0).float(), (~pred & y).sum(0).float()
     f1 = 2 * tp / (2 * tp + fp + fn).clamp_min(1)
     micro = float(2 * tp.sum() / (2 * tp.sum() + fp.sum() + fn.sum()).clamp_min(1))
@@ -1115,7 +1166,8 @@ def pictures(model, test, device):
         elif MULTILABEL:
             prob = torch.sigmoid(out[j]).cpu()
             res["samples"].append({"image": small(img), "labels": [k for k in range(len(CLASSES)) if test[i][1][k] > 0.5],
-                                   "preds": [k for k in range(len(CLASSES)) if prob[k] >= 0.5], "probs": [round(float(v), 3) for v in prob]})
+                                   "preds": [k for k in range(len(CLASSES)) if prob[k] >= (0.5 if THRESH is None else float(THRESH[k]))],
+                                   "probs": [round(float(v), 3) for v in prob]})
         else:
             prob = torch.softmax(out[j], 0).cpu()
             p = int(prob.argmax())
@@ -1458,6 +1510,8 @@ def main():
     if cfg.get("check_only"):
         check_only(model, train, val, test, loader(1), device)
         return
+    if cfg.get("class_weights") in ("inverse", "sqrt"):
+        class_weights(train, cfg["class_weights"])
     if pos["epoch"] == 0 and pos["step"] == 0:
         one_batch_check(model, loader(1), device)
     every = max(1, steps // 20)
@@ -1584,6 +1638,11 @@ def main():
         if early and os.path.exists(best_path):
             # the final model is the best epoch's, not the last one's
             model.load_state_dict(torch.load(best_path, map_location=device))
+        if MULTILABEL and cfg.get("tune_thresholds"):
+            if val is None:
+                emit("warning", message="per-class thresholds need validation data (Train tab: validation share); 0.5 is used")
+            else:
+                tune_thresholds(model, val, device)
         val_loss, val_acc, confusion, miou, iou, test_top5 = evaluate_safe(test)
     except Interrupted:
         interrupted()
@@ -1591,6 +1650,10 @@ def main():
     res = {"task": TASK, "test_acc": val_acc, "test_loss": val_loss, "classes": CLASSES, "confusion": None if MULTILABEL else confusion}
     if MULTILABEL:
         res.update(confusion)   # micro_f1 (= test_acc), macro_f1, map, exact, per_class
+        if THRESH is not None:
+            res["thresholds"] = [float(t) for t in THRESH]
+    if LOSS_WEIGHT is not None:
+        res["class_weights"] = [round(float(v), 4) for v in LOSS_WEIGHT]
     if test_top5 is not None:
         res["test_top5"] = test_top5
     if SEG:

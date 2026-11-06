@@ -130,6 +130,15 @@ pub fn class_folders(files: &[(String, String)]) -> Vec<(String, Vec<String>)> {
     by_parent.into_iter().filter(|(_, c)| c.len() >= 2).map(|(p, c)| (p, c.into_iter().collect())).collect()
 }
 
+/// files per class in a folder with one subfolder per class (the classes as class_folders found them)
+pub fn folder_counts(files: &[(String, String)], folder: &str, classes: &[String]) -> Vec<usize> {
+    let prefix = if folder.is_empty() { String::new() } else { format!("{}/", folder.trim_end_matches('/')) };
+    classes.iter().map(|c| {
+        let p = format!("{prefix}{c}/");
+        files.iter().filter(|(f, _)| f.starts_with(&p) && !f[p.len()..].contains('/')).count()
+    }).collect()
+}
+
 pub fn kernel_slug(title: &str) -> String {
     let mut s: String = title.to_ascii_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
     while s.contains("--") {

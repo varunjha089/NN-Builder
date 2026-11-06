@@ -660,7 +660,7 @@ async fn kaggle_files(slug: String) -> R<Value> {
         let files = cloud::kaggle_files(&c, slug.trim()).map_err(e)?;
         let folders = cloud::class_folders(&files);
         Ok(json!({"files": files.len(), "sample": files.iter().take(30).map(|f| &f.0).collect::<Vec<_>>(),
-            "folders": folders.iter().map(|(p, c)| json!({"folder": p, "classes": c})).collect::<Vec<_>>()}))
+            "folders": folders.iter().map(|(p, c)| json!({"folder": p, "classes": c, "counts": cloud::folder_counts(&files, p, c)})).collect::<Vec<_>>()}))
     }).await
 }
 

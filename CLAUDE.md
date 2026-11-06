@@ -98,6 +98,11 @@ crates/core/src/
                            sample, band_report of raw values, warnings), one_batch_check, 12 samples, results.json check_only, "done"
                            with warnings; Train tab "Check data on …", Runs "data check", ResultsTab DataReport. CI: ci_multiband_check
                            check_data (S1 left linear must be flagged, no epoch events).
+                           Unbalanced classes: TrainSettings.class_weights ("" | inverse | sqrt) -> harness class_weights() sets
+                           LOSS_WEIGHT (CE weight, multi-label BCE pos_weight; seg counts pixels), "class_weights" event; tune_thresholds
+                           (clean() forces val_fraction ≥ 0.1) -> tune_thresholds() per-class F1-best threshold on validation, THRESH used
+                           by multilabel_scores and pictures, thresholds.json; cloud::folder_counts -> "counts" in kaggle_files / local
+                           describe, DatasetTab FolderCounts. CI: imbalanced case (10:1) and multilabel thresholds + sqrt pos_weight.
                            Kaggle runs: data in /tmp/nnb_data (not /kaggle/working, the notebook output), checkpoint removed at the
                            end, kaggle_output deleted after metrics/results/model/log are copied; the run card shows the last check.
   dataset.rs               Multispectral / radar: bands, band_order, sensor (s2 | s1 | other), s1_db; SENTINEL2_BANDS (EuroSAT order),

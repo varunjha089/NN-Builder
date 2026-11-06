@@ -17,7 +17,7 @@ export interface Analysis {
   input: number[]; classes: number; nodes: NodeResult[]; edges: Record<string, number[]>; total_params: number; total_macs: number; problems: string[]; ok: boolean;
 }
 
-export type LocalScan = { files: number; bytes: number; complete: boolean; tifs: number; npys: number; folders: { folder: string; classes: string[] }[];
+export type LocalScan = { files: number; bytes: number; complete: boolean; tifs: number; npys: number; folders: { folder: string; classes: string[]; counts?: number[] }[];
   dirs: string[]; top: string[]; csvs: string[]; tif: { file: string; width: number; height: number; bands: number; bits: number; float: boolean; names: string[] } | null };
 
 export interface Dataset {
@@ -39,6 +39,7 @@ export interface TrainSettings {
   val_fraction: number; early_stop: boolean; patience: number; monitor: "val_loss" | "val_acc" | "val_miou";
   weight_decay: number; schedule: "constant" | "cosine" | "plateau"; warmup_epochs: number; label_smoothing: number; grad_clip: number;
   pretrained: "" | "resnet18" | "vgg16" | "vit_b_16"; freeze: "none" | "backbone"; export: boolean; save_memory: boolean; auto_split: boolean;
+  class_weights?: "" | "inverse" | "sqrt"; tune_thresholds?: boolean;
 }
 
 export interface Machine {
@@ -113,7 +114,7 @@ export const api = {
   hfPreview: (repo: string, config: string, split: string, labelCol: string, samples: boolean) =>
     invoke<{ frequencies: [string, number][]; samples: { src: string; label: unknown }[] }>("hf_preview", { repo, config, split, labelCol, samples }),
   hfInfo: (repo: string) => invoke<{ configs: { name: string; columns: { name: string; type: string; names: string[] | null }[]; splits: { name: string; n: number }[] }[] }>("hf_info", { repo }),
-  kaggleFiles: (slug: string) => invoke<{ files: number; sample: string[]; folders: { folder: string; classes: string[] }[] }>("kaggle_files", { slug }),
+  kaggleFiles: (slug: string) => invoke<{ files: number; sample: string[]; folders: { folder: string; classes: string[]; counts?: number[] }[] }>("kaggle_files", { slug }),
   localScan: (dir: string) => invoke<LocalScan>("local_scan", { dir }),
   localCsv: (dir: string, csv: string) => invoke<{ columns: string[]; rows: number; file_column: string; label_column: string | null; classes: string[]; counts: number[] }>("local_csv", { dir, csv }),
   pickFolder: (title: string) => invoke<string | null>("pick_folder", { title }),

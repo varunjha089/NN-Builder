@@ -40,6 +40,9 @@ fn main() {
             labels_csv: "labels.csv".into(), kaggle_train_dir: "s2".into(), image_size: [24, 24], sensor: "s2".into(),
             band_order: s(&["B2", "B3", "B4", "B8"]), bands: s(&["B2", "B4", "B8"]), sensor2: "s1".into(), band_order2: s(&["VV", "VH"]),
             bands2: s(&["VV", "VH"]), fuse_dir: "s1".into(), classes: s(&["forest", "water", "urban"]), ..Default::default() }),
+        // unbalanced classes (10 : 1), trained with inverse-frequency class weights
+        ("imbalanced", Dataset { source: "local".into(), local_dir: format!("{dir}/own/imb"), local_on_machine: true, image_size: [16, 16],
+            sensor: "other".into(), band_order: s(&["b1", "b2"]), bands: s(&["b1", "b2"]), classes: s(&["common", "rare"]), ..Default::default() }),
         // Check data on Sentinel-1 left in linear units (the report must say so), with an extra constant band
         ("check", Dataset { source: "kaggle".into(), kaggle_slug: "ci/sentinel1".into(), image_size: [32, 32], sensor: "s1".into(),
             band_order: s(SENTINEL1_BANDS), bands: s(SENTINEL1_BANDS), classes: s(&["flood", "land"]), ..Default::default() }),
@@ -53,7 +56,9 @@ fn main() {
         let a = analyze(g, &ds);
         assert!(a.ok, "{name}: {:?}", a.problems);
         assert_eq!(a.input, vec![ds.bands.len() + ds.bands2.len(), ds.image_size[0], ds.image_size[1]]);
-        let t = TrainSettings { check_only: name == "check", epochs: match ds.task.as_str() { "segment" => 10, "multilabel" => 8, _ => 3 }, batch_size: 16, amp: false, aug_hflip: true, aug_rotate: 10.0, ..Default::default() };
+        let t = TrainSettings { check_only: name == "check",
+            class_weights: match name { "imbalanced" => "inverse".into(), "multilabel" => "sqrt".into(), _ => String::new() },
+            tune_thresholds: name == "multilabel", val_fraction: if name == "multilabel" { 0.15 } else { 0.0 }, epochs: match ds.task.as_str() { "segment" => 10, "multilabel" => 8, _ => 3 }, batch_size: 16, amp: false, aug_hflip: true, aug_rotate: 10.0, ..Default::default() };
         let d = format!("{dir}/{name}");
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(format!("{d}/train.py"), train_script(g, &ds, &a, &t, name).unwrap()).unwrap();

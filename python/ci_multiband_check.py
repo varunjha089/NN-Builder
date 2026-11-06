@@ -240,12 +240,43 @@ def own_files(root):
     assert done["test_acc"] >= 0.85 and done["test_map"] >= 0.85, f"multi-label: {done}"
     res = json.load(open(os.path.join(root, "multilabel", "results.json")))
     assert res["task"] == "multilabel" and len(res["per_class"]) == 3 and "labels" in res["samples"][0], res.keys()
-    print(f"multilabel: micro F1 {done['test_acc']}, macro F1 {done['test_macro_f1']}, mAP {done['test_map']}, exact {done['test_exact']}")
+    th = next(e for e in ev if e["event"] == "thresholds")["thresholds"]
+    assert len(th) == 3 and all(0.05 <= t <= 0.95 for t in th) and res["thresholds"] == th, th
+    cw = next(e for e in ev if e["event"] == "class_weights")
+    assert cw["kind"] == "pos_weight" and len(cw["weights"]) == 3, cw
+    print(f"multilabel: micro F1 {done['test_acc']}, macro F1 {done['test_macro_f1']}, mAP {done['test_map']}, exact {done['test_exact']}, "
+          f"thresholds {th}, pos_weight {cw['weights']}")
 
     ev = run(os.path.join(root, "segfiles"), data, "segfiles")
     done = next(e for e in ev if e["event"] == "done")
     assert done["test_acc"] >= 0.8, done
     print(f"segfiles: images + masks, pixel accuracy {done['test_acc']}, mean IoU {done['miou']}")
+
+
+def make_imbalanced(root):
+    """200 'common' and 20 'rare' images (2 bands, 16×16); the rare class is brighter in b2"""
+    rng = np.random.default_rng(8)
+    for cls, n in (("common", 200), ("rare", 20)):
+        os.makedirs(os.path.join(root, cls), exist_ok=True)
+        for i in range(n):
+            a = rng.normal(0, 1, size=(2, 16, 16)).astype(np.float32)
+            a[1] += 2.5 if cls == "rare" else 0
+            np.save(os.path.join(root, cls, f"{i}.npy"), a)
+
+
+def imbalanced(root):
+    """class weights from the training counts (inverse frequency: about 10× for the rare class), and the rare class still learnt"""
+    root = os.path.abspath(root)
+    make_imbalanced(os.path.join(root, "own", "imb"))
+    ev = run(os.path.join(root, "imbalanced"), os.path.join(root, "data"), "imbalanced")
+    cw = next(e for e in ev if e["event"] == "class_weights")
+    c, w = cw["counts"], cw["weights"]
+    assert c[0] > 5 * c[1] and abs(w[1] / w[0] - c[0] / c[1]) < 0.01 * c[0] / c[1], cw
+    res = json.load(open(os.path.join(root, "imbalanced", "results.json")))
+    conf = res["confusion"]
+    rare_recall = conf[1][1] / max(1, sum(conf[1]))
+    assert rare_recall >= 0.5, f"the rare class was not learnt: {conf}"
+    print(f"imbalanced: counts {c}, weights {w}, rare-class recall {rare_recall:.2f}, test accuracy {res['test_acc']:.3f}")
 
 
 def check_data(root):
@@ -269,3 +300,4 @@ if __name__ == "__main__":
     main(sys.argv[1])
     own_files(sys.argv[1])
     check_data(sys.argv[1])
+    imbalanced(sys.argv[1])

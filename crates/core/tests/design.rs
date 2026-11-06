@@ -573,3 +573,22 @@ fn multilabel_and_fusion() {
     let r = localdata::csv_classes(&c2).unwrap();
     assert_eq!((r["label_column"].clone(), r["classes"].clone(), r["counts"].clone()), (Value::Null, json!(["forest", "water"]), json!([2, 1])));
 }
+
+#[test]
+fn class_counts_weights_and_thresholds_settings() {
+    let f = |p: &str| (p.to_string(), "1".to_string());
+    let files = vec![f("train/a/1.png"), f("train/a/2.png"), f("train/a/x/3.png"), f("train/b/1.png"), f("test/a/1.png")];
+    let classes = vec!["a".to_string(), "b".to_string()];
+    assert_eq!(nnb_core::cloud::folder_counts(&files, "train", &classes), vec![2, 1]);
+    assert_eq!(nnb_core::cloud::folder_counts(&files, "", &classes), vec![0, 0]);
+    // unknown weighting is dropped; per-class thresholds need validation data, which clean() provides
+    let t = TrainSettings { class_weights: "bogus".into(), tune_thresholds: true, val_fraction: 0.0, ..Default::default() }.clean();
+    assert!(t.class_weights.is_empty() && t.val_fraction >= 0.1);
+    let t = TrainSettings { class_weights: "sqrt".into(), ..Default::default() }.clean();
+    assert_eq!(t.class_weights, "sqrt");
+    let ds = Dataset { source: "builtin".into(), ..Default::default() };
+    let g = chain(vec![("input", json!({})), ("flatten", json!({})), ("output", json!({}))]);
+    let a = analyze(&g, &ds);
+    let code = train_script(&g, &ds, &a, &t, "t").unwrap();
+    assert!(code.contains("\"class_weights\": \"sqrt\""), "the weighting reaches train.py");
+}

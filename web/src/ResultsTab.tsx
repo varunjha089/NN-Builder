@@ -20,6 +20,8 @@ export function ResultsTab({ runId }: { runId: string | null }) {
   return (
     <div className="page">
       <h2>Results of run {runId}</h2>
+      {r.class_weights && <p className="muted small">Trained with class weights{r.task === "multilabel" ? " (positive weight per class)" : ""}:
+        {" "}{r.class_weights.map((w: number, i: number) => `${classes[i]} ${w}`).join(", ")}.</p>}
       {r.task === "multilabel" && <p className="muted small">Several classes per image: each class is a yes/no (score ≥ 50%). Micro F1 counts every
         (image, class) decision together, macro F1 averages the classes (rare classes count as much as common ones), mAP ranks the images
         by each class's score (independent of the 50% threshold), and exact match is the share of images with every class right.</p>}
@@ -57,9 +59,10 @@ export function ResultsTab({ runId }: { runId: string | null }) {
           <Img img={s.pred} scale={Math.max(1, Math.round(96 / s.pred[0].length))} /></div><div>{(s.pixel_acc * 100).toFixed(1)}% of pixels right</div></div>)}
       </div></>}
       {r.task === "multilabel" && r.per_class && <table className="grid"><tbody>
-        <tr><th>Class</th><th className="num">Images</th><th className="num">Precision</th><th className="num">Recall</th><th className="num">F1</th><th className="num">AP</th></tr>
+        <tr><th>Class</th><th className="num">Images</th><th className="num">Precision</th><th className="num">Recall</th><th className="num">F1</th><th className="num">AP</th>{r.thresholds && <th className="num">threshold</th>}</tr>
         {r.per_class.map((c: any, i: number) => <tr key={i}><td>{classes[i]}</td><td className="num">{c.support}</td><td className="num">{(c.precision * 100).toFixed(1)}%</td>
-          <td className="num">{(c.recall * 100).toFixed(1)}%</td><td className="num">{(c.f1 * 100).toFixed(1)}%</td><td className="num">{c.ap == null ? "–" : `${(c.ap * 100).toFixed(1)}%`}</td></tr>)}
+          <td className="num">{(c.recall * 100).toFixed(1)}%</td><td className="num">{(c.f1 * 100).toFixed(1)}%</td><td className="num">{c.ap == null ? "–" : `${(c.ap * 100).toFixed(1)}%`}</td>
+          {r.thresholds && <td className="num">{(r.thresholds[i] * 100).toFixed(0)}%</td>}</tr>)}
       </tbody></table>}
       {r.task === "multilabel" && r.samples?.length > 0 && <><h3>Sample predictions (✓ right, ✗ wrong, ○ missed)</h3><div className="thumbs">
         {r.samples.map((s: any, i: number) => {

@@ -104,8 +104,9 @@ export function DatasetTab({ st, ds, setDs, problems, toast }: { st: AppState; d
           {kg && <p className="muted small wide">Folders seen: {[...new Set(kg.sample.map((f) => f.split("/").slice(0, -1).join("/")))].slice(0, 8).join(", ")}</p>}
         </div> : <div className="form">
           <label>Training folder (one subfolder per class)
-            {kg?.folders.length ? <select value={ds.kaggle_train_dir} onChange={(e) => { const f = kg.folders.find((x) => x.folder === e.target.value); up({ kaggle_train_dir: e.target.value, classes: f?.classes ?? ds.classes }); }}>
+            {kg?.folders.length ? <><select value={ds.kaggle_train_dir} onChange={(e) => { const f = kg.folders.find((x) => x.folder === e.target.value); up({ kaggle_train_dir: e.target.value, classes: f?.classes ?? ds.classes }); }}>
               {kg.folders.map((f) => <option key={f.folder} value={f.folder}>{f.folder || "(top level)"} — {f.classes.length} classes</option>)}</select>
+              <FolderCounts f={kg.folders.find((x) => x.folder === ds.kaggle_train_dir)} /></>
               : <input value={ds.kaggle_train_dir} onChange={(e) => up({ kaggle_train_dir: e.target.value.trim() })} placeholder="e.g. data/train" />}</label>
           <label>Test folder (optional)<input value={ds.kaggle_test_dir} onChange={(e) => up({ kaggle_test_dir: e.target.value.trim() })} placeholder="empty = 10% of the training images" /></label>
         </div>}
@@ -283,8 +284,9 @@ function LocalBox({ ds, up, toast }: { ds: Dataset; up: (p: Partial<Dataset>) =>
     </p>}
     {ds.task === "multilabel" ? <LabelsCsv ds={ds} up={up} scan={scan} toast={toast} /> : ds.task !== "segment" ? <div className="form">
       <label>Training folder (one subfolder per class)
-        {scan?.folders.length ? <select value={ds.kaggle_train_dir} onChange={(e) => { const f = scan.folders.find((x) => x.folder === e.target.value); up({ kaggle_train_dir: e.target.value, classes: f?.classes ?? ds.classes }); }}>
+        {scan?.folders.length ? <><select value={ds.kaggle_train_dir} onChange={(e) => { const f = scan.folders.find((x) => x.folder === e.target.value); up({ kaggle_train_dir: e.target.value, classes: f?.classes ?? ds.classes }); }}>
           {scan.folders.map((f) => <option key={f.folder} value={f.folder}>{f.folder || "(the folder itself)"} — {f.classes.length} classes</option>)}</select>
+          <FolderCounts f={scan.folders.find((x) => x.folder === ds.kaggle_train_dir)} /></>
           : <input value={ds.kaggle_train_dir} onChange={(e) => up({ kaggle_train_dir: e.target.value.trim() })} placeholder="empty = the folder itself" />}</label>
       <label>Test folder (optional)<input value={ds.kaggle_test_dir} onChange={(e) => up({ kaggle_test_dir: e.target.value.trim() })} placeholder="empty = 10% of the training images" /></label>
     </div> : scene ? <div className="form">
@@ -466,4 +468,15 @@ function SecondGroup({ ds, up }: { ds: Dataset; up: (p: Partial<Dataset>) => voi
         joined by Concat (mid fusion). The folder mirrors the first group's: the same subfolders and file names.</p>
     </>}
   </div>;
+}
+
+/** images per class of a class-folder layout, with a warning when they are strongly unbalanced */
+function FolderCounts({ f }: { f?: { classes: string[]; counts?: number[] } }) {
+  if (!f?.counts?.length) return null;
+  const most = Math.max(1, ...f.counts), least = Math.min(...f.counts);
+  return <span className="small" style={{ color: "var(--ink)" }}>
+    {f.classes.map((c, i) => `${c} ${f.counts![i].toLocaleString()}`).join(" · ")}
+    {least === 0 ? <span className="st-warn"> — a class has no images</span> : most / least > 3
+      ? <span className="st-warn"> — unbalanced ({(most / least).toFixed(1)}×): consider class weights (Train tab)</span> : null}
+  </span>;
 }

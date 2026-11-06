@@ -883,6 +883,23 @@ Above the Train button the tab says what is still missing for the chosen target 
 GPU memory the training needs (16 bytes per parameter plus the layer outputs at the chosen batch size), compared with the target's GPU
 (Kaggle and EC2 g4dn: 16 GB; an SSH machine: as \ui{Prepare} found it). It warns when the design is likely not to fit.
 
+\subsection{Unbalanced classes}
+\label{sec:imbalance}
+Real land-cover data is rarely balanced (BigEarthNet's rarest labels are on under 1\,\% of the patches), and a network can then score
+well while ignoring the rare classes. The Dataset tab shows the images per class next to the class folders (Read folder / Read files),
+with a warning above a 3:1 ratio; \ui{Check data} counts them on the machine for every source. Two settings in the Train tab's recipe
+help:
+\begin{itemize}[nosep]
+  \item \ui{Unbalanced classes}: \emph{weight by inverse frequency} gives class $c$ the weight $N/(K\,n_c)$ in the loss ($N$ training
+        images, $K$ classes, $n_c$ of class $c$), so every class counts as much in total; \emph{by its square root} is gentler. For
+        multi-label, each class's positive examples weigh $(N-n_c)/n_c$ (its square root) against its negatives. Segmentation counts
+        pixels. The weights are computed on the training machine and listed in the log and in Results.
+  \item \ui{multi-label: a threshold per class}: after training, each class gets the threshold (5\,\%--95\,\%) with the highest F1 on the
+        validation data instead of 50\,\%; the test scores use them, Results lists them, and \file{thresholds.json} is saved next to the
+        model. It needs validation data, so it sets the validation share to 10\,\% if it was 0.
+\end{itemize}
+Look at the per-class scores (precision, recall, F1) rather than the accuracy alone.
+
 \subsection{Check data before training}
 \label{sec:check-data}
 \ui{Check data on \ldots}, next to the Train button, starts a short run on the same target that loads the data exactly as training would,

@@ -143,6 +143,17 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
             <label>label smoothing<input type="number" min={0} max={0.5} step={0.05} value={train.label_smoothing} onChange={(e) => set({ label_smoothing: Number(e.target.value) })} /></label>
             <label>clip gradients at<input type="number" min={0} max={100} step={0.5} value={train.grad_clip} onChange={(e) => set({ grad_clip: Number(e.target.value) })} />(0 = off)</label>
           </div>
+          <div className="row">
+            <label title="Rare classes count more in the loss, so the network does not just learn the common ones">Unbalanced classes
+              <select value={train.class_weights ?? ""} onChange={(e) => set({ class_weights: e.target.value as TrainSettings["class_weights"] })}>
+                <option value="">no class weights</option><option value="inverse">weight by inverse frequency (balanced)</option>
+                <option value="sqrt">weight by its square root (gentler)</option></select></label>
+            <label className="chk" title="Multi-label: each class gets the threshold with the best F1 on the validation data, instead of 50%">
+              <input type="checkbox" checked={!!train.tune_thresholds} onChange={(e) => set({ tune_thresholds: e.target.checked, ...(e.target.checked && !train.val_fraction ? { val_fraction: 0.1 } : {}) })} />
+              multi-label: a threshold per class, chosen on the validation data</label>
+          </div>
+          {train.class_weights && <p className="muted small">The weights come from the training images per class, counted on the training machine
+            (shown in the run's log). Multi-label: each class's positives weigh negatives ÷ positives{train.class_weights === "sqrt" ? " (square root)" : ""}.</p>}
           {train.weight_decay > 0 && train.optimizer === "adam" && <p className="muted small">With Adam, weight decay is mixed into the adaptive
             step; AdamW applies it separately, which usually works better.</p>}
         </div>
