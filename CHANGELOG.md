@@ -3,6 +3,18 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 06_11_26_09_49_59
+
+**Regression task: numbers per image from table columns, MSE / L1 / Huber loss, R² / MAE / RMSE and a scatter plot** (`56b357f`)
+
+## 06_11_26_09_32_12
+
+**Dice, Dice + cross-entropy and focal losses (Train tab Loss), with class weights and unlabelled pixels left out** (`0215b3d`)
+
+## 06_11_26_09_22_38
+
+**FUTURE_PLAN: architecture steps reordered (losses, custom block, several inputs/outputs, weight sharing, time series, ...) with the reasons** (`e80873f`)
+
 ## 06_11_26_07_54_45
 
 **Hugging Face band arrays read as NumPy arrays (with_format), not nested lists** (`2a7ee8b`)
