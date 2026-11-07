@@ -3,6 +3,10 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 07_11_26_18_25_40
+
+**Docs: manual (band names per group, fusion folder inside the dataset folder, compressed GeoTIFFs, clean Stop), CLAUDE.md status (what is tested by hand), FUTURE_PLAN 1c state after 2026-11-07** (`d8afae9`)
+
 ## 07_11_26_18_14_25
 
 **TEST_APP.md: 4.3 in the Earth Engine Code Editor (the app's script ran and submitted its two exports; queued behind the owner's tasks)** (`0ba6cdc`)
