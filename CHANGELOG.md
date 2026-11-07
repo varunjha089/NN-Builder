@@ -3,6 +3,39 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 07_11_26_06_56_44
+
+**TEST_APP.md: save memory measured on a real GPU (7.22 -> 2.18 GB, +15 % time)** (`017ac90`)
+
+## 07_11_26_06_49_12
+
+**Dataset tab: band tooltips show Sentinel-2 names only for Sentinel-2 ("other" bands b1, b2 showed aerosol / blue)** (`58cca96`)
+
+TEST_APP.md: TEST 13 seeds / recipe / export and Read folder marked.
+
+## 07_11_26_06_39_24
+
+**Train tab says when "save memory" cannot be used (several outputs or early exits) instead of ignoring it silently** (`efe9ad1`)
+
+Found by TEST 13 (everything.nnb on Kaggle): the run reported save_memory false although it was ticked.
+TEST_APP.md: window tests 1.4-3.4 and TEST 15 (4.8) marked, with the fixes found.
+
+## 07_11_26_06_38_00
+
+**Train tab follows the project's other active runs every 30 s, so a queued seed is pushed while another seed is shown** (`5a1631e`)
+
+## 07_11_26_05_46_12
+
+**CLAUDE.md: queued Kaggle runs and connection retries** (`6460760`)
+
+## 07_11_26_05_43_28
+
+**Kaggle: a run that finds Kaggle's 2 GPU notebooks busy waits (queued) and is pushed when one is free, instead of failing (several seeds)** (`6ff1b89`)
+
+## 07_11_26_05_28_49
+
+**Kaggle calls are tried again (up to 3 times, 5 s apart) when the connection failed: a moment without DNS failed an upload** (`ecfc172`)
+
 ## 06_11_26_22_06_13
 
 **TEST_APP.md: the window, GPU and real-data tests done on 6 November (15 Kaggle runs), with the results log and the bugs they found** (`4dbed3b`)
