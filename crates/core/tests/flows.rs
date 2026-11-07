@@ -436,6 +436,20 @@ fn remote_and_kaggle_runs() {
     assert_eq!(runs::info(&local).superseded_by, new);
     assert!(runs::resume_on(&pr, &id, runs::KAGGLE, "", &Creds::default(), false, &log).is_err(), "no resuming on Kaggle");
 
+    // ---- a run whose metrics.jsonl does not exist yet (the data still downloading): the machine answers all the same
+    let early = "20990101-000000";
+    let rd = remote_home.join(format!(".nn_builder/runs/{early}"));
+    std::fs::create_dir_all(&rd).unwrap();
+    std::fs::write(rd.join("log.txt"), "downloading the data ...\n").unwrap();
+    std::fs::create_dir_all(pr.runs_dir().join(early)).unwrap();
+    let info = runs::RunInfo { id: early.into(), target: "college".into(), kind: "ssh".into(), status: "running".into(),
+        remote_dir: format!(".nn_builder/runs/{early}"), launch: "nohup".into(), job: "999999".into(), reachable: true, ..Default::default() };
+    std::fs::write(pr.runs_dir().join(early).join("run.json"), serde_json::to_string(&info).unwrap()).unwrap();
+    runs::status(&pr, early, 0, &Creds::default()).unwrap();
+    let after = runs::info(&pr.runs_dir().join(early));
+    assert!(after.reachable, "no metrics yet must not look like a machine that does not answer");
+    assert!(std::fs::read_to_string(pr.runs_dir().join(early).join("log.txt")).unwrap().contains("downloading"));
+
     // ---- cost guards on an on-demand instance: never left running after a failure, never started with shutdown behaviour Terminate
     let ec2 = b.join("ec2");
     std::fs::create_dir_all(&ec2).unwrap();

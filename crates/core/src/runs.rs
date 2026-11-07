@@ -714,13 +714,15 @@ fn poll_remote(m: &Machine, d: &Path, info: &mut RunInfo) -> Option<Poll> {
         "cd {rd} 2>/dev/null || {{ echo NNB_NODIR; exit 0; }}\nA=0\n{alive}\n{lock}[ -f exit_code.txt ] && {{ A=0; echo \"NNB_EXIT $(cat exit_code.txt)\"; }}\n\
          [ -f resume_wanted ] && echo NNB_RESUME_WANTED\n\
          [ -f checkpoint.pt ] && echo \"NNB_CK $(stat -c '%s %Y' checkpoint.pt 2>/dev/null || stat -f '%z %m' checkpoint.pt)\"\n\
-         echo NNB_ALIVE $A\necho NNB_LOG_BEGIN\ntail -n 60 log.txt 2>/dev/null | grep -v '^NNB_EVENT '\necho NNB_LOG_END\necho NNB_METRICS_BEGIN\ntail -c +{off} metrics.jsonl 2>/dev/null\n",
+         echo NNB_ALIVE $A\necho NNB_LOG_BEGIN\ntail -n 60 log.txt 2>/dev/null | grep -v '^NNB_EVENT '\necho NNB_LOG_END\necho NNB_METRICS_BEGIN\ntail -c +{off} metrics.jsonl 2>/dev/null\ntrue\n",
         rd = remote::remote_path(&info.remote_dir),
         alive = alive_check(info),
         off = info.offset + 1
     );
-    let (code, out) = m.run_script(&script);
-    if code != 0 || !out.contains("NNB_ALIVE") {
+    // the machine answered when the reply has NNB_ALIVE: the exit code may come from a missing file (no metrics.jsonl yet while the data
+    // downloads made every look "not answering" on the first real EC2 run, 2026-11-07)
+    let (_, out) = m.run_script(&script);
+    if !out.contains("NNB_ALIVE") {
         return None;
     }
     let head = out.split("NNB_LOG_BEGIN").next().unwrap_or("");
