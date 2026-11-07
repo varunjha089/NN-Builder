@@ -980,3 +980,11 @@ fn tiff_info_reads_per_band_lists_stored_elsewhere() {
     let i = nnb_core::localdata::tiff_info(&dir.path().join("s2.tif")).unwrap();
     assert_eq!((i.width, i.bands, i.bits, i.float), (512, 13, 16, false));
 }
+
+/// the Small CNN template's dropout rates are the numbers a person would type (0.2 + 0.1·i once gave 0.30000000000000004)
+#[test]
+fn small_cnn_dropout_rates_are_exact() {
+    let g = nnb_core::templates::build("small_cnn").unwrap();
+    let rates: Vec<f64> = g.nodes.iter().filter(|n| n.kind == "dropout").map(|n| n.params["rate"].as_f64().unwrap()).collect();
+    assert_eq!(rates, vec![0.2, 0.3, 0.4, 0.5]);
+}

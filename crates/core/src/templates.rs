@@ -138,7 +138,8 @@ pub fn build(key: &str) -> Option<Graph> {
                 h = b.cbr(&h, f, 3, 1);
                 h = b.cbr(&h, f, 3, 1);
                 h = b.maxpool(&h, 2, 2, 0);
-                h = b.add("dropout", json!({"rate": 0.2 + 0.1 * i as f64}), &[&h]);
+                // (2 + i) / 10, not 0.2 + 0.1·i, which gave 0.30000000000000004
+                h = b.add("dropout", json!({"rate": (2.0 + i as f64) / 10.0}), &[&h]);
             }
             let f = b.add("flatten", json!({}), &[&h]);
             let d = b.add("dense", json!({"units": 128, "activation": "relu"}), &[&f]);

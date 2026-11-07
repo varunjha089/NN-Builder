@@ -103,6 +103,7 @@ export const api = {
   saveTrain: (train: TrainSettings) => invoke<TrainSettings>("save_train", { train }),
   code: () => invoke<{ ok: boolean; code?: string; error?: string }>("code"),
   exportCode: () => invoke<string>("export_code"),
+  designPng: (dataUrl: string) => invoke<string>("design_png", { dataUrl }),
   setKaggle: (username: string, key: string) => invoke<void>("set_kaggle", { username, key }),
   setHf: (token: string) => invoke<void>("set_hf", { token }),
   setGcs: (key: string) => invoke<void>("set_gcs", { key }),

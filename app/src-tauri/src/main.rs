@@ -387,6 +387,20 @@ async fn export_code(st: State<'_, App>) -> R<String> {
     Ok(f.display().to_string())
 }
 
+/// the design as a picture (a PNG data URL drawn by the canvas) into <project>/export/<name> architecture.png, shown in Finder
+#[tauri::command]
+async fn design_png(st: State<'_, App>, data_url: String) -> R<String> {
+    let p = project(&st)?;
+    let b64 = data_url.strip_prefix("data:image/png;base64,").ok_or("The canvas did not give a PNG picture.")?;
+    let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64).map_err(e)?;
+    let name: String = p.name().chars().map(|c| if c.is_alphanumeric() || " -_.()+".contains(c) { c } else { '_' }).collect();
+    let f = p.dir.join("export").join(format!("{} architecture.png", name.trim()));
+    std::fs::create_dir_all(f.parent().unwrap()).map_err(e)?;
+    std::fs::write(&f, bytes).map_err(e)?;
+    reveal(&f);
+    Ok(f.display().to_string())
+}
+
 /// open a file with the system's default app (the PDF viewer for the manual)
 fn open_file(p: &std::path::Path) {
     #[cfg(target_os = "macos")]
@@ -916,6 +930,7 @@ fn build_menu(h: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .separator()
         .item(&item(h, "import-design", "Import Design…", None)?)
         .item(&item(h, "export-design", "Export Design…", None)?)
+        .item(&item(h, "export-png", "Export Design as PNG", None)?)
         .item(&item(h, "export-code", "Export train.py…", Some("CmdOrCtrl+E"))?)
         .separator()
         .item(&item(h, "reveal-project", "Show Project in Finder", Some("CmdOrCtrl+Shift+R"))?)
@@ -1081,7 +1096,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            app_state, templates_list, template_apply, project_from_template, project_save_as, project_new, project_open, set_projects_dir, project_delete, set_max_blocks, project_load, save_graph, design_from_text, design_format, save_dataset, save_train, code, export_code,
+            app_state, templates_list, template_apply, project_from_template, project_save_as, project_new, project_open, set_projects_dir, project_delete, set_max_blocks, project_load, save_graph, design_from_text, design_format, save_dataset, save_train, code, export_code, design_png,
             set_kaggle, set_hf, set_aws, set_gcs, clear_secret, test_kaggle, test_hf, test_aws, tools_install,
             machine_save, machine_delete, machine_test, machine_connect, machine_prepare, hf_info, hf_preview, kaggle_files, local_scan, local_csv, pick_folder,
             update_settings, set_auto_update, update_check, update_install, update_restart, targets, run_start, run_start_seeds, runs_summary, runs_export, run_resume_on, runs_list, run_status, run_stop, run_fetch, run_results, run_reveal, job_status, open_url

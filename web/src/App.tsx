@@ -163,6 +163,9 @@ export default function App() {
       else toast(st?.project ? "Already saved: every change is written as you make it." : "Open or create a project first.");
     } else if (id === "night") {
       toggleTheme();
+    } else if (id === "export-png") {
+      setTab("design");
+      window.setTimeout(() => window.dispatchEvent(new Event("nnb-export-png")), 300);
     } else if (id === "export-code") {
       api.exportCode().then((p) => toast(`Saved ${p}`)).catch((err) => toast(errText(err)));
     }

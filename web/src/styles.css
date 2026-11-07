@@ -245,3 +245,5 @@ button.danger { border-color: var(--err); color: var(--err); }
 .big-hint { position: absolute; z-index: 5; top: 8px; left: 8px; right: 8px; margin: 0; }
 
 .bandgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 2px 12px; margin: 6px 0; }
+/* while the design is drawn into a PNG (Design → Save as PNG): html-to-image draws the layered glow as solid bars, so it is left out */
+.png-export .layer, .png-export .layer.sel, .png-export .react-flow__handle { box-shadow: none !important; }

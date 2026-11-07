@@ -19,3 +19,4 @@ ureq = { version = "3", features = ["json"] }
 sha2 = "0.10"
 tauri-plugin-dialog = "2"
 trash = "5"
+base64 = "0.22"

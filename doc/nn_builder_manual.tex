@@ -267,6 +267,12 @@ tensor shape, every block with its output and parameters), and on the right the 
   \item \textbf{Collapse repeated blocks ($\times N$):} draws identical consecutive groups as one node, for example the 40 encoder blocks
         of ViT-g/14 as ``Encoder block $\times$40'' (287 blocks become 8). It is a read-only view; double-click the node or press
         \ui{Show every block} to edit again.
+  \item \textbf{Save as PNG:} draws the whole design into one picture, whatever part of it the window shows and however far it is
+        zoomed: every block at twice its normal size (the longest side at most 16\,000 pixels), with the tensor shapes on the arrows,
+        in the current theme (day or night), without the minimap and the zoom buttons. It is saved as
+        \file{export/<project> architecture.png} in the project folder and shown in the Finder (also \ui{File} $\rightarrow$
+        \ui{Export Design as PNG}). Collapsed repeated blocks stay collapsed in the picture. Section~\ref{sec:tests} has one for
+        each test architecture.
 \end{itemize}
 
 \subsection{The layer table}

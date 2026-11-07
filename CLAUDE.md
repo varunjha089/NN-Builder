@@ -295,7 +295,9 @@ app/src-tauri/src/main.rs  Tauri commands (thin: they call nnb-core), keychain (
                            "project-changed" / "toast"; the rest is emitted as "menu" (id) to the window. Undo/Redo: App.tsx keeps snapshots
                            (Design calls remember(prev) before each change; changes within 0.6 s are one step; in a text field the menu
                            items undo the typing instead)
-web/src/                   Design.tsx: the canvas reads left to right (handles left/right; arrange() = a column per depth; designs saved in the
+web/src/                   Design.tsx: Save as PNG (PngExporter inside <ReactFlow>: getNodesBounds + html-to-image toPng of the viewport at 2×,
+                           ≤ 16,000 px, glow off via .png-export; main.rs design_png writes export/<name> architecture.png; menu
+                           File → Export Design as PNG = event nnb-export-png). The canvas reads left to right (handles left/right; arrange() = a column per depth; designs saved in the
                            old top-to-bottom view are arranged once when opened); it also has the "Famous architectures" picker (template_apply keeps the old design as model.previous.json and
                            fits the dataset) and the skip-connection tool (inserts Add/Concat after the selected block, with a 1×1 strided
                            convolution / pooling / Dense projection when shapes differ); the layer table (nothing selected) is grouped
@@ -335,7 +337,7 @@ doc/nn_builder_manual.tex  the user manual (LaTeX, plain thebibliography, no bib
                            (cd web && npm run build) && doc/screens/render.sh. Re-run both after Dataset-tab changes.
                            doc/test_architectures.tex (sec:tests, \input after the demos): the 18 TEST projects of 2026-11-07 (TEST_APP.md),
                            each with doc/figures/tests/testNN.jpg (Design screen, night, taken from copies in a neutral NN_BUILDER_HOME,
-                           1500 px JPEG), what it tests, the parameter arithmetic of its main blocks and a per-block table (per kind for
+                           1500 px JPEG) and testNN_arch.png (Save as PNG, split into rows of ~3,000 px at empty gaps), what it tests, the parameter arithmetic of its main blocks and a per-block table (per kind for
                            > 40 blocks). The tables were generated once from nnb_core::shapes::analyze of those projects (the projects
                            are the owner's and stay out of the repository); edit the text by hand.
                            The MSG-Former section (sec:msg) has the layer table, parameter and compute breakdowns and ablations: if the

@@ -2,12 +2,13 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   ReactFlow, Background, Controls, MiniMap, Handle, Position, addEdge, applyEdgeChanges, applyNodeChanges,
-  type Connection, type Edge, type EdgeChange, type Node, type NodeChange, type NodeProps, MarkerType,
+  useReactFlow, getNodesBounds, type Connection, type Edge, type EdgeChange, type Node, type NodeChange, type NodeProps, MarkerType,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { api, fmt, errText, type Analysis, type AppState, type GNode, type Graph, type NodeResult, type Params, type Template } from "./api";
 import { SlidingPreview } from "./Preview";
-import { neon, useTheme } from "./theme";
+import { cssVar, neon, useTheme } from "./theme";
+import { toPng } from "html-to-image";
 
 export const COLORS: Record<string, string> = {
   input: "#3b6fd8", conv2d: "#d9822b", dwconv2d: "#c96d1a", convtranspose2d: "#b5651d", pool2d: "#2a9d8f", global_pool: "#21867a", upsample: "#3c8d7f",
@@ -40,7 +41,7 @@ function summary(kind: string, p: Params): string {
     case "pool2d": return `${p.mode} ${k2(n2(p.size, 2))} · stride ${p.stride === "size" ? "= size" : k2(n2(p.stride, 2))}`;
     case "global_pool": return `${p.mode}`;
     case "upsample": return `×${p.scale} ${p.mode}`;
-    case "dropout": return `rate ${p.rate}`;
+    case "dropout": return `rate ${Number(Number(p.rate).toFixed(6))}`;  // (a rate saved as 0.30000000000000004 shows 0.3)
     case "groupnorm": return `${p.groups} groups`;
     case "repeat": return `${p.count} identical blocks · double-click to expand`;
     case "dense": return `${p.units} units · ${p.activation}${Number(p.lora) > 0 ? ` · LoRA ${p.lora}` : ""}`;
@@ -127,6 +128,31 @@ export function isVertical(g: Graph): boolean {
   const at = Object.fromEntries(g.nodes.map((n) => [n.id, n]));
   const v = g.edges.filter((e) => at[e.source] && at[e.target] && Math.abs(at[e.target].y - at[e.source].y) > Math.abs(at[e.target].x - at[e.source].x)).length;
   return g.edges.length > 0 && v > g.edges.length / 2;
+}
+
+/** the whole design as one PNG (data URL): every block at 2× its normal size whatever the window and zoom, in the current theme,
+ *  without the minimap and the zoom buttons (largest side at most 16,000 pixels). Lives inside <ReactFlow> to reach its nodes. */
+function PngExporter({ register }: { register: (f: () => Promise<string>) => void }) {
+  const rf = useReactFlow();
+  useEffect(() => {
+    register(async () => {
+      const b = getNodesBounds(rf.getNodes());
+      const pad = 40;
+      const scale = Math.min(2, 16000 / (b.width + 2 * pad), 16000 / (b.height + 2 * pad));
+      const w = Math.ceil((b.width + 2 * pad) * scale), h = Math.ceil((b.height + 2 * pad) * scale);
+      const vp = document.querySelector(".design .react-flow__viewport") as HTMLElement | null;
+      if (!vp) throw new Error("The canvas is not shown.");
+      const bg = cssVar("--night-canvas") && document.documentElement.dataset.theme === "night" ? cssVar("--night-canvas") : cssVar("--bg") || "#ffffff";
+      document.documentElement.classList.add("png-export");
+      try {
+        return await toPng(vp, { backgroundColor: bg, width: w, height: h, pixelRatio: 1, cacheBust: true,
+          style: { width: `${w}px`, height: `${h}px`, transform: `translate(${(pad - b.x) * scale}px, ${(pad - b.y) * scale}px) scale(${scale})` } });
+      } finally {
+        document.documentElement.classList.remove("png-export");
+      }
+    });
+  }, [rf, register]);
+  return null;
 }
 
 export function Design({ st, graph, setGraph, analysis, persist, focus, toast, reloadProject, remember }: {
@@ -395,11 +421,24 @@ export function Design({ st, graph, setGraph, analysis, persist, focus, toast, r
   };
   const setParams = (p: Params) => sel && save({ ...graph, nodes: graph.nodes.map((n) => (n.id === sel.id ? { ...n, params: { ...n.params, ...p } } : n)) });
 
+  const pngRef = useRef<(() => Promise<string>) | null>(null);
+  const savePng = useCallback(async () => {
+    if (st.project?.draft) { toast("Save the project first (⌘S): the picture goes into the project's folder."); return; }
+    if (!pngRef.current) { toast("The canvas is empty."); return; }
+    try { toast(`Saved ${await api.designPng(await pngRef.current())}`); } catch (e) { toast(errText(e)); }
+  }, [st.project?.draft, toast]);
+  useEffect(() => {
+    const on = () => { void savePng(); };
+    window.addEventListener("nnb-export-png", on);
+    return () => window.removeEventListener("nnb-export-png", on);
+  }, [savePng]);
   return (
     <div className="design">
       <div className="palette">
         <TemplatePicker toast={toast} onLoaded={reloadProject} />
         <button className="arrange" onClick={() => save(arrange(graph))} disabled={collapsed}>Arrange left to right</button>
+        <button className="arrange" onClick={() => savePng()} title="The whole design as one picture (as drawn now, in this theme), in the project's export folder">
+          Save as PNG</button>
         {(canFold || collapsed) && <button className="arrange" onClick={() => setCollapsed(!collapsed)}
           title="Draw identical repeated blocks (e.g. Transformer encoder blocks) as one ×N node; a read-only view">
           {collapsed ? "Show every block" : "Collapse repeated blocks (×N)"}</button>}
@@ -425,6 +464,7 @@ export function Design({ st, graph, setGraph, analysis, persist, focus, toast, r
           deleteKeyCode={collapsed ? null : ["Backspace", "Delete"]} nodesConnectable={!collapsed}
           onNodeDoubleClick={(_, n) => { if (n.id.startsWith("repeat")) setCollapsed(false); }} key={collapsed ? "folded" : "all"}>
           <Background gap={24} />
+          <PngExporter register={(f) => { pngRef.current = f; }} />
           <Controls />
           <MiniMap pannable zoomable nodeColor={(n) => color((n.data as LayerData).kind)}
             maskColor={night ? "rgba(5,6,12,.7)" : undefined} />
