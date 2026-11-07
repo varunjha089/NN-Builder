@@ -96,7 +96,8 @@ Kaggle notebooks cannot be stopped through the API, so Kaggle T4 x2 does not cou
 - Pointers: `python/harness.py` run_parallel (signal forwarding, workers ended a minute after rank 0, destroy_process_group), sync_flags;
   `runs.rs` stop. 2026-11-06 found that the workers did not exit on Kaggle T4 x2 (fixed). Watch for the same here.
 
-**5. AWS on demand (TEST_APP 6.5).** Costs money: g4dn.xlarge is about $0.53 an hour on demand in us-east-1 (check the region's price).
+**5. AWS on demand (TEST_APP 6.5).** Planned in detail, with cost guards, in [AWS_TEST_PLAN.md](AWS_TEST_PLAN.md) (owner's permission: g4dn.xlarge
+on demand in Mumbai only). Costs money: g4dn.xlarge is about $0.53 an hour on demand in us-east-1 (check the region's price).
 - Needs:
   - a g4dn.xlarge instance with shutdown behaviour **stop**;
   - a G-instance vCPU quota above 0 (new accounts often have 0: ask AWS for 4);
@@ -109,7 +110,7 @@ Kaggle notebooks cannot be stopped through the API, so Kaggle T4 x2 does not cou
 - Pointers: `python/helpers/aws_ec2.py`; `runs.rs` aws_up, fetch; CLAUDE.md "AWS EC2 g4dn.xlarge".
 - Check in the console afterwards that the instance is **stopped**, not running.
 
-**6. AWS spot and Continue elsewhere (TEST_APP 6.6, 6.7).** Costs money, less than on demand.
+**6. AWS spot and Continue elsewhere (TEST_APP 6.6, 6.7).** Not possible with the owner's current AWS permission (no spot). Costs money, less than on demand.
 - Needs: a **persistent** spot request with interruption behaviour **stop**, and the machine setting "Keep a copy of checkpoints on this Mac".
 - Steps for 6.6: a run of 20+ minutes. Simulate an interruption with AWS Fault Injection Service (action `aws:ec2:send-spot-instance-interruptions`),
   or wait for a real one.

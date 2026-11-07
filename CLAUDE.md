@@ -9,7 +9,7 @@ Kaggle, a college server and EC2 are tested with stand-ins only (never against r
 (0.1.1, 2026-11-03) is in the Trash.
 Open work (owner tasks, the design language, models, workflow, Sentinel-1/2) is in FUTURE_PLAN.md; what the owner still has to try by hand
 (window, real data, real GPUs / clouds) is TEST_APP.md: add a line there for every new feature, and its status (CI / Real / Never); the design language in
-PROGRAMMING_LANGUAGE.md. CHANGELOG.md lists every commit by time (dd_mm_yy_hr_min_sec, newest first); after committing, run
+PROGRAMMING_LANGUAGE.md; the first real EC2 tests and their cost guards in AWS_TEST_PLAN.md. CHANGELOG.md lists every commit by time (dd_mm_yy_hr_min_sec, newest first); after committing, run
 `python3 scripts/make_changelog.py` and commit the result as "CHANGELOG: …" (such commits are left out of the list).
 
 ## Layout
