@@ -29,7 +29,9 @@ fn demos_are_one_draft_until_saved() {
     let other = store::create("Other", None).unwrap();
     // a typed or pasted folder: quotes and spaces around it, or a file inside the project, open the same project
     let dir = other.dir.to_string_lossy().to_string();
-    for typed in [format!("  '{dir}' "), format!("\"{dir}\""), format!("{dir}/model.json"), format!("{dir}/project.json")] {
+    // (files joined with the system's separator: Windows' \\?\ paths do not accept "/")
+    let inside = |f: &str| other.dir.join(f).to_string_lossy().to_string();
+    for typed in [format!("  '{dir}' "), format!("\"{dir}\""), inside("model.json"), inside("project.json")] {
         assert_eq!(store::open(std::path::Path::new(&typed)).unwrap().dir, other.dir, "{typed}");
     }
     let err = store::open(&projects).unwrap_err().to_string();
