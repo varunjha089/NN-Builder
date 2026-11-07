@@ -3,6 +3,10 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 07_11_26_08_29_10
+
+**EC2: wait up to 6 minutes for ssh after a start (an AMI's first boot loads its disk from the snapshot); AWS_TEST_PLAN: idle time, data, 10-second watch, what is missing before Phase 0** (`0c1e2c8`)
+
 ## 07_11_26_08_04_59
 
 **design.rs: the activate test is Unix only (it needs bash and Unix permissions; the Windows build's tests did not compile)** (`0056e3b`)
