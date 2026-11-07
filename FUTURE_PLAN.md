@@ -56,6 +56,19 @@ What is still open, in the suggested order. Done work is in git and CLAUDE.md; t
 
 ## 1c. Tests that need the owner's accounts (written 2026-11-07)
 
+**State at the end of 2026-11-07:**
+
+| Test | State |
+|---|---|
+| 1. 4.3 Earth Engine script | **done**: the app's script ran in the Code Editor (its two exports queued behind the owner's thesis tasks) and in the Python API (exported, read on Kaggle, trained); 40 existing S1+S2 exports also read |
+| 2. 4.4 cloud folder | **done for a Drive link** (Kaggle fetched the export itself); `gs://` and rclone not tried |
+| 3. 6.2 college server | open: needs the server in the Connection tab |
+| 4. 6.4 several-GPU stop | open: needs a machine with ≥ 2 GPUs (the college server) |
+| 5. 6.5 AWS on demand | **done** (AWS_TEST_PLAN.md section 7, $0.28) |
+| 6. 6.6 / 6.7 spot | open: no g4dn spot capacity in Mumbai on 2026-11-07; retry planned for 5:00 on 2026-11-08 (AWS_TEST_PLAN.md section 8) |
+
+The steps below are the original plan, kept for the open tests.
+
 On 2026-11-07 every TEST_APP.md test that the Mac and Kaggle allow was done: 69 ✅, with the bugs found fixed. The six below remain.
 Each needs an account, a machine or money that only the owner has. Their logic is already covered by CI and the stand-in tests
 (`crates/core/tests/flows.rs`), so what is left is the real service. Do them in this order (free first, money last). Use a TEST project
@@ -118,7 +131,7 @@ on demand in Mumbai only). Costs money: g4dn.xlarge is about $0.53 an hour on de
 - Pointers: `python/helpers/aws_ec2.py`; `runs.rs` aws_up, fetch; CLAUDE.md "AWS EC2 g4dn.xlarge".
 - Check in the console afterwards that the instance is **stopped**, not running.
 
-**6. AWS spot and Continue elsewhere (TEST_APP 6.6, 6.7).** Not possible with the owner's current AWS permission (no spot). Costs money, less than on demand.
+**6. AWS spot and Continue elsewhere (TEST_APP 6.6, 6.7).** The owner's key may request spot instances (plan and first attempt: AWS_TEST_PLAN.md section 8). Costs money, less than on demand.
 - Needs: a **persistent** spot request with interruption behaviour **stop**, and the machine setting "Keep a copy of checkpoints on this Mac".
 - Steps for 6.6: a run of 20+ minutes. Simulate an interruption with AWS Fault Injection Service (action `aws:ec2:send-spot-instance-interruptions`),
   or wait for a real one.

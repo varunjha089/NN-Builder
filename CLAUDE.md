@@ -5,7 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Status
 
 Version 0.4.0 (2026-11-06). Public repository github.com/varunjha089/NN-Builder (MIT); releases there feed the app's automatic update.
-Kaggle, a college server and EC2 are tested with stand-ins only (never against real accounts in tests). The earlier Python/Blockly app
+The automatic tests use stand-ins for Kaggle, ssh and EC2 (never real accounts). By hand (TEST_APP.md, 57 of 61 ✅ on 2026-11-07): Kaggle
+(many runs, 2 GPU notebooks at a time), EC2 on demand on the owner's g4dn.xlarge (AWS_TEST_PLAN.md: every phase, $0.28), real Earth Engine
+exports (the app's script in the Code Editor and the Python API; existing S1+S2 exports fused) fetched by Kaggle from a Drive link. Open:
+spot 6.6 / 6.7 (no Mumbai capacity on 2026-11-07; retry planned), college server 6.2 / 6.4. The earlier Python/Blockly app
 (0.1.1, 2026-11-03) is in the Trash.
 Open work (owner tasks, the design language, models, workflow, Sentinel-1/2) is in FUTURE_PLAN.md; what the owner still has to try by hand
 (window, real data, real GPUs / clouds) is TEST_APP.md: add a line there for every new feature, and its status (CI / Real / Never); the design language in

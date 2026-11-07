@@ -711,8 +711,11 @@ bands, the statistics and the accuracy; it also trains on every layout of the ne
 \label{sec:own-files}
 Sentinel data is usually exported from Google Earth Engine (GEE) to Google Drive and downloaded, so it is not on Kaggle or Hugging Face.
 Choose \ui{Source: My own files}, then the folder (\ui{Choose\dots}) and \ui{Read folder}. The app lists the files, finds class folders,
-and reads the first GeoTIFF's header: its size, number of bands and, when GEE or GDAL wrote them, the band names, which fill
-\ui{Bands in the files} by themselves (nothing is opened beyond the header, and nothing in the folder is changed).
+and reads a GeoTIFF's header: its size, number of bands and, when GEE or GDAL wrote them, the band names, which fill
+\ui{Bands in the files} by themselves (nothing is opened beyond the header, and nothing in the folder is changed). The names come from a
+file in the \ui{Training folder}, and with fusion the second group's from a file in its own folder, so Sentinel-1 files in \file{s1}
+never rename the Sentinel-2 bands of \file{s2}. Compressed GeoTIFFs (Earth Engine writes LZW) are read on every machine: the training
+code installs the decoder (\texttt{imagecodecs}) when a file needs it.
 \begin{description}[nosep]
   \item[Where the files are.] \ui{on this Mac}: when a run starts, the folder is copied to the training machine
         (\file{\textasciitilde/.nn\_builder/data/local/nnb-<folder>-<code>}, with rsync, so only the first time and after a change), or, for
@@ -966,7 +969,7 @@ dB (generated example).}{fig:kind-bands}
 \begin{enumerate}[nosep]
   \item Kaggle or \ui{My own files}; the files are GeoTIFF (\file{.tif}) or \file{.npy}, one per patch, in class folders (or images +
         masks, or a CSV for multi-label).
-  \item \ui{Read folder} reads the band names from the first GeoTIFF when Earth Engine or GDAL wrote them; otherwise choose
+  \item \ui{Read folder} reads the band names from a GeoTIFF of the training folder when Earth Engine or GDAL wrote them; otherwise choose
         \ui{Sentinel-2}, \ui{Sentinel-1} or \ui{other bands} and set \ui{Bands in the files} (\ui{EuroSAT-MS order} or \ui{Earth Engine
         SR} fill it for Sentinel-2).
   \item Tick the bands the network should see, or a preset (10\,m + 20\,m, true colour, colour + near infrared). Sentinel-1: tick
@@ -1007,7 +1010,8 @@ WorldCover map as labels).}{fig:data-scene}
 \begin{enumerate}[nosep]
   \item Set up the first group (e.g.\ Sentinel-2) as above, with the \ui{Training folder} pointing at its files (\file{s2}).
   \item Under \ui{Second band group (fusion)}: the sensor, the \ui{Folder with these files} (\file{s1}, mirroring \file{s2}: the same
-        subfolders and names) and its bands.
+        subfolders and names) and its bands. It is a folder \emph{inside} the dataset folder, never a full path: only the dataset folder
+        is copied or uploaded to the training machine.
   \item Design tab: keep one Input (early fusion), or select it, set \ui{Bands} to group 1 and press \ui{Add an Input for band group 2}
         (mid fusion): give each Input its own layers and join them with Concat. In text: \texttt{input 1} and \texttt{input 2}.
 \end{enumerate}
@@ -1179,7 +1183,8 @@ Nothing is saved in the project's settings: the next \ui{Train on \ldots} trains
 \ui{Train on \ldots} starts a background task whose log appears at the bottom right. The run card then shows the state (starting,
 running with the epoch, interrupted, done, stopped, crashed, failed), the GPU, the training set size, the loss curves (per batch, training
 and validation per epoch) and the accuracy curves (and mIoU for segmentation), the last checkpoint, and the log. \ui{Stop} ends the run
-cleanly (the current epoch ends early, the model and results are saved). \ui{Fetch results} copies the outputs back (for a stopped EC2
+cleanly (the current epoch ends early, the model and results are saved; the data-loading helpers ignore the stop signal and leave it
+to the main process, so they cannot end the run with an error first). \ui{Fetch results} copies the outputs back (for a stopped EC2
 instance it starts the instance, copies, and stops it again). The \ui{Runs} table lists every run of the project with its seed and test accuracy.
 
 \subsection{Several seeds, comparing runs, exporting results}
