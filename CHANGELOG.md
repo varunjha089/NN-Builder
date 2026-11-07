@@ -3,6 +3,15 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 07_11_26_22_26_59
+
+**Design: Save as PNG (and File → Export Design as PNG) draws the whole design into one picture; manual: each test architecture as such a picture** (`c94bc7a`)
+
+The picture holds every block at 2× its normal size whatever the window shows (≤ 16,000 px), in the current theme, without the minimap
+and zoom buttons (html-to-image of React Flow's viewport; the night glow is left out because it drew as solid bars), saved as
+export/<project> architecture.png and shown in Finder. Also: the Small CNN template's second dropout rate was 0.30000000000000004
+(0.2 + 0.1·i); now 0.3, and the block summary rounds rates saved that way (test: small_cnn_dropout_rates_are_exact).
+
 ## 07_11_26_21_53_02
 
 **TEST_APP.md: the Code Editor exports of 4.3 succeeded** (`e48ae3f`)
