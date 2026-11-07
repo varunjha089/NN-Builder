@@ -921,6 +921,8 @@ fn adapters_experts_and_exits() {
 }
 
 /// a venv whose PyTorch needs its activate script (the AWS Deep Learning AMI keeps CUDA inside /opt/pytorch): Prepare and run.sh source it
+/// (Unix only: the scripts run on the Linux training machine, and the test needs bash)
+#[cfg(unix)]
 #[test]
 fn prepare_and_run_activate_the_python_environment() {
     use std::os::unix::fs::PermissionsExt;
