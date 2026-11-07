@@ -3,6 +3,13 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 07_11_26_13_10_02
+
+**Runs: a poll leaves a run alone while a job (start, fetch) writes it, and never writes back over a fetched run** (`62162bb`)
+
+Found on the first real EC2 tests: a status poll that read run.json just before Fetch results finished saved its older copy after it,
+so the run went back from "done, fetched" to "starting" and the app thought it unfinished. Test: runs.rs busy marker.
+
 ## 07_11_26_11_04_16
 
 **LZW GeoTIFFs: imagecodecs is installed before tifffile is first imported (reloading the package did not reach the module that looks for it)** (`026a8ae`)
