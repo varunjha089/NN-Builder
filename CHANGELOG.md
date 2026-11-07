@@ -3,6 +3,12 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 07_11_26_19_08_07
+
+**Projects page: Choose… opens a project folder with the Finder dialog; a typed path may keep its quotes, start with ~/ or name a file inside the project; the error names the folder** (`e495473`)
+
+The owner pasted a project path and got "not an NN Builder project" without seeing which folder was looked at.
+
 ## 07_11_26_18_47_32
 
 **Manual: section 16, the test architectures: 18 designs with Design-screen screenshots, what each tests, the parameter arithmetic and a per-block parameter table; label for the block reference** (`2e8ff29`)
