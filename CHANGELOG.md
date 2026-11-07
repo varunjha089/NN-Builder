@@ -3,6 +3,15 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 07_11_26_09_48_54
+
+**Fetch results: shown while a run looks active but its machine does not answer (EC2 stopped); a fetch sets the run's state from the fetched events; a failed copy leaves no empty folder** (`9f5ff9f`)
+
+Found on the first real EC2 run: the run finished while it was not polled and the instance stopped itself; the app said "Fetch
+results starts it" but hid the button (run still "starting"), and a fetch would not have changed "starting" to "done".
+macOS's openrsync leaves an empty folder named like a missing file when copying locally (the tests' stand-in): removed.
+Tests: flows.rs.
+
 ## 07_11_26_09_32_16
 
 **SSH / EC2: a launched run that is still "starting" (train.py has not written its start event) is still polled; the window retries a failed poll** (`da789e9`)
