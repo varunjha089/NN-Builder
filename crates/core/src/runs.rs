@@ -51,6 +51,9 @@ pub struct RunInfo {
     pub dataset: String,
     #[serde(default)]
     pub kernel: String,
+    /// a Kaggle run waiting for a free GPU (status "queued"): the dataset its notebook attaches, for the push that follows
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kaggle_attach: Option<String>,
     #[serde(default)]
     pub url: String,
     #[serde(default)]
@@ -259,6 +262,15 @@ fn start_seeded(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_token
                 info.note = "Running on Kaggle's servers. The curves come from the notebook's log, read every 30 s; the results are downloaded when it ends.".into();
                 save(&d, &info)?;
                 log(format!("Pushed: {}", info.url));
+                return Ok(id);
+            }
+            Err(e) if is_session_limit(&e.to_string()) => {
+                // Kaggle runs 2 GPU notebooks at a time (several seeds, or other runs): wait for a free one
+                info.status = "queued".into();
+                info.kaggle_attach = Some(kaggle_attach_of(&ds));
+                info.note = QUEUED_NOTE.into();
+                save(&d, &info)?;
+                log("Kaggle runs 2 GPU notebooks at a time: this run waits and is pushed when one is free.".into());
                 return Ok(id);
             }
             Err(e) => {
@@ -830,6 +842,23 @@ fn kaggle_fetch(c: &KaggleCreds, d: &Path, info: &mut RunInfo) -> Result<()> {
     save(d, info)
 }
 
+const QUEUED_NOTE: &str = "Waiting for a free Kaggle GPU (Kaggle runs 2 GPU notebooks at a time): pushed when one is free, while this \
+    run is open (or the next time it is opened).";
+
+/// Kaggle refused a push because 2 GPU notebooks are already running
+fn is_session_limit(msg: &str) -> bool {
+    msg.contains("Maximum batch GPU session") || msg.contains("maximum number of concurrent")
+}
+
+/// the dataset a Kaggle notebook attaches ("" = none): a Kaggle dataset, or the private upload of the owner's own files
+fn kaggle_attach_of(ds: &crate::dataset::Dataset) -> String {
+    match ds.source.as_str() {
+        "kaggle" => ds.kaggle_slug.clone(),
+        "local" if ds.cloud_url.is_empty() && !ds.local_on_machine => ds.local_key(),
+        _ => String::new(),
+    }
+}
+
 /// the start of the note a run gets while Kaggle cannot be asked about it (cleared when it answers again)
 const KAGGLE_DOWN: &str = "Kaggle could not be reached";
 
@@ -839,6 +868,30 @@ pub fn status(pr: &Project, id: &str, since: usize, creds: &Creds) -> Result<Sta
     let mut state = info.status.clone();
     // a spot run continued elsewhere is still looked at (when opened): if its old instance came back, it is stopped there
     let watch_old = state == "continued" && info.spot;
+    if state == "queued" && info.kind == "kaggle" {
+        if let Some(c) = creds.kaggle.as_ref().filter(|_| now() - info.last_poll >= KAGGLE_POLL) {
+            info.last_poll = now();
+            let attach = info.kaggle_attach.clone().unwrap_or_default();
+            // (an own-files dataset was uploaded under the owner's name: <user>/<key>)
+            let attach = if attach.is_empty() || attach.contains('/') { attach } else { format!("{}/{attach}", c.username) };
+            match cloud::kaggle_push(c, &d, &cloud::kernel_title(&pr.name(), id), (!attach.is_empty()).then_some(attach.as_str())) {
+                Ok(r) => {
+                    info.url = format!("https://www.kaggle.com/code/{r}");
+                    info.kernel = r;
+                    info.status = "running".into();
+                    info.note = "Running on Kaggle's servers. The curves come from the notebook's log, read every 30 s; the results are downloaded when it ends.".into();
+                    state = "running".into();
+                }
+                Err(e) if is_session_limit(&e.to_string()) => {}
+                Err(e) => {
+                    info.status = "failed".into();
+                    info.error = e.to_string();
+                    state = "failed".into();
+                }
+            }
+            save(&d, &info)?;
+        }
+    }
     if !["failed", "terminated", "continued"].contains(&state.as_str()) && !info.fetched || watch_old {
         let due = now() - info.last_poll >= if info.kind == "kaggle" { KAGGLE_POLL } else { SSH_POLL };
         if due && info.status != "starting" {
@@ -1162,4 +1215,20 @@ pub fn export(pr: &Project, ids: &[String]) -> Result<(PathBuf, PathBuf)> {
 pub fn results(pr: &Project, id: &str) -> Result<Value> {
     let d = run_dir(pr, id)?;
     store::read_json(&d.join("results.json")).ok_or_else(|| anyhow!("No results for this run yet."))
+}
+
+#[cfg(test)]
+mod queue_tests {
+    use super::*;
+    use crate::dataset::Dataset;
+
+    #[test]
+    fn a_full_kaggle_waits_instead_of_failing() {
+        assert!(is_session_limit("Kaggle push failed: Kernel push error: Maximum batch GPU session count of 2 reached."));
+        assert!(!is_session_limit("Kaggle push failed: 400 Client Error: Bad Request"));
+        let own = Dataset { source: "local".into(), local_dir: "/data/x".into(), ..Default::default() };
+        assert_eq!(kaggle_attach_of(&own), own.local_key(), "the private upload of the owner's files");
+        assert_eq!(kaggle_attach_of(&Dataset { source: "kaggle".into(), kaggle_slug: "a/b".into(), ..Default::default() }), "a/b");
+        assert_eq!(kaggle_attach_of(&Dataset { source: "huggingface".into(), ..Default::default() }), "");
+    }
 }

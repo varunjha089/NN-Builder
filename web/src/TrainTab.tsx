@@ -67,7 +67,8 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
         if (stop) return;
         setStatus({ ...s, events: events.current });
         // an interrupted spot run is followed more slowly: the app asks AWS at most every 30 s
-        if (["starting", "running"].includes(s.state)) timer = window.setTimeout(tick, document.hidden ? 15000 : 3000);
+        // (a queued Kaggle run is pushed by these polls when a GPU is free)
+        if (["starting", "running", "queued"].includes(s.state)) timer = window.setTimeout(tick, document.hidden ? 15000 : 3000);
         else if (s.state === "interrupted") timer = window.setTimeout(tick, 15000);
         else api.runs().then(setRuns).catch(() => {});
       } catch (e) { if (!stop) toast(errText(e)); }
