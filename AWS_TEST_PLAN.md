@@ -42,8 +42,12 @@ Who does what:
 2. **Key pair:** EC2 → Key pairs → create (RSA, .pem). Keep the .pem outside any repository, with `chmod 400`.
 3. **Security group:** inbound SSH (port 22) from **My IP** only, nothing else open.
 4. **Launch one instance:**
-   - AMI: an AWS **Deep Learning AMI with PyTorch** (Ubuntu). PyTorch and the NVIDIA driver are already installed, so Prepare does not
-     spend ~10 paid minutes installing them. The app then uses the AMI's Python.
+   - AMI: **Deep Learning OSS Nvidia Driver AMI GPU PyTorch 2.12 (Ubuntu 24.04)**, the newest date (20261024 when this was written; it
+     lists G4dn as supported). In the launch wizard, search the AMI catalogue for "Deep Learning OSS Nvidia Driver AMI GPU PyTorch". The
+     AMI already has the NVIDIA driver, CUDA and PyTorch 2.12 (Python 3.13, `/opt/pytorch/bin/python`), so Prepare spends about a minute,
+     not ~10 paid minutes. The app finds that Python by itself (leave the machine's "Python" field empty). It sources
+     `/opt/pytorch/bin/activate`, which this AMI needs for CUDA, and installs only `datasets` and `kaggle`, with `sudo` if needed.
+     The login user is **ubuntu**.
    - Instance type **g4dn.xlarge**, purchasing option **on demand** (no spot), the key pair and the security group above.
    - Storage: the AMI's minimum (often 75 GB gp3). More disk is not needed for these tests.
    - Advanced details:
@@ -76,6 +80,10 @@ Who does what:
 
 ## 3. Changes to the app before the first run (no AWS cost; Claude, with tests) — done 2026-11-07, tested with the stand-in EC2 in flows.rs
 
+Also done for the Deep Learning AMI: Prepare uses `/opt/pytorch/bin/python` when no Python is set, Prepare and run.sh source the
+environment's `activate` (CUDA lives inside it since PyTorch 2.9), and pip retries with `sudo -n` when it may not write there
+(design.rs prepare_and_run_activate_the_python_environment).
+
 - **Must fix first: a failure after the start leaves the instance running.** Found while writing this plan (2026-11-07).
   - `runs::start` / `start_remote` and `resume_on`: when anything fails after `aws_up` has started the instance, the run is marked
     "failed" but the instance is not stopped. Examples: ssh never answers, no public address, Prepare, the upload, the launch.
@@ -98,7 +106,7 @@ Every test uses a TEST project with the small CIFAR-10 CNN (built-in dataset, do
 | Phase | Test (TEST_APP.md) | What happens | Running time | Cost |
 |---|---|---|---|---|
 | 0 | Describe only | Connection → the AWS machine → Check instance: the key works, region, state **stopped**, shutdown behaviour **stop**, type g4dn.xlarge | 0 (the instance stays stopped) | $0 |
-| 1a | Prepare | Connection → Prepare: the app starts the instance, checks GPU / driver / the AMI's PyTorch, stops it again | ~5 min | ~$0.05 |
+| 1a | Prepare | Connection → Prepare: the app starts the instance, checks GPU / driver / the AMI's PyTorch, stops it again. Must report "CUDA" and "Tesla T4": "CPU only" = stop here | ~5 min | ~$0.05 |
 | 1 | 6.5 AWS on demand | Train: the app starts the instance, Prepare (GPU, driver, Python with PyTorch), 2 epochs, results copied back, `shutdown -h now` | ~20–30 min | ~$0.25 |
 | 2 | Results from a stopped instance | Open the finished run again after it stopped: if anything was not yet copied, the app starts the instance, copies and stops it | ~3–5 min | ~$0.05 |
 | 3 | Stop button on AWS | A 10-epoch run, press Stop after the first epoch: train.py checkpoints, writes results, the instance stops | ~10–15 min | ~$0.15 |

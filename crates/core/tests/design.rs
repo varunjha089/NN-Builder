@@ -919,3 +919,28 @@ fn adapters_experts_and_exits() {
     let seg = Dataset { task: "segment".into(), ..ds.clone() };
     assert!(msg("1 input\n2 conv 8 3x3\n3 global_pool\n4 exit\n5 seg_output <- 2\n", &seg).contains("classification"));
 }
+
+/// a venv whose PyTorch needs its activate script (the AWS Deep Learning AMI keeps CUDA inside /opt/pytorch): Prepare and run.sh source it
+#[test]
+fn prepare_and_run_activate_the_python_environment() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("env/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(bin.join("activate"), "export NNB_TEST_ACTIVATED=yes\n").unwrap();
+    // the stand-in Python: every import works; the torch check reports CUDA only when the environment was activated
+    let py = bin.join("python");
+    std::fs::write(&py, "#!/bin/bash\n[ \"$1\" = - ] || exit 0\ncat >/dev/null\n\
+        if [ \"${NNB_TEST_ACTIVATED:-}\" = yes ]; then echo 'NNB_TORCH 2.12.0 cuda 3.13.17'; else echo 'NNB_TORCH 2.12.0 cpu 3.13.17'; fi\n").unwrap();
+    std::fs::set_permissions(&py, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let m = Machine { name: "dlami".into(), host: "h".into(), python: py.to_string_lossy().into(),
+        workdir: dir.path().join("w").to_string_lossy().into(), ..Default::default() };
+    let out = std::process::Command::new("bash").arg("-c").arg(remote::prepare_script(&m)).env_remove("NNB_TEST_ACTIVATED").output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    let lines: Vec<String> = text.lines().map(String::from).collect();
+    let p = remote::parse_prepare(&lines);
+    assert!(p.cuda && p.fail.is_empty(), "{text}\n{}", String::from_utf8_lossy(&out.stderr));
+    let sh = nnb_core::runs::run_script(&TrainSettings::default(), &p, &m, "", false);
+    let (a, run) = (sh.find("/activate").expect("run.sh sources activate"), sh.find("train.py >>").unwrap());
+    assert!(a < run, "{sh}");
+}

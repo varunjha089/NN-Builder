@@ -347,6 +347,10 @@ if command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >
   [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" = "yes" ] && echo "NNB_LINGER 1"
 fi
 {py}
+if [ -z "$PY" ] && [ -x /opt/pytorch/bin/python ]; then
+  PY=/opt/pytorch/bin/python
+  echo "Using the PyTorch of the AWS Deep Learning AMI (/opt/pytorch)"
+fi
 if [ -z "$PY" ]; then
   if [ ! -x "$W/venv/bin/python" ]; then
     BASE=""
@@ -359,11 +363,16 @@ if [ -z "$PY" ]; then
   fi
   PY="$W/venv/bin/python"
 fi
+# a venv's activate script may set what its PyTorch needs (the Deep Learning AMI keeps CUDA inside /opt/pytorch); run.sh does the same
+if [ -f "$(dirname "$PY")/activate" ]; then set +u; . "$(dirname "$PY")/activate"; set -u; fi
 if ! "$PY" -c 'import torch, torchvision, datasets, kaggle' >/dev/null 2>&1; then
   EXTRA=""
   if [ -n "$DRIVER" ] && [ "$DRIVER" -lt 525 ] 2>/dev/null; then EXTRA="--index-url https://download.pytorch.org/whl/cu118 --extra-index-url https://pypi.org/simple"; echo "Older NVIDIA driver ($DRIVER): CUDA 11.8 build of PyTorch"; fi
   echo "Installing PyTorch, torchvision, datasets, kaggle (a few minutes) ..."
-  "$PY" -m pip install --disable-pip-version-check -q $EXTRA torch torchvision datasets pillow kaggle || {{ echo "NNB_FAIL pip could not install the packages (no internet on this machine? a proxy?)"; exit 1; }}
+  # (an environment this user may not write to, e.g. the Deep Learning AMI's /opt/pytorch: with sudo when it needs no password)
+  "$PY" -m pip install --disable-pip-version-check -q $EXTRA torch torchvision datasets pillow kaggle \
+    || sudo -n "$PY" -m pip install --disable-pip-version-check -q $EXTRA torch torchvision datasets pillow kaggle \
+    || {{ echo "NNB_FAIL pip could not install the packages (no internet on this machine? a proxy? no right to write into $PY's environment?)"; exit 1; }}
 fi
 echo "NNB_PYTHON $PY"
 "$PY" - <<'PYEOF'

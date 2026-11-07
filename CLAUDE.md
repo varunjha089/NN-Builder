@@ -256,7 +256,9 @@ crates/core/src/
                            it into the projects folder; discard_draft throws an unsaved one away: on the next demo (create_draft), on
                            create/open of a project, and when the app quits (RunEvent::Exit) or starts
   remote.rs                Machine (ssh | aws) + clean() validation, ssh/rsync commands (ControlMaster ~/.ssh/nnb-%C, BatchMode), connect_command
-                           (one-time login), prepare_script (+ parse_prepare: GPUs, SLURM, systemd+linger, tmux, timeout, PyTorch), choose_launch,
+                           (one-time login), prepare_script (+ parse_prepare: GPUs, SLURM, systemd+linger, tmux, timeout, PyTorch; no Python set + /opt/pytorch/bin/python
+                           = the AWS Deep Learning AMI's; the Python's venv activate is sourced there and in run.sh (that AMI keeps CUDA
+                           inside the venv); pip falls back to sudo -n), choose_launch,
                            put_secret_script (file via stdin, chmod 600)
   cloud.rs                 tools venv (settings/tools: kaggle + boto3), kaggle_test/files/push/status/output (CLI with env credentials and a
                            private KAGGLE_CONFIG_DIR), class_folders, aws() (python/helpers/aws_ec2.py: describe/start/stop)

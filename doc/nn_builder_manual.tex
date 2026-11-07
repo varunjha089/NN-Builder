@@ -1064,7 +1064,9 @@ readable only by its owner, through the SSH connection's input, never on a comma
 \emph{password}, optional jump host, remote folder (default \file{.nn\_builder}), optional existing Python with PyTorch. With a password,
 \ui{Connect (log in once)} opens a Terminal window where you type it; the application then reuses that connection and never sees the
 password. \ui{Test} checks the login; \ui{Prepare} checks Python, the GPUs (\texttt{nvidia-smi}), the disk, and installs PyTorch in the
-remote folder (no administrator rights needed). \ui{Keep runs going with} chooses how a run survives logging out: SLURM (\texttt{sbatch},
+remote folder (no administrator rights needed). On an EC2 instance started from the AWS \emph{Deep Learning AMI with PyTorch}, leave
+the Python field empty: \ui{Prepare} finds the AMI's PyTorch (\file{/opt/pytorch}), uses it with its environment activated (the AMI keeps
+CUDA there) and adds only the few packages it lacks, so it takes about a minute instead of installing PyTorch. \ui{Keep runs going with} chooses how a run survives logging out: SLURM (\texttt{sbatch},
 the right way on a shared cluster), \texttt{systemd-run} (needs ``lingering''), \texttt{tmux}, or \texttt{nohup}+\texttt{setsid};
 \emph{automatic} picks the best the machine allows.
 
