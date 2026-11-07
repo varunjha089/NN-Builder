@@ -36,8 +36,8 @@ Keychain question.
 | 1.1 | New / open / close | New project, close (File → Close Project), open it again | Same design and dataset come back | ✅ Window: 12 TEST projects opened and closed (File → Close Project) |
 | 1.2 | Demo | Projects → Start from a demo → ResNet-18 → ⌘S | Saved as a project; an unsaved demo vanishes when another opens | Real |
 | 1.3 | Delete | Delete the test project at the end | Its folder is in the Trash, off the list | Real |
-| 1.4 | Settings | ⚙ → night mode, panel colours, Design size | Applied at once, kept after restart | Never (checked by script only) |
-| 1.5 | Undo / redo | Change a few blocks, ⌘Z / ⇧⌘Z | Steps undone and redone in order | Never |
+| 1.4 | Settings | ⚙ → night mode, panel colours, Design size | Applied at once, kept after restart | ✅ Window |
+| 1.5 | Undo / redo | Change a few blocks, ⌘Z / ⇧⌘Z | Steps undone and redone in order | ✅ Window |
 
 ## 2. Design canvas (new blocks and tools)
 
@@ -48,23 +48,23 @@ warning text.
 |---|---|---|---|---|
 | 2.1 | Palette groups | Look at the palette | Groups: Image, Up-sampling, Dense and outputs (incl. Detection output, Early exit), Normalise, Time series, Transformer (incl. Cross-attention, RMSNorm, SwiGLU, Mixture of experts), Branches (incl. Subtract, Shared weights), Your own (Custom) | ✅ Window: every group and button, incl. Twin branch |
 | 2.2 | Custom block | Add Custom (PyTorch) → Insert an example → Class: SE | The block shows the input's shape; the code box edits; the Text tab shows a `python """ … """` section | ✅ Window + GPU: class SE shown, trained on a T4 (TEST 1); "Insert an example" not pressed |
-| 2.3 | Custom shape error | In the code, change `# out: c, h, w` to `# out: c * 2, h, w` | The next block's shape follows (channels doubled); a wrong formula shows a red message | Never |
-| 2.4 | Twin branch | Fused dataset (2.x below or any), Input → conv → conv; select the last conv → Twin branch (shared weights) | A second Input (band group 2) and Shared-weights copies appear; parameters do not grow | Never |
-| 2.5 | Subtract | Subtract the two branches, tick absolute difference | Shape stays; the summary says \|a − b\| | Never |
+| 2.3 | Custom shape error | In the code, change `# out: c, h, w` to `# out: c * 2, h, w` | The next block's shape follows (channels doubled); a wrong formula shows a red message | ✅ Window |
+| 2.4 | Twin branch | Fused dataset (2.x below or any), Input → conv → conv; select the last conv → Twin branch (shared weights) | A second Input (band group 2) and Shared-weights copies appear; parameters do not grow | ✅ Window |
+| 2.5 | Subtract | Subtract the two branches, tick absolute difference | Shape stays; the summary says \|a − b\| | ✅ Window |
 | 2.6 | Frozen / LoRA | Tick "frozen" on a conv; set LoRA rank 4 on a Dense | The design summary shows "N trained, M frozen" | ✅ Window: "146,328 trained, 24,576 frozen" (TEST 1) |
 | 2.7 | MoE / exits | After To tokens add Mixture of experts; after a Global pool add Early exit | Shapes kept; an Early exit before Global pool says it needs a vector | ✅ Window + GPU: MoE and exit shown and trained (TEST 1) |
 | 2.8 | Transformer options | Self-attention: causal, rotary; Class token + position: sinusoidal | The block summary shows causal · rotary; an odd head width with rotary is refused | ✅ Window: "4 heads · rotary"; summaries now also show sinusoidal and LoRA (fixed) |
-| 2.9 | Output for | With extra outputs (4.6), select an Output → "Output for" | The list shows the main task and each extra output | Never |
+| 2.9 | Output for | With extra outputs (4.6), select an Output → "Output for" | The list shows the main task and each extra output | ✅ Window |
 | 2.10 | Large designs | Demo ViT-g/14 → Collapse repeated blocks | Fast; one ×40 node | Real |
 
 ## 3. Text tab
 
 | # | Test | Steps | Expect | Status |
 |---|---|---|---|---|
-| 3.1 | Round trip | Paste `doc/examples/everything.nnb` (CIFAR-10 3×32×32) | 97 blocks, no warning, 217,396 parameters (16,832 frozen) | CI |
-| 3.2 | Time series text | Paste `doc/examples/timeseries.nnb` with a time-series dataset (4 bands, 6 dates, 32×32) | No error; Conv3D, Temporal pool, LSTM … on the canvas | CI |
+| 3.1 | Round trip | Paste `doc/examples/everything.nnb` (CIFAR-10 3×32×32) | 97 blocks, no warning, 217,396 parameters (16,832 frozen) | ✅ Window |
+| 3.2 | Time series text | Paste `doc/examples/timeseries.nnb` with a time-series dataset (4 bands, 6 dates, 32×32) | No error; Conv3D, Temporal pool, LSTM … on the canvas | ✅ Window |
 | 3.3 | New words | Type `5 shared 2`, `subtract abs`, `lstm 32 bi`, `moe 4 top 2 hidden 64`, `exit 0.3`, `dense 64 lora 4`, `conv 8 3x3 frozen`, `detect` | Each builds the right block; ⌘-click selects it | ✅ Window: TEST 1's text shows python section, frozen, custom, exit, rotary, lora, moe |
-| 3.4 | Canvas → text | Change a setting on the canvas | Only that line changes; hand-written functions stay | CI |
+| 3.4 | Canvas → text | Change a setting on the canvas | Only that line changes; hand-written functions stay | ✅ Window |
 
 ## 4. Dataset tab, one kind of data at a time
 
@@ -79,7 +79,7 @@ Each: set the Dataset tab as described, then **Check data on Kaggle** (a few min
 | 4.5 | Multi-label | A labels CSV (or BigEarthNet preset with a BigEarthNet subset) | Classes read from the CSV; micro F1 / mAP after training | ✅ GPU: TEST 4, micro F1 / mAP 1.0 |
 | 4.6 | Extra outputs | Labels CSV with a class column + a number column; Dataset → Extra outputs → add "numbers" with that column | Design needs two Outputs; results show both scores | ✅ GPU: TEST 3, class 100 %, biomass R² 0.987, wet 97.5 % |
 | 4.7 | Regression | Task Regression, labels CSV with a numeric column (e.g. a biomass or yield table you have) | Read labels lists the numeric columns; R² / scatter after training | ✅ GPU: TEST 2, R² 0.998 (data check: both targets, 0 warnings) |
-| 4.8 | Segmentation, scene | Earth Engine scene + WorldCover label (layout "large images + label image"), test tiles "strip" | Tiles counted; mIoU after training | CI |
+| 4.8 | Segmentation, scene | Earth Engine scene + WorldCover label (layout "large images + label image"), test tiles "strip" | Tiles counted; mIoU after training | ✅ GPU |
 | 4.9 | Fusion S2 + S1 | Second band group Sentinel-1 from a twin folder | Data check shows 2 groups; mid fusion trains | ✅ GPU: TEST 4 (S1 stacked with S2) |
 | 4.10 | Own sizes | Same, tick "its own image size" (e.g. S1 at half) | Input 2 has the smaller size; an Input for all bands is refused | ✅ GPU: TEST 5, S1 16×16 next to S2 32×32: 100 % |
 | 4.11 | Before / after pairs | Two folders of the same bands at two dates, same file names | Accepted (names repeat); Siamese design trains | ✅ GPU: TEST 6, Siamese 100 % (constant lr) |
@@ -163,4 +163,8 @@ Each: set the Dataset tab as described, then **Check data on Kaggle** (a few min
 | 2026-11-06 | 4.13, 7.5 | ✅ | TEST 9 detection: data check (213229-check), mAP@0.5 0.951, @0.5:0.95 0.628 (213439) |
 | 2026-11-06 | 5.2, 5.4 | ✅ | TEST 10 unbalanced: weights 0.55 / 5.5, focal, 100 % (20261106-213656) |
 | 2026-11-06 | — | fixed | Found by these tests: LoRA + ImageNet weights refused (fixed, CI); block summaries missing positions / LoRA; a poll error stayed on finished runs; several GPUs did not exit; a stray section on detection results |
+| 2026-11-07 | 1.4, 1.5, 2.3, 2.4, 2.5, 2.9 | ✅ | In the window: night mode kept after a restart; ⌘Z / ⇧⌘Z; a custom block's `# out:` 32 → 64 channels moved the next shapes, `h / 2` gave "use // (whole-number division)"; Twin branch made 3 shared blocks; Subtract shows \|a − b\|; "Output for" lists the extra outputs |
+| 2026-11-07 | 3.1, 3.2, 3.4 | ✅ | everything.nnb pasted: 97 blocks, 217,396 params; timeseries.nnb: 23,204 params; LSTM 16 → 24 on the canvas changed only that line of the text |
+| 2026-11-07 | 4.8 | ✅ | TEST 15 scene segmentation (generated scene + label, strip test tiles, Dice + CE): 95.9 % pixels, mIoU 0.919 (20261107-052912) |
+| 2026-11-07 | — | fixed | A moment without DNS failed a Kaggle upload (20261107-052609): Kaggle calls are now tried 3 times. A third seed failed on Kaggle's limit of 2 GPU notebooks: now "queued" and pushed when one is free, also while another seed is the run shown |
 | | | | |

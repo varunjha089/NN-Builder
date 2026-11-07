@@ -66,7 +66,8 @@ crates/core/src/
                            processed in 2, 4, 8 ... parts, gradients weighted by share, "memory_split" event, parts kept in the
                            checkpoint, version 5; evaluation batches halve the same way; one_batch_check uses 2 images) and save_memory
                            (codegen checkpoint_cuts: forward cut where only one tensor crosses, ~sqrt(n) parts, _partN methods +
-                           torch.utils.checkpoint; generated only when on); bf16 on compute capability 8+, channels-last for conv nets,
+                           torch.utils.checkpoint; generated only when on; not with several outputs / early exits: the Train tab
+                           says so, canSaveMemory); bf16 on compute capability 8+, channels-last for conv nets,
                            workers "auto" = min(8, CPUs) with prefetch 4, "memory" event (measured peak after the first epoch),
                            data_wait per epoch; Train tab "GPU memory" box and run-card notes; status polls slow to 15 s when the
                            window is hidden. Mac side: memo'd blocks (not onlyRenderVisibleElements: it empties the minimap), undo history capped

@@ -35,6 +35,11 @@ function gpuGB(st: AppState, target: string, kind: string): number | null {
 }
 import { Chart } from "./Preview";
 
+// codegen makes the "save memory" cuts only for one output and no early exits
+function canSaveMemory(a: Analysis | null): boolean {
+  return !a || (a.nodes.filter((n) => ["output", "seg_output", "detect_output"].includes(n.kind)).length <= 1 && !a.nodes.some((n) => n.kind === "exit_output"));
+}
+
 export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, toast, startJob, datasetSource, datasetTask }: {
   st: AppState; ok: boolean; analysis: Analysis | null; train: TrainSettings; setTrain: (t: TrainSettings) => void; runId: string | null; openRun: (id: string | null) => void;
   toast: (m: string) => void; startJob: () => void; datasetSource: string; datasetTask: string;
@@ -245,6 +250,8 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
             <label className="chk"><input type="checkbox" checked={train.save_memory} onChange={(e) => set({ save_memory: e.target.checked })} />
               save memory: recompute layer outputs instead of keeping them (much less memory, about 30% slower)</label>
           </div>
+          {train.save_memory && !canSaveMemory(analysis) && <div className="msg warn">"Save memory" is not used for this design: it has
+            several outputs or early exits, and the parts it cuts the network into can pass on only one tensor.</div>}
           <p className="muted small">Newer GPUs (A100, A6000, RTX 30xx/40xx) train in bfloat16 by themselves; convolutions use the faster
             channels-last layout. The run card shows the memory really used after the first epoch.{train.auto_split ? " With BatchNorm, the parts" +
             " normalise over fewer images than the whole batch, the only difference a split makes." : ""}</p>
@@ -271,7 +278,7 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
         if ((kind === "kaggle" || kind === "aws") && !st.tools_ready) need.push("Install the tools (Connection → Install tools)");
         if (kind === "kaggle" && !st.secrets.kaggle) need.push("add your Kaggle API token (Connection → Kaggle)");
         if (kind === "aws" && !st.secrets.aws) need.push("add your AWS access key (Connection → AWS)");
-        const mem = memoryGB(analysis, train.batch_size, train.amp, train.save_memory), gpu = gpuGB(st, target, kind);
+        const mem = memoryGB(analysis, train.batch_size, train.amp, train.save_memory && canSaveMemory(analysis)), gpu = gpuGB(st, target, kind);
         return <>
           {need.length > 0 && <div className="msg warn">Before training on {target}: {need.join("; ")}.</div>}
           {mem && <p className={`small ${gpu && mem.total > gpu * 0.9 ? "st-warn" : "muted"}`}>Estimated GPU memory for training: about
