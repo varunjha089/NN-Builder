@@ -456,6 +456,9 @@ fn own_files_and_earth_engine_exports() {
     assert!(bad(&|d| d.bands = s(&["B4", "B04"])).contains("chosen twice"));
     assert!(bad(&|d| d.band_order = s(&["B4", "B04"])).contains("appears twice"));
     assert!(bad(&|d| d.layout = "scene".into()).contains("for segmentation"));
+    let fused = |dir: &str| Dataset { bands2: s(&["VV", "VH"]), band_order2: s(&["VV", "VH"]), sensor2: "s1".into(), fuse_dir: dir.into(), ..ds.clone() }.problems().join(" ");
+    assert!(fused("s1").is_empty(), "{}", fused("s1"));
+    assert!(fused("/data/export/s1").contains("not a full path"), "only the dataset folder reaches the machine");
     // segmentation of multispectral images: images + masks, or a scene with a label image
     let seg = Dataset { task: "segment".into(), kaggle_train_dir: "images".into(), kaggle_mask_dir: "masks".into(), ..ds.clone() };
     assert!(seg.problems().is_empty(), "{:?}", seg.problems());
@@ -945,4 +948,35 @@ fn prepare_and_run_activate_the_python_environment() {
     let sh = nnb_core::runs::run_script(&TrainSettings::default(), &p, &m, "", false);
     let (a, run) = (sh.find("/activate").expect("run.sh sources activate"), sh.find("train.py >>").unwrap());
     assert!(a < run, "{sh}");
+}
+
+/// a 13-band 16-bit GeoTIFF (as Earth Engine exports Sentinel-2 L1C): BitsPerSample and SampleFormat hold 13 values each, stored at an
+/// offset because they do not fit in the IFD entry; the reader once took that offset for the bits ("432-bit")
+#[test]
+fn tiff_info_reads_per_band_lists_stored_elsewhere() {
+    let (bands, lists) = (13u16, 200u32);
+    let mut t: Vec<u8> = b"II*\0".to_vec();
+    t.extend(8u32.to_le_bytes());
+    let entry = |tag: u16, typ: u16, count: u32, value: u32| -> Vec<u8> {
+        let mut e = vec![];
+        e.extend(tag.to_le_bytes());
+        e.extend(typ.to_le_bytes());
+        e.extend(count.to_le_bytes());
+        e.extend(value.to_le_bytes());
+        e
+    };
+    let entries = [entry(256, 4, 1, 512), entry(257, 4, 1, 512), entry(258, 3, bands as u32, lists), entry(277, 3, 1, bands as u32),
+        entry(339, 3, bands as u32, lists + 2 * bands as u32)];
+    t.extend((entries.len() as u16).to_le_bytes());
+    for e in &entries {
+        t.extend(e);
+    }
+    t.extend(0u32.to_le_bytes());
+    t.resize(lists as usize, 0);
+    t.extend((0..bands).flat_map(|_| 16u16.to_le_bytes()));
+    t.extend((0..bands).flat_map(|_| 1u16.to_le_bytes())); // 1 = unsigned integers
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("s2.tif"), &t).unwrap();
+    let i = nnb_core::localdata::tiff_info(&dir.path().join("s2.tif")).unwrap();
+    assert_eq!((i.width, i.bands, i.bits, i.float), (512, 13, 16, false));
 }

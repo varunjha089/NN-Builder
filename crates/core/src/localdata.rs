@@ -121,12 +121,22 @@ pub fn tiff_info(path: &Path) -> Result<TiffInfo> {
         let (tag, typ) = (u16_at(&e[0..2]), u16_at(&e[2..4]));
         let count = if big { u64_at(&e[4..12]) } else { u32_at(&e[4..8]) };
         let v = &e[entry_len - value_len..];
-        // the first value of a SHORT / LONG / LONG8 field stored in the entry
-        let first = match typ {
+        // the first value of a SHORT / LONG / LONG8 field: in the entry, or, when all of them do not fit there (e.g. BitsPerSample of
+        // a 13-band image: 13 SHORTs), at the offset the entry holds (read as the value, it said "432-bit" for Earth Engine exports)
+        let size = match typ { 3 => 2, 16 => 8, _ => 4 };
+        let mut first = match typ {
             3 => u16_at(v),
             16 => u64_at(v),
             _ => u32_at(v),
         };
+        if (tag == 258 || tag == 339) && count.saturating_mul(size) > value_len as u64 {
+            let at = f.stream_position()?;
+            f.seek(SeekFrom::Start(if big { u64_at(v) } else { u32_at(v) }))?;
+            let mut b = [0u8; 8];
+            f.read_exact(&mut b[..size as usize])?;
+            first = match typ { 3 => u16_at(&b), 16 => u64_at(&b), _ => u32_at(&b) };
+            f.seek(SeekFrom::Start(at))?;
+        }
         match tag {
             256 => info.width = first,
             257 => info.height = first,

@@ -55,7 +55,8 @@ def main(action, region, instance_id):
                 print(json.dumps({"ok": False, "error": "spot-interrupted", **d}))
                 return 2
             if d["state"] == "stopping":
-                ec2.get_waiter("instance_stopped").wait(InstanceIds=[instance_id], WaiterConfig={"Delay": 5, "MaxAttempts": 60})
+                # (a g4dn with a large disk took about 6 minutes to stop, 2026-11-07: wait up to 10)
+                ec2.get_waiter("instance_stopped").wait(InstanceIds=[instance_id], WaiterConfig={"Delay": 5, "MaxAttempts": 120})
             ec2.start_instances(InstanceIds=[instance_id])
             ec2.get_waiter("instance_running").wait(InstanceIds=[instance_id], WaiterConfig={"Delay": 5, "MaxAttempts": 60})
             out = describe()

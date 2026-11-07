@@ -222,7 +222,8 @@ crates/core/src/
                            tools/kaggle-upload, signature in <settings>/uploads.json; create / version --dir-mode zip). codegen adds
                            local_key to DATASET. localdata.rs: files, signature, describe (class folders, first GeoTIFF header via
                            tiff_info: size, bands, GDAL band names from tag 42112; TIFF + BigTIFF). main.rs: local_scan, pick_folder.
-                           harness: data_root/local_root, read_array + pick_bands (S1 already in dB = negative values: not converted),
+                           harness: data_root/local_root, tiff_read (installs imagecodecs + reloads tifffile when a compressed GeoTIFF needs it:
+                           Earth Engine exports are LZW; Kaggle has tifffile without it), read_array + pick_bands (S1 already in dB = negative values: not converted),
                            normalise (NaN -> 0), read_mask/mask_classes (non-class values -> -100, ignored in loss, evaluate, units),
                            BandFolder, BandPairs (multiband images + masks), SceneTiles (scene -> cached .npy, memory-mapped tiles;
                            tiles need ≥ 50 % data and one labelled pixel), multiband_stats (NaN-aware), composite() (2 bands -> a, b, a-b).
@@ -240,7 +241,7 @@ crates/core/src/
                            results r2/mae/rmse/per_target/scatter/target_stats + target_stats.json; data_report "targets". runs listing
                            "task". UI: Dataset task radio, LabelsCsv target checkboxes, HF target columns; Train tab losses + R² chart;
                            ResultsTab cards, per-target table, Scatter, samples. CI: ci_multiband_check regress (Huber, early stop R²).
-                           Fusion: bands2, band_order2, sensor2, s1_db2, fuse_dir (second group, same relative file names, stacked after
+                           Fusion: bands2, band_order2, sensor2, s1_db2, fuse_dir (second group: a folder inside the dataset folder, never a full path (problems()), same relative file names, stacked after
                            group 1); group_channels(); Input param "group" (0 all, 1, 2): shapes allows two Inputs only when fused (one
                            per group), codegen slices x[:, :c1] / x[:, c1:], DSL `input 1` / `input 2`; harness GROUPS, read_groups,
                            fuse_path, set_fuse; Design inspector "Bands" + "Add an Input for band group 2"; DatasetTab SecondGroup.

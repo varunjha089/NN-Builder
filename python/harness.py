@@ -413,12 +413,7 @@ def hf_array(v):
     if isinstance(v, dict) and v.get("bytes") is not None:
         data = v["bytes"]
         if data[:4] in (b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+"):
-            try:
-                import tifffile
-            except ImportError:
-                subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "tifffile", "imagecodecs"], check=False)
-                import tifffile
-            return tifffile.imread(io.BytesIO(data))
+            return tiff_read(io.BytesIO(data))
         if data[:6] == b"\x93NUMPY":
             return np.load(io.BytesIO(data))
         from PIL import Image
@@ -694,17 +689,33 @@ def band_key(b):
 DB_NOTE = [False]  # the "already in decibels" note is given once
 
 
+def tiff_read(src):
+    """a GeoTIFF (a path or a file object) as an array. tifffile is installed when missing, and imagecodecs when a compressed file needs
+    it: Earth Engine exports are LZW-compressed, and Kaggle has tifffile without imagecodecs (first real export, 2026-11-07)"""
+    try:
+        import tifffile
+    except ImportError:
+        pip_install("tifffile", "imagecodecs")
+        import tifffile
+    try:
+        return tifffile.imread(src)
+    except ValueError as e:
+        if "imagecodecs" not in str(e):
+            raise
+        pip_install("imagecodecs")
+        import importlib
+        tifffile = importlib.reload(tifffile)   # (tifffile looks for imagecodecs when it is imported)
+        if hasattr(src, "seek"):
+            src.seek(0)
+        return tifffile.imread(src)
+
+
 def load_raw(path):
     """a GeoTIFF / .npy file as it is stored"""
     import numpy as np
     if path.lower().endswith(".npy"):
         return np.load(path)
-    try:
-        import tifffile
-    except ImportError:
-        subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "tifffile", "imagecodecs"], check=False)
-        import tifffile
-    return tifffile.imread(path)
+    return tiff_read(path)
 
 
 def read_array(path, order=None):
@@ -902,8 +913,7 @@ def read_mask(path, size=None):
         if path.lower().endswith(".npy"):
             m = np.load(path)
         else:
-            import tifffile
-            m = tifffile.imread(path)
+            m = tiff_read(path)
         m = np.asarray(m)
         if m.ndim == 3:
             m = m[0] if m.shape[0] < m.shape[-1] else m[..., 0]

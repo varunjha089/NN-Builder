@@ -634,6 +634,9 @@ impl Dataset {
                     }
                     if self.fuse_dir.is_empty() || !ok_id(&self.fuse_dir) {
                         p.push("Give the folder with the second group's files (same file names as the first).".into())
+                    } else if self.fuse_dir.starts_with('/') || self.fuse_dir.starts_with('~') {
+                        // (only the dataset folder is copied or uploaded: a full path is not there on the training machine)
+                        p.push("The second group's folder is a folder inside the dataset folder (e.g. s1), not a full path.".into())
                     }
                 }
                 if !matches!(self.source.as_str(), "kaggle" | "local" | "huggingface") {

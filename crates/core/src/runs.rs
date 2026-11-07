@@ -335,7 +335,8 @@ pub fn aws_up(m: &mut Machine, creds: &Creds, log: &Log) -> Result<Value> {
                 bail!("AWS has taken this spot instance's capacity back; it cannot be started by hand. AWS starts it again when capacity returns \
                        (persistent spot request), and an interrupted run then resumes by itself. Try later, or use another machine.");
             } else if t.contains("insufficient-capacity") {
-                bail!("AWS has no spare GPU capacity in this zone right now (common for spot GPUs). Try again later, or use another machine.");
+                bail!("AWS has no spare GPU capacity for this instance type in its zone right now (it happens with on-demand GPUs too, and more often \
+                       with spot). Nothing was started or charged. Try again in a while, or use another machine.");
             }
             // e.g. the wait for "running" timed out: the instance may be starting all the same
             return Err(if started { anyhow!("{e}\n{}", aws_stop_again(m, creds, log)) } else { e });
