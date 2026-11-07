@@ -3,6 +3,14 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 07_11_26_07_18_50
+
+**AWS_TEST_PLAN.md: the first real EC2 tests (g4dn.xlarge on demand, Mumbai) with costs, setup, guards and abort rules; found that a failure after starting the instance leaves it running (to fix first)** (`7489184`)
+
+## 07_11_26_07_10_14
+
+**FUTURE_PLAN.md: the TEST projects are kept; Delete is tested on a throwaway project** (`191cf3d`)
+
 ## 07_11_26_07_06_17
 
 **FUTURE_PLAN.md: section 1c, the tests that need the owner's accounts (Earth Engine, cloud folder, SSH server, several-GPU stop, AWS on demand / spot), with steps, expectations and code pointers** (`2d67fd0`)
