@@ -311,7 +311,7 @@ and check one batch through the network, without training: a few minutes instead
           <span className="grow" />
           {status.info.url && <button onClick={() => api.openUrl(status.info.url)}>Open on Kaggle</button>}
           {(running || status.state === "interrupted") && status.info.kind !== "kaggle" && <button onClick={() => api.runStop(status.id).then(toast).catch((e) => toast(errText(e)))}>Stop</button>}
-          {status.info.kind !== "kaggle" && !running && <button onClick={() => api.runFetch(status.id).then(startJob).catch((e) => toast(errText(e)))}>Fetch results</button>}
+          {status.info.kind !== "kaggle" && (!running || !status.info.reachable) && <button onClick={() => api.runFetch(status.id).then(startJob).catch((e) => toast(errText(e)))}>Fetch results</button>}
           <button onClick={() => api.runReveal(status.id)}>Show files</button>
         </div>
         {status.info.note && <p className="muted small">{status.info.note}</p>}

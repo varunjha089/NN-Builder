@@ -202,7 +202,14 @@ impl Machine {
     /// copy one file from the machine to this computer (written to a temporary file first, so the local copy is always whole)
     pub fn download_file(&self, remote: &str, local: &std::path::Path) -> (i32, String) {
         if have_rsync() {
-            return capture(&mut self.rsync_command(&format!("REMOTE:{remote}"), &local.to_string_lossy()), None);
+            let existed = local.exists();
+            let r = capture(&mut self.rsync_command(&format!("REMOTE:{remote}"), &local.to_string_lossy()), None);
+            // macOS's openrsync leaves an empty folder named like the file when the file is missing (seen copying locally): remove it,
+            // or the next copy would land inside it
+            if r.0 != 0 && !existed && local.is_dir() {
+                let _ = std::fs::remove_dir(local);
+            }
+            return r;
         }
         let ((code, err), bytes) = pipe(Command::new("ssh").args(self.ssh_options()).arg(self.dest()).arg(format!("cat {}", remote_path(remote))), &[]);
         if code != 0 {

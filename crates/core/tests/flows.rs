@@ -461,6 +461,12 @@ fn remote_and_kaggle_runs() {
     runs::status(&pr, early, 0, &Creds::default()).unwrap();
     assert!(runs::info(&pr.runs_dir().join(early)).last_poll > first, "a launched run that is still starting is looked at again");
     let _ = child.kill();
+    // it ended while nobody looked (e.g. the app was closed): Fetch results brings the events back and the state with them
+    std::fs::write(rd.join("metrics.jsonl"), "{\"event\": \"start\"}\n{\"event\": \"done\", \"test_acc\": 0.5}\n").unwrap();
+    runs::fetch(&pr, early, &Creds::default(), &log).unwrap();
+    let after = runs::info(&pr.runs_dir().join(early));
+    assert!(after.fetched && after.status == "done", "{} {}", after.fetched, after.status);
+    assert!(!pr.runs_dir().join(early).join("results.json").exists(), "a file the run did not write leaves nothing behind");
 
     // ---- cost guards on an on-demand instance: never left running after a failure, never started with shutdown behaviour Terminate
     let ec2 = b.join("ec2");

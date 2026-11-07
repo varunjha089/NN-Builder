@@ -859,6 +859,9 @@ pub fn fetch(pr: &Project, id: &str, creds: &Creds, log: &Log) -> Result<()> {
     }
     info.offset = std::fs::metadata(d.join("metrics.jsonl")).map(|m| m.len()).unwrap_or(0);
     info.fetched = end_event(&d).is_some();
+    if let Some(e) = end_event(&d) {
+        info.status = e; // (a run that ended while nobody looked: its state comes from the fetched events)
+    }
     let saved = save(&d, &info);
     if started {
         log("Stopping the instance again ...".into());
