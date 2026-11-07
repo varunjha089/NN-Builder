@@ -48,6 +48,11 @@ jobs:
           pip install tifffile pandas pyarrow datasets
           cargo run -q -p nnb-core --example multiband_case -- ci_multiband
           python python/ci_multiband_check.py ci_multiband
+      - name: Earth Engine GeoTIFFs (LZW) where imagecodecs is missing (Kaggle's case)
+        run: |
+          pip install tifffile imagecodecs
+          python -c "import numpy, tifffile; tifffile.imwrite('lzw.tif', numpy.ones((13, 8, 8), 'uint16'), compression='lzw')"
+          python python/ci_tiff_check.py lzw.tif
       - name: ImageNet weights in the demos (real PyTorch, downloads torchvision weights)
         run: |
           cargo run -q -p nnb-core --example pretrained_case -- ci_pretrained

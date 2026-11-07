@@ -690,8 +690,13 @@ DB_NOTE = [False]  # the "already in decibels" note is given once
 
 
 def tiff_read(src):
-    """a GeoTIFF (a path or a file object) as an array. tifffile is installed when missing, and imagecodecs when a compressed file needs
-    it: Earth Engine exports are LZW-compressed, and Kaggle has tifffile without imagecodecs (first real export, 2026-11-07)"""
+    """a GeoTIFF (a path or a file object) as an array. imagecodecs is installed before tifffile is first imported (tifffile looks for it
+    only then): Earth Engine exports are LZW-compressed, and Kaggle has tifffile without imagecodecs (first real export, 2026-11-07)"""
+    if "tifffile" not in sys.modules:
+        try:
+            import imagecodecs  # noqa: F401
+        except ImportError:
+            pip_install("imagecodecs")
     try:
         import tifffile
     except ImportError:
@@ -702,9 +707,13 @@ def tiff_read(src):
     except ValueError as e:
         if "imagecodecs" not in str(e):
             raise
+        # (tifffile was imported before: install, then reload its module that looks for imagecodecs)
         pip_install("imagecodecs")
         import importlib
-        tifffile = importlib.reload(tifffile)   # (tifffile looks for imagecodecs when it is imported)
+        for name in ("tifffile.tifffile", "tifffile"):
+            if name in sys.modules:
+                importlib.reload(sys.modules[name])
+        import tifffile
         if hasattr(src, "seek"):
             src.seek(0)
         return tifffile.imread(src)
