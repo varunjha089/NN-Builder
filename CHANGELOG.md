@@ -3,6 +3,14 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 07_11_26_09_14_48
+
+**SSH / EC2 runs: a look at the machine counts as answered when the reply has NNB_ALIVE** (`8f312c6`)
+
+Found on the first real EC2 run: while the data downloaded, metrics.jsonl did not exist yet, the poll script's last command
+(tail of it) exited 1, and every look said "the machine does not answer" for 10 minutes although the run was fine.
+Test: flows.rs, a run without metrics.jsonl stays reachable.
+
 ## 07_11_26_08_29_10
 
 **EC2: wait up to 6 minutes for ssh after a start (an AMI's first boot loads its disk from the snapshot); AWS_TEST_PLAN: idle time, data, 10-second watch, what is missing before Phase 0** (`0c1e2c8`)
