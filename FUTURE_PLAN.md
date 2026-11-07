@@ -46,6 +46,14 @@ What is still open, in the suggested order. Done work is in git and CLAUDE.md; t
   (needs an A100-class GPU) and the automatic batch split on a real out-of-memory.
 - **The tests that need the owner's accounts or machines**: section 1c.
 
+## 1d. Found by the real-data tests of 2026-11-07, not done yet
+
+- **mIoU counts absent classes as 0.** A class that is neither in the test pixels nor predicted gets IoU 0 and lowers the mean (TEST 19:
+  0.148 over 11 WorldCover classes, 4 of which do not occur in the tile). Usual practice leaves such classes out of the mean; show both.
+- **Built-in datasets download slowly on EC2** (CIFAR-10 from its university server at 170–370 kB/s: 10 paid minutes of an idle GPU).
+  Use a fast mirror (e.g. the Hugging Face copies) or fetch the data while the instance boots.
+- **Every update asks for Keychain access again** (unsigned builds): a stable signing certificate (section 1) ends it.
+
 ## 1c. Tests that need the owner's accounts (written 2026-11-07)
 
 On 2026-11-07 every TEST_APP.md test that the Mac and Kaggle allow was done: 69 ✅, with the bugs found fixed. The six below remain.
