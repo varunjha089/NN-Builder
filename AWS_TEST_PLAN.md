@@ -74,7 +74,7 @@ Who does what:
    do not give it to the app: make this one instead.
 7. **The owner's own check:** the EC2 console's instance list (ap-south-1) shows the state. "Stopped" costs only the disk.
 
-## 3. Changes to the app before the first run (no AWS cost; Claude, with tests)
+## 3. Changes to the app before the first run (no AWS cost; Claude, with tests) — done 2026-11-07, tested with the stand-in EC2 in flows.rs
 
 - **Must fix first: a failure after the start leaves the instance running.** Found while writing this plan (2026-11-07).
   - `runs::start` / `start_remote` and `resume_on`: when anything fails after `aws_up` has started the instance, the run is marked

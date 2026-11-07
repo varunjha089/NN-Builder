@@ -500,8 +500,14 @@ train. It could come back later as an optional "export to C++" for teaching.
   `bash -l` so the real crontab is never used, and the test asserts that; never `stop_instance` in tests, the stand-in instance is this Mac);
   the PyTorch side (mid-epoch checkpoint, exit 75, resume at the right batch, SIGUSR2) runs in CI: examples/resume_case.rs +
   python/ci_resume_check.py.
-- AWS key: an IAM access key allowed only `ec2:StartInstances`, `ec2:StopInstances`, `ec2:DescribeInstances` for that one instance, plus
-  `ec2:DescribeSpotInstanceRequests` for spot details (optional). A new AWS account must first get a G-instance vCPU quota (often 0 at the start).
+- AWS key: an IAM access key allowed only `ec2:StartInstances`, `ec2:StopInstances` for that one instance, `ec2:DescribeInstances`,
+  `ec2:DescribeInstanceAttribute` (the shutdown behaviour), plus `ec2:DescribeSpotInstanceRequests` for spot details (optional). A new AWS
+  account must first get a G-instance vCPU quota (often 0 at the start).
+- Cost guards (added 2026-11-07, before the first real EC2 run; AWS_TEST_PLAN.md): runs::aws_up describes first and refuses an on-demand
+  instance whose shutdown behaviour is Terminate (a note when it cannot be read); it returns "was" (the state before). When this call
+  started the instance (started_here) and anything fails before train.py is launched (aws_up's own ssh wait, start_remote ->
+  launch_remote, resume_on, Prepare, fetch), aws_stop_again stops it and the error says so (or "STOP IT IN THE EC2 CONSOLE"); an instance
+  that was already running is left running. Tested in flows.rs with FAKE_EC2 (calls.txt).
 
 ## 5. Secrets
 

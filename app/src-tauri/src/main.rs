@@ -550,16 +550,11 @@ async fn machine_prepare(st: State<'_, App>, name: String) -> R<()> {
     let ok = st.jobs.start(&format!("Prepare {name}"), move |log: Log| {
         let mut m = m;
         let c = creds();
-        let started = m.kind == "aws";
-        if started {
-            runs::aws_up(&mut m, &c, &log).map_err(e)?;
-        }
+        // aws_up stops the instance again itself when it fails after starting it; one that was already running is left running
+        let started = m.kind == "aws" && runs::started_here(&runs::aws_up(&mut m, &c, &log).map_err(e)?);
         let res = runs::prepare(&m, &log);
         if started {
-            log("Stopping the instance again ...".into());
-            if let Some(a) = &c.aws {
-                let _ = cloud::aws(a, "stop", &m.region, &m.instance_id);
-            }
+            log(runs::aws_stop_again(&m, &c, &log));
         }
         let p = res.map_err(e)?;
         let method = remote::choose_launch(&m, &p);

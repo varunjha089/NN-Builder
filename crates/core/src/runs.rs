@@ -314,33 +314,76 @@ pub fn preflight(target: &str, creds: &Creds) -> Result<()> {
 /// AWS: start the instance and wait until ssh answers; sets m.host. Returns what AWS said about it (spot or not, the spot request).
 pub fn aws_up(m: &mut Machine, creds: &Creds, log: &Log) -> Result<Value> {
     let c = creds.aws.as_ref().ok_or_else(|| anyhow!("Add your AWS access key first (Connection tab)."))?;
+    // the state before (free): an on-demand instance whose shutdown behaviour is Terminate would be deleted, disk and all, when a run ends
+    let before = cloud::aws(c, "describe", &m.region, &m.instance_id)?;
+    let was = before["state"].as_str().unwrap_or("").to_string();
+    match before["shutdown_behavior"].as_str() {
+        Some("terminate") if before["lifecycle"] != "spot" => bail!(
+            "This instance's shutdown behaviour is Terminate: when a run ends and the instance shuts down, AWS would delete it and its disk. \
+             Change it to Stop first (EC2 console → the instance → Actions → Instance settings → Change shutdown behavior)."),
+        None if before["lifecycle"] != "spot" => log("Note: the instance's shutdown behaviour could not be read (the key needs \
+            ec2:DescribeInstanceAttribute); it must be Stop, not Terminate.".into()),
+        _ => {}
+    }
     log(format!("Starting EC2 instance {} in {} ...", m.instance_id, m.region));
-    let v = cloud::aws(c, "start", &m.region, &m.instance_id).map_err(|e| {
-        let t = e.to_string();
-        if t.contains("spot-interrupted") {
-            anyhow!("AWS has taken this spot instance's capacity back; it cannot be started by hand. AWS starts it again when capacity returns \
-                     (persistent spot request), and an interrupted run then resumes by itself. Try later, or use another machine.")
-        } else if t.contains("insufficient-capacity") {
-            anyhow!("AWS has no spare GPU capacity in this zone right now (common for spot GPUs). Try again later, or use another machine.")
-        } else {
-            e
+    let started = was != "running";
+    let mut v = match cloud::aws(c, "start", &m.region, &m.instance_id) {
+        Ok(v) => v,
+        Err(e) => {
+            let t = e.to_string();
+            if t.contains("spot-interrupted") {
+                bail!("AWS has taken this spot instance's capacity back; it cannot be started by hand. AWS starts it again when capacity returns \
+                       (persistent spot request), and an interrupted run then resumes by itself. Try later, or use another machine.");
+            } else if t.contains("insufficient-capacity") {
+                bail!("AWS has no spare GPU capacity in this zone right now (common for spot GPUs). Try again later, or use another machine.");
+            }
+            // e.g. the wait for "running" timed out: the instance may be starting all the same
+            return Err(if started { anyhow!("{e}\n{}", aws_stop_again(m, creds, log)) } else { e });
         }
-    })?;
-    m.host = v["host"].as_str().unwrap_or("").to_string();
-    if m.host.is_empty() {
-        bail!("The instance is running but has no public address (give it a public IP or use an Elastic IP).");
-    }
-    if v["lifecycle"] == "spot" {
-        log(format!("Spot instance: {}", spot_summary(&v)));
-    }
-    log(format!("Running at {}; waiting for ssh ...", m.host));
-    for _ in 0..36 {
-        if m.probe().is_ok() {
-            return Ok(v);
+    };
+    v["was"] = was.into();
+    let res = (|| {
+        m.host = v["host"].as_str().unwrap_or("").to_string();
+        if m.host.is_empty() {
+            bail!("The instance is running but has no public address (give it a public IP or use an Elastic IP).");
         }
-        std::thread::sleep(Duration::from_secs(5));
+        if v["lifecycle"] == "spot" {
+            log(format!("Spot instance: {}", spot_summary(&v)));
+        }
+        log(format!("Running at {}; waiting for ssh ...", m.host));
+        for _ in 0..36 {
+            if m.probe().is_ok() {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_secs(5));
+        }
+        bail!("ssh did not answer within 3 minutes (security group allows port 22? the right key file?)")
+    })();
+    match res {
+        Ok(()) => Ok(v),
+        Err(e) if started => Err(anyhow!("{e}\n{}", aws_stop_again(m, creds, log))),
+        Err(e) => Err(e),
     }
-    bail!("ssh did not answer within 3 minutes (security group allows port 22? the right key file?)")
+}
+
+/// whether `aws_up`'s instance was started by that call (it was not running before), so that it is stopped again when the work fails
+pub fn started_here(v: &Value) -> bool {
+    v["was"] != "running"
+}
+
+/// stops an instance that the app started for work that then failed (it would cost money while it waits for nobody); the text for the
+/// error. An instance that was already running is never stopped here: another run may be using it.
+pub fn aws_stop_again(m: &Machine, creds: &Creds, log: &Log) -> String {
+    log("Stopping the instance again ...".into());
+    let res = match creds.aws.as_ref() {
+        Some(c) => cloud::aws(c, "stop", &m.region, &m.instance_id).map(|_| ()),
+        None => Err(anyhow!("no AWS key")),
+    };
+    match res {
+        Ok(()) => "The instance was stopped again.".into(),
+        Err(e) => format!("COULD NOT STOP THE INSTANCE ({e}): STOP IT IN THE EC2 CONSOLE ({} in {}); it costs money while it runs.",
+            m.instance_id, m.region),
+    }
 }
 
 /// one line about a spot instance's request and what an interruption will do to it
@@ -384,14 +427,32 @@ pub fn prepare(m: &Machine, log: &Log) -> Result<Prepared> {
 #[allow(clippy::too_many_arguments)]
 fn start_remote(pr: &Project, d: &Path, info: &mut RunInfo, m: &mut Machine, t: &codegen::TrainSettings, gpu: &str, creds: &Creds, copy_tokens: bool,
     ds: &crate::dataset::Dataset, log: &Log) -> Result<()> {
-    let source = ds.source.as_str();
+    let mut started = false;
     if m.kind == "aws" {
         let v = aws_up(m, creds, log)?;
         info.host = m.host.clone();
         info.spot = v["lifecycle"] == "spot";
+        started = started_here(&v);
     } else if let Err(e) = m.probe() {
         bail!("{e}");
     }
+    let res = launch_remote(pr, d, info, m, t, gpu, creds, copy_tokens, ds, log);
+    match res {
+        // nothing runs on the instance: stop it again unless it was already running before
+        Err(e) if started && info.job.is_empty() => Err(anyhow!("{e}\n{}", aws_stop_again(m, creds, log))),
+        Err(e) if m.kind == "aws" && info.job.is_empty() => {
+            log("The instance was already running before this run, so it is left running.".into());
+            Err(e)
+        }
+        r => r,
+    }
+}
+
+/// Prepare (if needed), tokens, data, run.sh, copy and launch on a machine that answers
+#[allow(clippy::too_many_arguments)]
+fn launch_remote(pr: &Project, d: &Path, info: &mut RunInfo, m: &mut Machine, t: &codegen::TrainSettings, gpu: &str, creds: &Creds, copy_tokens: bool,
+    ds: &crate::dataset::Dataset, log: &Log) -> Result<()> {
+    let source = ds.source.as_str();
     let p = match remote::prepared(&m.name) {
         Some(p) if !p.python.is_empty() => p,
         _ => prepare(m, log)?,
@@ -782,8 +843,7 @@ pub fn fetch(pr: &Project, id: &str, creds: &Creds, log: &Log) -> Result<()> {
         if v["state"] == "running" {
             m.host = v["host"].as_str().unwrap_or("").into();
         } else {
-            aws_up(&mut m, creds, log)?;
-            started = true;
+            started = started_here(&aws_up(&mut m, creds, log)?);
         }
     }
     let rel = info.remote_dir.strip_prefix("~/").unwrap_or(&info.remote_dir).to_string();
@@ -795,12 +855,14 @@ pub fn fetch(pr: &Project, id: &str, creds: &Creds, log: &Log) -> Result<()> {
     }
     info.offset = std::fs::metadata(d.join("metrics.jsonl")).map(|m| m.len()).unwrap_or(0);
     info.fetched = end_event(&d).is_some();
-    save(&d, &info)?;
+    let saved = save(&d, &info);
     if started {
         log("Stopping the instance again ...".into());
-        cloud::aws(creds.aws.as_ref().unwrap(), "stop", &m.region, &m.instance_id)?;
+        if let Err(e) = cloud::aws(creds.aws.as_ref().unwrap(), "stop", &m.region, &m.instance_id) {
+            bail!("COULD NOT STOP THE INSTANCE ({e}): STOP IT IN THE EC2 CONSOLE ({} in {}); it costs money while it runs.", m.instance_id, m.region);
+        }
     }
-    Ok(())
+    saved
 }
 
 /// the log text without the NNB_EVENT lines (those are the metrics)

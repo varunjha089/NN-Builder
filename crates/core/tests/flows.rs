@@ -139,6 +139,17 @@ case "$2" in
 esac
 "#;
 
+/// stand-in EC2 for the cost guards: the instance's state, address and shutdown behaviour come from files in $NNB_FAKE_EC2, and every
+/// call is written to calls.txt there
+const FAKE_EC2: &str = r#"#!/bin/bash
+D="$NNB_FAKE_EC2"; echo "$2" >> "$D/calls.txt"
+case "$2" in
+  describe) echo "{\"ok\": true, \"state\": \"$(cat "$D/state")\", \"host\": \"\", \"type\": \"g4dn.xlarge\", \"lifecycle\": \"on-demand\", \"state_reason\": \"\", \"shutdown_behavior\": $(cat "$D/behaviour")}" ;;
+  start) echo "{\"ok\": true, \"state\": \"running\", \"host\": \"$(cat "$D/host")\", \"type\": \"g4dn.xlarge\", \"lifecycle\": \"on-demand\", \"state_reason\": \"\"}" ;;
+  stop) echo '{"ok": true, "state": "stopping", "host": ""}' ;;
+esac
+"#;
+
 fn script(dir: &Path, name: &str, text: &str) {
     std::fs::write(dir.join(name), text).unwrap();
     std::fs::set_permissions(dir.join(name), std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -424,4 +435,34 @@ fn remote_and_kaggle_runs() {
     assert_eq!(runs::info(&pr.runs_dir().join(&new)).resumed_from, id);
     assert_eq!(runs::info(&local).superseded_by, new);
     assert!(runs::resume_on(&pr, &id, runs::KAGGLE, "", &Creds::default(), false, &log).is_err(), "no resuming on Kaggle");
+
+    // ---- cost guards on an on-demand instance: never left running after a failure, never started with shutdown behaviour Terminate
+    let ec2 = b.join("ec2");
+    std::fs::create_dir_all(&ec2).unwrap();
+    std::env::set_var("NNB_FAKE_EC2", &ec2);
+    script(&tools_bin, "python", FAKE_EC2);
+    // the run folder cannot be made there, so the run fails after the instance was started
+    remote::save_machine(Machine { name: "ondemand".into(), kind: "aws".into(), user: "ubuntu".into(), region: "ap-south-1".into(),
+        instance_id: "i-0fedcba9876543210".into(), key: key.to_string_lossy().into(), workdir: "/dev/null/nnb".into(), launch: "nohup".into(),
+        ..Default::default() }).unwrap();
+    let case = |state: &str, behaviour: &str, host: &str| -> (String, String) {
+        for (f, v) in [("state", state), ("behaviour", behaviour), ("host", host), ("calls.txt", "")] {
+            std::fs::write(ec2.join(f), v).unwrap();
+        }
+        lines.lock().unwrap().clear();
+        std::thread::sleep(Duration::from_millis(1100));
+        let err = runs::start(&pr, "ondemand", "", &aws, false, &log).expect_err("this run must fail").to_string();
+        (err, std::fs::read_to_string(ec2.join("calls.txt")).unwrap().split_whitespace().collect::<Vec<_>>().join(" "))
+    };
+    let (err, calls) = case("stopped", "\"terminate\"", "ec2-1-2-3-4.example.com");
+    assert!(err.contains("shutdown behaviour is Terminate") && calls == "describe", "{err} / {calls}");
+    let (err, calls) = case("stopped", "\"stop\"", "");
+    assert!(err.contains("no public address") && err.contains("stopped again") && calls == "describe start stop", "{err} / {calls}");
+    let (err, calls) = case("stopped", "null", "ec2-1-2-3-4.example.com");
+    assert!(err.contains("stopped again") && calls == "describe start stop", "{err} / {calls}\n{:?}", lines.lock().unwrap());
+    assert!(lines.lock().unwrap().iter().any(|l| l.contains("shutdown behaviour could not be read")));
+    // already running before (another run may use it): left running
+    let (err, calls) = case("running", "\"stop\"", "ec2-1-2-3-4.example.com");
+    assert!(!err.contains("stopped again") && calls == "describe start", "{err} / {calls}");
+    assert!(lines.lock().unwrap().iter().any(|l| l.contains("left running")));
 }

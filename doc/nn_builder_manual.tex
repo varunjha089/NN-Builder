@@ -1049,8 +1049,12 @@ readable only by its owner, through the SSH connection's input, never on a comma
         username and key (or the whole \file{kaggle.json}). GPU notebooks need a phone-verified account.
   \item[Hugging Face.] Only for gated or private datasets: a ``Read'' token from huggingface.co $\rightarrow$ Settings $\rightarrow$
         Access Tokens.
-  \item[AWS.] An IAM user's access key that may only start, stop and describe your instance (the page shows the policy to paste,
-        with \texttt{ec2:DescribeSpotInstanceRequests} added for spot details).
+  \item[AWS.] An IAM user's access key that may only start, stop and describe your instance (the page shows the policy to paste:
+        \texttt{ec2:StartInstances} and \texttt{ec2:StopInstances} for that instance, \texttt{ec2:DescribeInstances} and
+        \texttt{ec2:DescribeInstanceAttribute}, plus \texttt{ec2:DescribeSpotInstanceRequests} for spot details). Before each start the
+        app reads the instance's shutdown behaviour and refuses one set to Terminate (a run's end would delete it and its disk). When
+        anything fails after the app started the instance, before training began, the app stops it again; an instance that was already
+        running is left running.
   \item[Tools.] \ui{Install tools} makes a small private Python environment with the \texttt{kaggle} and \texttt{boto3} packages (about
         60 MB) used to talk to Kaggle and AWS. No deep-learning library is installed.
 \end{description}
