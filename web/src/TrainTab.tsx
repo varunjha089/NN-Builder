@@ -76,7 +76,10 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
         if (["starting", "running", "queued"].includes(s.state)) timer = window.setTimeout(tick, document.hidden ? 15000 : 3000);
         else if (s.state === "interrupted") timer = window.setTimeout(tick, 15000);
         else api.runs().then(setRuns).catch(() => {});
-      } catch (e) { if (!stop) toast(errText(e)); }
+      } catch (e) {
+        // (one failed look must not end the following: try again more slowly)
+        if (!stop) { toast(errText(e)); timer = window.setTimeout(tick, 15000); }
+      }
     };
     tick();
     return () => { stop = true; window.clearTimeout(timer); };

@@ -960,7 +960,10 @@ pub fn status(pr: &Project, id: &str, since: usize, creds: &Creds) -> Result<Sta
     }
     if !["failed", "terminated", "continued"].contains(&state.as_str()) && !info.fetched || watch_old {
         let due = now() - info.last_poll >= if info.kind == "kaggle" { KAGGLE_POLL } else { SSH_POLL };
-        if due && info.status != "starting" {
+        // (not while the app is still launching it: no job / notebook yet. A launched run whose train.py has not written its start event
+        // is "starting" too, and must still be looked at: on the first real EC2 run it was never polled again and its end was missed)
+        let launching = info.status == "starting" && info.job.is_empty() && info.kernel.is_empty();
+        if due && !launching {
             info.last_poll = now();
             if info.kind == "kaggle" {
                 if let Some(c) = &creds.kaggle {

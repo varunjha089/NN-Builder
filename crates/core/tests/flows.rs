@@ -449,6 +449,18 @@ fn remote_and_kaggle_runs() {
     let after = runs::info(&pr.runs_dir().join(early));
     assert!(after.reachable, "no metrics yet must not look like a machine that does not answer");
     assert!(std::fs::read_to_string(pr.runs_dir().join(early).join("log.txt")).unwrap().contains("downloading"));
+    // the same run alive (train.py has not written its start event yet): "starting", and it is still looked at afterwards
+    let mut child = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+    let mut info = runs::info(&pr.runs_dir().join(early));
+    info.job = child.id().to_string();
+    std::fs::write(pr.runs_dir().join(early).join("run.json"), serde_json::to_string(&info).unwrap()).unwrap();
+    std::thread::sleep(Duration::from_millis(3100));
+    assert_eq!(runs::status(&pr, early, 0, &Creds::default()).unwrap().state, "starting");
+    let first = runs::info(&pr.runs_dir().join(early)).last_poll;
+    std::thread::sleep(Duration::from_millis(3100));
+    runs::status(&pr, early, 0, &Creds::default()).unwrap();
+    assert!(runs::info(&pr.runs_dir().join(early)).last_poll > first, "a launched run that is still starting is looked at again");
+    let _ = child.kill();
 
     // ---- cost guards on an on-demand instance: never left running after a failure, never started with shutdown behaviour Terminate
     let ec2 = b.join("ec2");
