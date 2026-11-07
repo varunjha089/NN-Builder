@@ -3,6 +3,13 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 07_11_26_13_18_47
+
+**Dataset tab, Read folder: band names come from a file in the training folder, and the second group's from its own folder** (`7e37204`)
+
+Found with real Earth Engine exports (s1/ and s2/ in one folder): the band names were taken from the first GeoTIFF of the whole folder,
+which was a Sentinel-1 file, and replaced the first group's Sentinel-2 bands; the data check then read S2 files as 2-band S1.
+
 ## 07_11_26_13_10_02
 
 **Runs: a poll leaves a run alone while a job (start, fetch) writes it, and never writes back over a fetched run** (`62162bb`)
