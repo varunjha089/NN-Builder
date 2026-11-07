@@ -69,7 +69,8 @@ crates/core/src/
                            torch.utils.checkpoint; generated only when on; not with several outputs / early exits: the Train tab
                            says so, canSaveMemory); bf16 on compute capability 8+, channels-last for conv nets,
                            workers "auto" = min(8, CPUs) with prefetch 4, "memory" event (measured peak after the first epoch),
-                           data_wait per epoch; Train tab "GPU memory" box and run-card notes; status polls slow to 15 s when the
+                           data_wait per epoch; loader workers ignore INT/TERM/HUP/USR1/USR2 (quiet_worker: Stop signals the whole process group, and a dead
+                           worker made the run fail instead of stop; CI: ci_resume_check part 4 with NNB_TEST_WORKERS=2); Train tab "GPU memory" box and run-card notes; status polls slow to 15 s when the
                            window is hidden. Mac side: memo'd blocks (not onlyRenderVisibleElements: it empties the minimap), undo history capped
                            by block count, charts thinned to ~1500 points. CI: ci_memory_check.py (parts = plain forward and gradients
                            on 7 demos; a run with NNB_TEST_OOM_ABOVE=8 ends with the same weights as without). The design text

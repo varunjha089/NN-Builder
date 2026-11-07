@@ -2,12 +2,15 @@
 
 1. a two-class image folder is generated (no download), train.py (from the resume_case example) starts;
 2. in epoch 2 it gets SIGUSR1 (the interruption notice): it must save a mid-epoch checkpoint and exit 75;
-3. started again it must resume at that batch (same epoch), take a SIGUSR2 (rebalance: checkpoint, keep going) and finish.
+3. started again it must resume at that batch (same epoch), take a SIGUSR2 (rebalance: checkpoint, keep going) and finish;
+4. a fresh copy with data-loading workers gets Ctrl-C on its whole process group (the app's Stop for a tmux run): it must stop
+   cleanly ("stopped", results written), not die because its workers died first.
 
 usage: python ci_resume_check.py <run folder>
 """
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -95,6 +98,25 @@ def main(run):
     assert ev[-1]["event"] == "done", f"last event {ev[-1]}"
     assert [e["epoch"] for e in events(run) if e["event"] == "epoch"] == [1, 2, 3], "epochs 1, 2, 3 each once"
     print(f"resumed at batch {step} of epoch 2, rebalance checkpoint taken, finished: test accuracy {ev[-1]['test_acc']}")
+
+    # a fresh copy with 2 loader workers: Stop = Ctrl-C to the whole process group (tmux send-keys C-c reaches every process)
+    stop = os.path.join(run, "stop")
+    os.makedirs(stop, exist_ok=True)
+    for f in os.listdir(run):
+        if f.endswith(".py") or f.endswith(".json") and f not in ("results.json",):
+            shutil.copy(os.path.join(run, f), stop)
+    log = open(os.path.join(stop, "log.txt"), "a")
+    p = subprocess.Popen([sys.executable, "train.py"], cwd=stop, env={**env, "NNB_TEST_WORKERS": "2"}, stdout=log, stderr=subprocess.STDOUT,
+                         start_new_session=True)
+    wait_for(p, stop, lambda ev: any(e["event"] == "batch" and e["epoch"] == 2 for e in ev), "a batch of epoch 2 (with workers)")
+    os.killpg(p.pid, signal.SIGINT)
+    code = p.wait(timeout=300)
+    ev = events(stop)
+    errors = [e for e in ev if e["event"] == "error"]
+    assert not errors, f"Stop with loader workers failed: {errors[0].get('message')}"
+    assert ev[-1]["event"] == "stopped", f"last event {ev[-1]}, exit code {code}"
+    assert os.path.exists(os.path.join(stop, "results.json")), "no results after Stop"
+    print(f"Ctrl-C to the process group with 2 loader workers: stopped cleanly (exit {code}), results written")
 
 
 if __name__ == "__main__":

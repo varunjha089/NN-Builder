@@ -2485,7 +2485,8 @@ def main():
     # data loading: one worker per CPU core (at most 8) on a GPU machine, each preparing batches ahead
     nw = cfg.get("num_workers", "auto")
     workers = (max(1, min(8, (os.cpu_count() or 2) // WORLD)) if nw == "auto" else int(nw)) if device.type == "cuda" else 0
-    ahead = {"prefetch_factor": 4} if workers else {}
+    workers = int(os.environ.get("NNB_TEST_WORKERS", workers))   # (CI: loader workers on its CPU too)
+    ahead = {"prefetch_factor": 4, "worker_init_fn": quiet_worker} if workers else {}
     bs = cfg["batch_size"]
 
     def loader(epoch, skip_batches=0):
@@ -2883,6 +2884,15 @@ def wanted_workers():
         return 1
     want, have = int(TRAIN.get("gpus", 1) or 0), torch.cuda.device_count()
     return have if want == 0 else max(1, min(want, have))
+
+
+def quiet_worker(_):
+    """a data-loading worker leaves stopping to the main process: Stop (Ctrl-C in tmux, TERM to the process group), the time limit and
+    logout signal every process of the run, and a worker that died first made the main process fail ("DataLoader worker exited
+    unexpectedly", first real EC2 Stop, 2026-11-07) instead of saving and stopping. Workers end when the main process ends."""
+    for s in (signal.SIGINT, signal.SIGTERM, getattr(signal, "SIGHUP", None), getattr(signal, "SIGUSR1", None), getattr(signal, "SIGUSR2", None)):
+        if s is not None:
+            signal.signal(s, signal.SIG_IGN)
 
 
 def run_parallel(n):
