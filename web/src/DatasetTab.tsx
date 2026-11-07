@@ -265,14 +265,25 @@ function LocalBox({ ds, up, toast }: { ds: Dataset; up: (p: Partial<Dataset>) =>
       const p: Partial<Dataset> = {};
       const f = r.folders[0];
       if (ds.task !== "segment" && f && !ds.kaggle_train_dir) Object.assign(p, { kaggle_train_dir: f.folder, classes: f.classes });
-      // band names written into the GeoTIFF (GDAL / Earth Engine): the files' band order, without typing it
-      const names = r.tif?.names ?? [];
+      // band names written into the GeoTIFF (GDAL / Earth Engine): the files' band order, without typing it. The first group's come
+      // from a file in the training folder and the second group's from its own folder (the folder's first file can be the other
+      // sensor's: s1/ sorts before s2/, and Sentinel-1's names once replaced Sentinel-2's)
+      const sub = p.kaggle_train_dir ?? ds.kaggle_train_dir ?? "";
+      const inside = async (f: string) => f ? (await api.localScan(`${dir.replace(/\/$/, "")}/${f}`).catch(() => null))?.tif ?? null : null;
+      const tif1 = (sub && ds.task !== "segment" ? await inside(sub) : null) ?? r.tif;
+      const sensorOf = (n: string[]) => n.some((x) => /^V[VH]$/i.test(x)) ? "s1" : n.some((x) => /^B\d/i.test(x)) ? "s2" : "other";
+      const names = tif1?.names ?? [];
       if (names.length && names.join(" ") !== (ds.band_order ?? []).join(" ")) {
-        const s1 = names.some((n) => /^V[VH]$/i.test(n)), s2 = names.some((n) => /^B\d/i.test(n));
-        Object.assign(p, { band_order: names, bands: names.filter((n) => !/^(QA|SCL|MSK|angle)/i.test(n)), sensor: s1 ? "s1" : s2 ? "s2" : "other" });
-        toast(`Band names read from ${r.tif!.file}: ${names.join(" ")}`);
-      } else if (r.tif && !names.length && r.tif.bands !== (ds.band_order ?? []).length && (ds.band_order ?? []).length) {
-        toast(`${r.tif.file} has ${r.tif.bands} bands, but the band order below lists ${(ds.band_order ?? []).length}: check it.`);
+        Object.assign(p, { band_order: names, bands: names.filter((n) => !/^(QA|SCL|MSK|angle)/i.test(n)), sensor: sensorOf(names) });
+        toast(`Band names read from ${tif1!.file}: ${names.join(" ")}`);
+      } else if (tif1 && !names.length && tif1.bands !== (ds.band_order ?? []).length && (ds.band_order ?? []).length) {
+        toast(`${tif1.file} has ${tif1.bands} bands, but the band order below lists ${(ds.band_order ?? []).length}: check it.`);
+      }
+      const tif2 = ds.fuse_dir ? await inside(ds.fuse_dir) : null;
+      const names2 = tif2?.names ?? [];
+      if (names2.length && names2.join(" ") !== (ds.band_order2 ?? []).join(" ")) {
+        Object.assign(p, { band_order2: names2, bands2: names2.filter((n) => !/^(QA|SCL|MSK|angle)/i.test(n)), sensor2: sensorOf(names2) });
+        toast(`Second group's band names read from ${ds.fuse_dir}/${tif2!.file}: ${names2.join(" ")}`);
       }
       up(p);
     } catch (e) { toast(errText(e)); setScan(null); } finally { setBusy(false); }
