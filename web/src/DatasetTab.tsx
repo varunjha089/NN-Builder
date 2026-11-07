@@ -223,7 +223,7 @@ function BandsBox({ ds, up }: { ds: Dataset; up: (p: Partial<Dataset>) => void }
         <button className="small" onClick={() => up({ band_order: S2_GEE, bands: S2_GEE })}>Earth Engine SR (12, B1 … B12)</button>
         <span className="muted">Use:</span>
         {S2_PRESETS.map(([name, bs]) => <button key={name} className="small" onClick={() => up({ bands: order.filter((b) => bs.includes(bandKey(b))) })}>{name}</button>)}</p>}
-      <div className="bandgrid">{order.map((b) => <label key={b} className="chk" title={info(b) ?? ""}>
+      <div className="bandgrid">{order.map((b) => <label key={b} className="chk" title={sensor === "s2" ? info(b) ?? "" : ""}>
         <input type="checkbox" checked={chosen.includes(b)} onChange={() => toggle(b)} />{b}{sensor === "s2" && info(b) ? <span className="muted small"> {info(b)}</span> : null}</label>)}</div>
       {sensor === "s1" && <label className="chk"><input type="checkbox" checked={!!ds.s1_db} onChange={(e) => up({ s1_db: e.target.checked })} />
         the files hold linear backscatter: convert to decibels (10·log10) first (Earth Engine's S1_GRD is already in decibels: such files are

@@ -85,20 +85,20 @@ Each: set the Dataset tab as described, then **Check data on Kaggle** (a few min
 | 4.11 | Before / after pairs | Two folders of the same bands at two dates, same file names | Accepted (names repeat); Siamese design trains | ✅ GPU: TEST 6, Siamese 100 % (constant lr) |
 | 4.12 | Time series | Tick "a time series", dates per sample; .npy (dates, bands, H, W) or GeoTIFF date by date | Input (bands, dates, H, W); data check pictures = median date | ✅ GPU: TEST 7 (100 %, data check 0 warnings), TEST 8 (crop map 95.0 %, mIoU 0.869) |
 | 4.13 | Detection | A YOLO-format set (images/ + labels/ .txt; e.g. a ship / car / building set from Kaggle or Roboflow, exported as YOLO) | Classes typed in label order; data check counts boxes per class | ✅ GPU: TEST 9, data check 191 / 200 boxes, mAP@0.5 0.951 |
-| 4.14 | Class balance | Any unbalanced set → Read folder / Read labels | Counts per class and a 3:1 warning | CI |
+| 4.14 | Class balance | Any unbalanced set → Read folder / Read labels | Counts per class and a 3:1 warning | ✅ Window |
 
 ## 5. Train tab settings (each needs one short **GPU** run, 3–5 epochs)
 
 | # | Test | Steps | Expect | Status |
 |---|---|---|---|---|
-| 5.1 | Recipe | Use recommended → train | Cosine lr curve, warm-up visible in the lr of each epoch | CI |
+| 5.1 | Recipe | Use recommended → train | Cosine lr curve, warm-up visible in the lr of each epoch | ✅ GPU |
 | 5.2 | Losses | Focal (classification), Dice + CE (segmentation), Huber (regression) | Run starts; Results say "Trained with … loss" | ✅ GPU: focal (TEST 1, 10), Dice + CE (TEST 8), Huber (TEST 2) |
 | 5.3 | Custom loss | Loss: your own (Python) → keep the example | Run trains; a broken function gives a clear error | ✅ GPU: TEST 6 |
 | 5.4 | Class weights | Unbalanced classes: inverse frequency | Log lists the weights; rare-class recall rises | ✅ GPU: sqrt (TEST 1), inverse 0.55 / 5.5 (TEST 10) |
 | 5.5 | Thresholds | Multi-label + "a threshold per class" | Results list the thresholds | ✅ GPU: TEST 4, threshold column in Results |
 | 5.6 | ImageNet weights + LoRA | ResNet-18 demo, weights resnet18, "train only the new layers"; or ViT-B/16 + LoRA on attention | Start event: far fewer trainable parameters; accuracy close to full fine-tuning | ✅ Real data: ViT-B/16 LoRA 93.6 % with 0.27 % of the weights trained vs full 96.8 % (after a fix) |
 | 5.7 | Save memory | ViT demo, "save memory" on | Run card memory drops, ~30 % slower | CI |
-| 5.8 | Seeds | 3 seeds → Compare selected → Export | Overlaid curves; CSV + LaTeX table with mean ± s.d. | CI |
+| 5.8 | Seeds | 3 seeds → Compare selected → Export | Overlaid curves; CSV + LaTeX table with mean ± s.d. | ✅ GPU |
 | 5.9 | GPU memory estimate | Change batch size | Estimate updates; warns above the target's memory | Real |
 
 ## 6. Where training runs
@@ -125,7 +125,7 @@ Each: set the Dataset tab as described, then **Check data on Kaggle** (a few min
 | 7.6 | Extra outputs | 4.6 | "Extra outputs" table under the main cards | ✅ Window: TEST 3 (Extra outputs table) |
 | 7.7 | Early exits | A classifier with an Early exit | "Early exits" table: accuracy per exit, share leaving early | ✅ Window: TEST 1 (exit 79.3 %; 23.8 % could stop there at 83.8 %) |
 | 7.8 | Data check | Any "Check data" | Sizes, counts, bands, warnings, sample images | ✅ Window: data checks of TEST 2, 7, 9 |
-| 7.9 | Export | "Also save … TorchScript and ONNX" | model.ts and model.onnx in Show files | CI |
+| 7.9 | Export | "Also save … TorchScript and ONNX" | model.ts and model.onnx in Show files | ✅ GPU |
 
 ## 8. Real-data experiments worth running (each a real test of a new feature)
 
@@ -167,4 +167,7 @@ Each: set the Dataset tab as described, then **Check data on Kaggle** (a few min
 | 2026-11-07 | 3.1, 3.2, 3.4 | ✅ | everything.nnb pasted: 97 blocks, 217,396 params; timeseries.nnb: 23,204 params; LSTM 16 → 24 on the canvas changed only that line of the text |
 | 2026-11-07 | 4.8 | ✅ | TEST 15 scene segmentation (generated scene + label, strip test tiles, Dice + CE): 95.9 % pixels, mIoU 0.919 (20261107-052912) |
 | 2026-11-07 | — | fixed | A moment without DNS failed a Kaggle upload (20261107-052609): Kaggle calls are now tried 3 times. A third seed failed on Kaggle's limit of 2 GPU notebooks: now "queued" and pushed when one is free, also while another seed is the run shown |
+| 2026-11-07 | 5.1, 5.8, 7.9 | ✅ | TEST 13 everything.nnb on CIFAR-10, 2 epochs, recommended recipe, 3 seeds: the third waited ("queued") and was pushed when seed 2 ended; 49.30 / 52.53 / 51.01 % → 50.95 ± 1.62 % (top-5 94.70 ± 0.43 %, checked by hand); warm-up cut to 1 epoch, then cosine to 0; Compare (curves + table) and Export CSV + LaTeX; model.ts + model.onnx (group g20261107-063547) |
+| 2026-11-07 | 5.7 | ❌ → fixed | "save memory" was ticked but not used (the design has early exits); the Train tab now says so. Still to try on a design with one output (e.g. the ViT demo) |
+| 2026-11-07 | 4.14 | ✅ | TEST 10 Read folder: "common 200 · rare 20, unbalanced (10.0×): consider class weights"; fixed: "other bands" b1 / b2 showed Sentinel-2 names as tooltips |
 | | | | |
