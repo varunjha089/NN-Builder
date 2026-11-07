@@ -3,6 +3,15 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 07_11_26_10_05_52
+
+**Training: data-loading workers ignore stop signals, so Stop ends a run cleanly** (`ea3a2c7`)
+
+Found on the first real EC2 Stop: the app's Stop for a tmux run is Ctrl-C to the pane, which reaches the DataLoader workers too; they
+died first and the run ended with "DataLoader worker exited unexpectedly" instead of "stopped" with results. Workers now leave
+stopping to the main process (they end with it). CI: ci_resume_check part 4 (2 workers on CPU via NNB_TEST_WORKERS, Ctrl-C to the
+process group -> stopped, results).
+
 ## 07_11_26_09_48_54
 
 **Fetch results: shown while a run looks active but its machine does not answer (EC2 stopped); a fetch sets the run's state from the fetched events; a failed copy leaves no empty folder** (`9f5ff9f`)
