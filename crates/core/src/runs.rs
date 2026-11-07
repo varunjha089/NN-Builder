@@ -38,6 +38,29 @@ pub const RESUME_EXIT: i32 = 75;
 pub const GAVE_UP_EXIT: i32 = 76;
 /// runs whose checkpoint is being copied to this Mac right now
 static MIRRORING: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+/// runs a background job (start, fetch) is writing: status() leaves them alone meanwhile. A poll that read run.json before a fetch
+/// and saved it after had put "starting, not fetched" back over "done, fetched" (first real EC2 run, 2026-11-07)
+static BUSY: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+/// marks a run as being written by a job until dropped
+struct Busy(PathBuf);
+impl Busy {
+    fn new(d: &Path) -> Busy {
+        BUSY.lock().unwrap().push(d.to_path_buf());
+        Busy(d.to_path_buf())
+    }
+}
+impl Drop for Busy {
+    fn drop(&mut self) {
+        let mut b = BUSY.lock().unwrap();
+        if let Some(i) = b.iter().position(|x| x == &self.0) {
+            b.remove(i);
+        }
+    }
+}
+fn busy(d: &Path) -> bool {
+    BUSY.lock().unwrap().iter().any(|x| x == d)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RunInfo {
@@ -284,7 +307,9 @@ fn start_seeded(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_token
     let mut m = remote::machine(target).ok_or_else(|| anyhow!("Unknown machine {target:?} (Connection tab)."))?;
     info.kind = m.kind.clone();
     save(&d, &info)?;
+    let busy = Busy::new(&d);
     let res = start_remote(pr, &d, &mut info, &mut m, &t, gpu, creds, copy_tokens, &ds, log);
+    drop(busy);
     if let Err(e) = &res {
         info.status = "failed".into();
         info.error = e.to_string();
@@ -835,6 +860,7 @@ fn aws_explain(m: &Machine, creds: &Creds, info: &mut RunInfo) -> Aws {
 /// copy the run's outputs back (ssh / aws). AWS: if the instance is stopped, start it, copy, stop it again.
 pub fn fetch(pr: &Project, id: &str, creds: &Creds, log: &Log) -> Result<()> {
     let d = run_dir(pr, id)?;
+    let _busy = Busy::new(&d);
     let mut info = info(&d);
     if info.kind == "kaggle" {
         let c = creds.kaggle.as_ref().ok_or_else(|| anyhow!("Add your Kaggle token first (Connection tab)."))?;
@@ -962,7 +988,7 @@ pub fn status(pr: &Project, id: &str, since: usize, creds: &Creds) -> Result<Sta
             save(&d, &info)?;
         }
     }
-    if !["failed", "terminated", "continued"].contains(&state.as_str()) && !info.fetched || watch_old {
+    if (!["failed", "terminated", "continued"].contains(&state.as_str()) && !info.fetched || watch_old) && !busy(&d) {
         let due = now() - info.last_poll >= if info.kind == "kaggle" { KAGGLE_POLL } else { SSH_POLL };
         // (not while the app is still launching it: no job / notebook yet. A launched run whose train.py has not written its start event
         // is "starting" too, and must still be looked at: on the first real EC2 run it was never polled again and its end was missed)
@@ -1073,7 +1099,13 @@ pub fn status(pr: &Project, id: &str, since: usize, creds: &Creds) -> Result<Sta
                 }
             }
             info.status = state.clone();
-            save(&d, &info)?;
+            // (a job may have fetched the run while this poll was out asking the machine: its result stays)
+            let now_on_disk = self::info(&d);
+            if now_on_disk.fetched && !info.fetched {
+                info = now_on_disk;
+            } else {
+                save(&d, &info)?;
+            }
         }
     }
     let events = read_events(&d, since);
@@ -1160,7 +1192,9 @@ pub fn resume_on(pr: &Project, from: &str, target: &str, gpu: &str, creds: &Cred
     log(format!("Continuing run {from} on {target} from its checkpoint{} ...",
         if ck.is_null() { String::new() } else { format!(" (epoch {}, batch {}/{})", ck["epoch"], ck["step"], ck["steps"]) }));
     let ds = store::read_json::<crate::dataset::Dataset>(&d.join("dataset.json")).unwrap_or_default();
+    let busy = Busy::new(&d);
     let res = start_remote(pr, &d, &mut info, &mut m, &t, gpu, creds, copy_tokens, &ds, log);
+    drop(busy);
     if let Err(e) = &res {
         info.status = "failed".into();
         info.error = e.to_string();
@@ -1294,6 +1328,18 @@ pub fn results(pr: &Project, id: &str) -> Result<Value> {
 mod queue_tests {
     use super::*;
     use crate::dataset::Dataset;
+
+    #[test]
+    fn a_run_a_job_writes_is_left_alone_by_polls() {
+        let d = PathBuf::from("/nnb-test/runs/busy-1");
+        assert!(!busy(&d));
+        let r: Result<()> = (|| {
+            let _b = Busy::new(&d);
+            assert!(busy(&d) && !busy(Path::new("/nnb-test/runs/other")));
+            bail!("the job failed")
+        })();
+        assert!(r.is_err() && !busy(&d), "the mark goes when the job ends, also on an error");
+    }
 
     #[test]
     fn a_full_kaggle_waits_instead_of_failing() {
