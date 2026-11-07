@@ -3,6 +3,10 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 07_11_26_08_04_59
+
+**design.rs: the activate test is Unix only (it needs bash and Unix permissions; the Windows build's tests did not compile)** (`0056e3b`)
+
 ## 07_11_26_07_57_35
 
 **AWS Deep Learning AMI: Prepare uses its PyTorch (/opt/pytorch) when no Python is set, activates the environment (the AMI keeps CUDA inside it), pip falls back to sudo -n** (`16b0de9`)
