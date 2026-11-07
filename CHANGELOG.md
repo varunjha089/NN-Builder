@@ -3,6 +3,10 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 07_11_26_21_53_02
+
+**TEST_APP.md: the Code Editor exports of 4.3 succeeded** (`e48ae3f`)
+
 ## 07_11_26_19_08_07
 
 **Projects page: Choose… opens a project folder with the Finder dialog; a typed path may keep its quotes, start with ~/ or name a file inside the project; the error names the folder** (`e495473`)
