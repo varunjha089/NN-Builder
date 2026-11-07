@@ -3,6 +3,14 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 07_11_26_07_45_25
+
+**Several GPUs: the other workers wait at a barrier until rank 0 has written the results, then all leave the process group together** (`14a355a`)
+
+CI (580959d) failed once: rank 1 left the gloo group while rank 0 was still testing, and aborted on exit ("terminate called without
+an active exception"); its code then failed a run whose results were complete. The run's exit code is now rank 0's; CI checks that
+no worker aborts.
+
 ## 07_11_26_07_37_34
 
 **AWS cost guards: an instance the app started is stopped again when anything fails before training begins; an on-demand instance with shutdown behaviour Terminate is refused** (`f10032e`)
