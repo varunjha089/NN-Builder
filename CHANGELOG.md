@@ -3,6 +3,13 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 07_11_26_07_57_35
+
+**AWS Deep Learning AMI: Prepare uses its PyTorch (/opt/pytorch) when no Python is set, activates the environment (the AMI keeps CUDA inside it), pip falls back to sudo -n** (`16b0de9`)
+
+So a g4dn instance from that AMI is ready in about a minute instead of ~10 paid minutes of installing PyTorch, and does not fall back
+to the CPU because CUDA was not found. Test: a stand-in Python that reports CUDA only when its environment was activated.
+
 ## 07_11_26_07_45_25
 
 **Several GPUs: the other workers wait at a barrier until rank 0 has written the results, then all leave the process group together** (`14a355a`)
