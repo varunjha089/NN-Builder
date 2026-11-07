@@ -97,7 +97,7 @@ Each: set the Dataset tab as described, then **Check data on Kaggle** (a few min
 | 5.4 | Class weights | Unbalanced classes: inverse frequency | Log lists the weights; rare-class recall rises | ✅ GPU: sqrt (TEST 1), inverse 0.55 / 5.5 (TEST 10) |
 | 5.5 | Thresholds | Multi-label + "a threshold per class" | Results list the thresholds | ✅ GPU: TEST 4, threshold column in Results |
 | 5.6 | ImageNet weights + LoRA | ResNet-18 demo, weights resnet18, "train only the new layers"; or ViT-B/16 + LoRA on attention | Start event: far fewer trainable parameters; accuracy close to full fine-tuning | ✅ Real data: ViT-B/16 LoRA 93.6 % with 0.27 % of the weights trained vs full 96.8 % (after a fix) |
-| 5.7 | Save memory | ViT demo, "save memory" on | Run card memory drops, ~30 % slower | CI |
+| 5.7 | Save memory | ViT demo, "save memory" on | Run card memory drops, ~30 % slower | ✅ Real data |
 | 5.8 | Seeds | 3 seeds → Compare selected → Export | Overlaid curves; CSV + LaTeX table with mean ± s.d. | ✅ GPU |
 | 5.9 | GPU memory estimate | Change batch size | Estimate updates; warns above the target's memory | Real |
 
@@ -168,6 +168,7 @@ Each: set the Dataset tab as described, then **Check data on Kaggle** (a few min
 | 2026-11-07 | 4.8 | ✅ | TEST 15 scene segmentation (generated scene + label, strip test tiles, Dice + CE): 95.9 % pixels, mIoU 0.919 (20261107-052912) |
 | 2026-11-07 | — | fixed | A moment without DNS failed a Kaggle upload (20261107-052609): Kaggle calls are now tried 3 times. A third seed failed on Kaggle's limit of 2 GPU notebooks: now "queued" and pushed when one is free, also while another seed is the run shown |
 | 2026-11-07 | 5.1, 5.8, 7.9 | ✅ | TEST 13 everything.nnb on CIFAR-10, 2 epochs, recommended recipe, 3 seeds: the third waited ("queued") and was pushed when seed 2 ended; 49.30 / 52.53 / 51.01 % → 50.95 ± 1.62 % (top-5 94.70 ± 0.43 %, checked by hand); warm-up cut to 1 epoch, then cosine to 0; Compare (curves + table) and Export CSV + LaTeX; model.ts + model.onnx (group g20261107-063547) |
-| 2026-11-07 | 5.7 | ❌ → fixed | "save memory" was ticked but not used (the design has early exits); the Train tab now says so. Still to try on a design with one output (e.g. the ViT demo) |
+| 2026-11-07 | 5.7 | ❌ → fixed | "save memory" was ticked but not used (the design has early exits); the Train tab now says so |
 | 2026-11-07 | 4.14 | ✅ | TEST 10 Read folder: "common 200 · rare 20, unbalanced (10.0×): consider class weights"; fixed: "other bands" b1 / b2 showed Sentinel-2 names as tooltips |
+| 2026-11-07 | 5.7 | ✅ | TEST 12 ViT-B/16 on real EuroSAT RGB, batch 64, save memory on: peak 2.18 GB instead of 7.22 GB, 114 s instead of 99 s per epoch (+15 %), same accuracy 96.8 % (20261107-065029 vs 20261106-204235) |
 | | | | |
