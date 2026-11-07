@@ -185,3 +185,34 @@ These stay "Never" in TEST_APP.md (CI covers their logic).
   - the next day, checks Billing → Bills (EC2 – ap-south-1);
   - if AWS will not be used for a while, removes the disk cost: turn termination protection off, then terminate the instance (its disk
     goes with it). Without this, the disk costs about $7 a month. This is the owner's decision; Claude does not delete anything.
+
+## 7. Results (2026-11-07)
+
+The owner chose to reuse an existing g4dn.xlarge in Mumbai (Deep Learning AMI 20260725). Before any start, its shutdown behaviour was set
+to Stop. All tests ran through the app, with the instance watched every 10 s.
+
+| Phase | Result | Billed |
+|---|---|---|
+| 0 Check instance | stopped, g4dn.xlarge, shutdown behaviour stop | 0 |
+| 1a Prepare | CUDA, Tesla T4 15 GB, PyTorch 2.12.1 from /opt/pytorch; stopped again | 0.7 min |
+| 1 Run (2 epochs, 10,000 images) | 40.5 %; results back; the instance stopped itself | 14.5 min (10 of them the CIFAR-10 download, 170–370 kB/s) |
+| 2 Fetch from a stopped instance | started, copied, stopped: done, 79.5 % (10 epochs) | 0.5 min |
+| 4 App closed mid-run | 11 epochs with the app closed; caught up when opened again | (part of the next) |
+| 3 Stop mid-run | first try: DataLoader workers killed (fixed, CI); retry: "stopped", 75.7 %, results back | about 9 min |
+| No capacity | "InsufficientInstanceCapacity" once: nothing started, nothing charged, no retry loop | 0 |
+
+**Total: 29.3 billed minutes ≈ $0.28**, against an estimate of $0.55–0.70. The instance was stopped after every phase. Stopping took
+about 6 minutes each time (not billed), so the app now waits up to 10 minutes for a stopping instance before starting it again.
+
+Bugs found and fixed (each with a test):
+- an instance started for work that failed was left running;
+- the ssh wait was too short for an AMI's first boot;
+- polls said "does not answer" while metrics.jsonl did not exist yet;
+- a launched run still "starting" was never polled again;
+- Fetch results was hidden when needed, and a fetch left the state unchanged;
+- a poll could overwrite a fetch (race);
+- Stop killed the data-loading workers before the main process.
+
+Still open:
+- a faster mirror for the built-in datasets (the CIFAR-10 download cost about $0.10 of idle GPU);
+- spot (6.6, 6.7) and several GPUs (6.4) need permissions or machines the account does not have.

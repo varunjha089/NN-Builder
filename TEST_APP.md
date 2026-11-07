@@ -27,15 +27,15 @@ Keychain question.
 |---|---|---|---|---|
 | 0.1 | Updater | Your installed app says 0.3.0: Help → Check for Updates… → Install and restart | It downloads 0.4.0, restarts, About says 0.4.0; projects and settings unchanged | ✅ Done (owner, 6 Nov): 0.3.0 → 0.4.0 by the updater |
 | 0.2 | Keychain after update | Open Connection after the update | At most one Keychain question ("Always Allow"); tokens still there | ✅ Done: one "Always Allow" per new build |
-| 0.3 | Manual | Help → Documentation | The PDF opens (69 pages, dated 6 November 2026) | Real |
+| 0.3 | Manual | Help → Documentation | The PDF opens (69 pages, dated 6 November 2026) | ✅ Window |
 
 ## 1. Projects, settings, menus
 
 | # | Test | Steps | Expect | Status |
 |---|---|---|---|---|
 | 1.1 | New / open / close | New project, close (File → Close Project), open it again | Same design and dataset come back | ✅ Window: 12 TEST projects opened and closed (File → Close Project) |
-| 1.2 | Demo | Projects → Start from a demo → ResNet-18 → ⌘S | Saved as a project; an unsaved demo vanishes when another opens | Real |
-| 1.3 | Delete | Delete the test project at the end | Its folder is in the Trash, off the list | Real |
+| 1.2 | Demo | Projects → Start from a demo → ResNet-18 → ⌘S | Saved as a project; an unsaved demo vanishes when another opens | ✅ Window |
+| 1.3 | Delete | Delete the test project at the end | Its folder is in the Trash, off the list | ✅ Window |
 | 1.4 | Settings | ⚙ → night mode, panel colours, Design size | Applied at once, kept after restart | ✅ Window |
 | 1.5 | Undo / redo | Change a few blocks, ⌘Z / ⇧⌘Z | Steps undone and redone in order | ✅ Window |
 
@@ -55,7 +55,7 @@ warning text.
 | 2.7 | MoE / exits | After To tokens add Mixture of experts; after a Global pool add Early exit | Shapes kept; an Early exit before Global pool says it needs a vector | ✅ Window + GPU: MoE and exit shown and trained (TEST 1) |
 | 2.8 | Transformer options | Self-attention: causal, rotary; Class token + position: sinusoidal | The block summary shows causal · rotary; an odd head width with rotary is refused | ✅ Window: "4 heads · rotary"; summaries now also show sinusoidal and LoRA (fixed) |
 | 2.9 | Output for | With extra outputs (4.6), select an Output → "Output for" | The list shows the main task and each extra output | ✅ Window |
-| 2.10 | Large designs | Demo ViT-g/14 → Collapse repeated blocks | Fast; one ×40 node | Real |
+| 2.10 | Large designs | Demo ViT-g/14 → Collapse repeated blocks | Fast; one ×40 node | ✅ Window |
 
 ## 3. Text tab
 
@@ -74,7 +74,7 @@ Each: set the Dataset tab as described, then **Check data on Kaggle** (a few min
 |---|---|---|---|---|
 | 4.1 | Sentinel-2, Hugging Face | `giswqs/EuroSAT_MS`, 13 bands | 0 warnings, 10 classes, band means ~1000–2500 | ✅ Real data: 0 warnings; 92.1 % (5 epochs) |
 | 4.2 | Own files → Kaggle upload | A folder on this Mac with class subfolders of GeoTIFFs (e.g. a small Earth Engine export) | First run uploads a private Kaggle dataset, later runs reuse it; data check finds all classes | ✅ GPU: 9 folders uploaded as private Kaggle datasets and trained (TEST 2–10) |
-| 4.3 | Earth Engine script | Dataset → "Get Sentinel-1/2 data from Google Earth Engine" → run the script in your GEE account | The exports land in Drive with the tab's band order; "Set this tab to match" fills it in | Never |
+| 4.3 | Earth Engine script | Dataset → "Get Sentinel-1/2 data from Google Earth Engine" → run the script in your GEE account | The exports land in Drive with the tab's band order; "Set this tab to match" fills it in | ✅ Real data: 40 existing Earth Engine exports (S2 L1C + S1); a new export not yet |
 | 4.4 | Cloud folder | Own files → in the cloud: a Drive link or gs:// bucket of the export | The machine fetches it; data check OK | Never (CI with file://) |
 | 4.5 | Multi-label | A labels CSV (or BigEarthNet preset with a BigEarthNet subset) | Classes read from the CSV; micro F1 / mAP after training | ✅ GPU: TEST 4, micro F1 / mAP 1.0 |
 | 4.6 | Extra outputs | Labels CSV with a class column + a number column; Dataset → Extra outputs → add "numbers" with that column | Design needs two Outputs; results show both scores | ✅ GPU: TEST 3, class 100 %, biomass R² 0.987, wet 97.5 % |
@@ -99,7 +99,7 @@ Each: set the Dataset tab as described, then **Check data on Kaggle** (a few min
 | 5.6 | ImageNet weights + LoRA | ResNet-18 demo, weights resnet18, "train only the new layers"; or ViT-B/16 + LoRA on attention | Start event: far fewer trainable parameters; accuracy close to full fine-tuning | ✅ Real data: ViT-B/16 LoRA 93.6 % with 0.27 % of the weights trained vs full 96.8 % (after a fix) |
 | 5.7 | Save memory | ViT demo, "save memory" on | Run card memory drops, ~30 % slower | ✅ Real data |
 | 5.8 | Seeds | 3 seeds → Compare selected → Export | Overlaid curves; CSV + LaTeX table with mean ± s.d. | ✅ GPU |
-| 5.9 | GPU memory estimate | Change batch size | Estimate updates; warns above the target's memory | Real |
+| 5.9 | GPU memory estimate | Change batch size | Estimate updates; warns above the target's memory | ✅ Window |
 
 ## 6. Where training runs
 
@@ -109,7 +109,7 @@ Each: set the Dataset tab as described, then **Check data on Kaggle** (a few min
 | 6.2 | College server (SSH) | Connection → add the server → Prepare → Train | SLURM / systemd / tmux chosen; run survives closing the app; results come back | Never |
 | 6.3 | Several GPUs | On a machine with ≥ 2 GPUs: GPUs = all → Train | Start event `gpus: N`; epochs ~N× faster; one set of curves | ✅ Real: Kaggle T4 x2, TEST 2: 2 workers, R² 0.998 in 20 s (after a fix: it did not exit) |
 | 6.4 | Several GPUs, stop | Same, press Stop mid-epoch | All workers stop; results written | Never (CI: spot notice) |
-| 6.5 | AWS on demand | Connection → AWS instance → Train | The app starts the instance, the run stops it at the end | Never |
+| 6.5 | AWS on demand | Connection → AWS instance → Train | The app starts the instance, the run stops it at the end | ✅ Real: EC2 g4dn.xlarge, Mumbai (2026-11-07) |
 | 6.6 | AWS spot | Persistent spot request, interruption behaviour stop | After an interruption the run resumes by itself at the same batch | Never (CI: resume path) |
 | 6.7 | Continue elsewhere | Spot instance terminated, Mac copy on → Continue on another machine | Resumes on the other machine from the checkpoint | Never |
 
@@ -171,4 +171,8 @@ Each: set the Dataset tab as described, then **Check data on Kaggle** (a few min
 | 2026-11-07 | 5.7 | ❌ → fixed | "save memory" was ticked but not used (the design has early exits); the Train tab now says so |
 | 2026-11-07 | 4.14 | ✅ | TEST 10 Read folder: "common 200 · rare 20, unbalanced (10.0×): consider class weights"; fixed: "other bands" b1 / b2 showed Sentinel-2 names as tooltips |
 | 2026-11-07 | 5.7 | ✅ | TEST 12 ViT-B/16 on real EuroSAT RGB, batch 64, save memory on: peak 2.18 GB instead of 7.22 GB, 114 s instead of 99 s per epoch (+15 %), same accuracy 96.8 % (20261107-065029 vs 20261106-204235) |
+| 2026-11-07 | 6.5 | ✅ | EC2 g4dn.xlarge (Mumbai, Deep Learning AMI, the owner's instance): Check instance (stopped, shutdown Stop); Prepare 0.7 min (CUDA, T4, the AMI's PyTorch 2.12); run 20261107-085601 40.5 %; results fetched from the stopped instance (092313, 79.5 %, 0.5 min); the app quit mid-run, the run went on (095956); Stop mid-run ends "stopped" with results (134745, 75.7 %); the instance stops itself after every run. 29.3 billed minutes ≈ $0.28 in all (10 of them a slow CIFAR-10 download) |
+| 2026-11-07 | 4.3 | ✅ | TEST 17: 40 real Earth Engine exports (S2 L1C 13 bands, S1 VV/VH dB, LZW, 512×512) fused, Read folder takes each group's band names from its own folder; Check data on Kaggle passed (one batch 2×15×64×64; S1 seen as dB; no empty pixels) (20261107-133659-check) |
+| 2026-11-07 | 0.3, 1.2, 1.3, 2.10, 5.9 | ✅ | Manual opens; LeNet demo saved as a project and deleted (to the Trash); ViT-g/14 (1,011,216,522 params, 287 layers) collapses to 8 boxes at once; memory estimate 0.61 GB at batch 8, 1.5 GB at 512 |
+| 2026-11-07 | — | fixed | Found by the EC2 and Earth Engine tests (all with tests): an instance started for work that failed was left running; ssh wait too short for an AMI's first boot; "does not answer" while metrics.jsonl did not exist; a "starting" run never polled again; Fetch hidden when needed and not updating the state; a poll overwriting a fetch (race); Stop killed the data-loading workers first; LZW GeoTIFFs on Kaggle (imagecodecs); 13-band TIFF header ("432-bit"); band names taken from the other group's folder; a full path as the second group's folder |
 | | | | |
