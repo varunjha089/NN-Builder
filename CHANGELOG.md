@@ -3,6 +3,10 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 07_11_26_18_47_32
+
+**Manual: section 16, the test architectures: 18 designs with Design-screen screenshots, what each tests, the parameter arithmetic and a per-block parameter table; label for the block reference** (`2e8ff29`)
+
 ## 07_11_26_18_25_40
 
 **Docs: manual (band names per group, fusion folder inside the dataset folder, compressed GeoTIFFs, clean Stop), CLAUDE.md status (what is tested by hand), FUTURE_PLAN 1c state after 2026-11-07** (`d8afae9`)
