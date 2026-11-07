@@ -3,6 +3,15 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 07_11_26_09_32_16
+
+**SSH / EC2: a launched run that is still "starting" (train.py has not written its start event) is still polled; the window retries a failed poll** (`da789e9`)
+
+Found on the first real EC2 run: the first poll saw train.py alive without a start event and stored "starting", and status() skips
+"starting" runs (meant for runs still being launched), so the run was never looked at again: it finished and the instance stopped
+itself without the results being fetched. "Launching" is now starting with no job / notebook yet. The Train tab's poll loop no
+longer ends at the first error (tries again after 15 s). Test: flows.rs.
+
 ## 07_11_26_09_14_48
 
 **SSH / EC2 runs: a look at the machine counts as answered when the reply has NNB_ALIVE** (`8f312c6`)
