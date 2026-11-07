@@ -3,6 +3,10 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 07_11_26_16_46_44
+
+**TEST_APP.md: 4.3 and 4.4 done with a fresh Earth Engine export (the app's script) fetched by Kaggle from a Drive link, trained; FUTURE_PLAN 1d: what the real-data tests found but did not fix** (`57ed467`)
+
 ## 07_11_26_13_52_30
 
 **TEST_APP.md and AWS_TEST_PLAN.md: the EC2 tests (6.5, all phases, $0.28), real Earth Engine exports on Kaggle (4.3), window tests 0.3 1.2 1.3 2.10 5.9, and the bugs found** (`9121c4e`)
