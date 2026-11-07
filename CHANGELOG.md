@@ -3,6 +3,10 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 07_11_26_13_52_30
+
+**TEST_APP.md and AWS_TEST_PLAN.md: the EC2 tests (6.5, all phases, $0.28), real Earth Engine exports on Kaggle (4.3), window tests 0.3 1.2 1.3 2.10 5.9, and the bugs found** (`9121c4e`)
+
 ## 07_11_26_13_18_47
 
 **Dataset tab, Read folder: band names come from a file in the training folder, and the second group's from its own folder** (`7e37204`)
