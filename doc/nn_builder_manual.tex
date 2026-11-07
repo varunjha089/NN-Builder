@@ -199,7 +199,10 @@ A \emph{project} is a folder. The Projects page has two cards side by side:
 \begin{itemize}
   \item \ui{New project}: type a name and press \ui{Create} (or Enter). The folder is made in the projects folder shown underneath
         (\ui{change} picks another one).
-  \item \ui{Open}: the projects used before, each with its folder, and a field to open any project folder by its path.
+  \item \ui{Open}: the projects used before, each with its folder, and below them a field to open any project folder: type or paste its
+        path and press \ui{Open folder}, or press \ui{Choose\ldots} and pick the folder in the Finder dialog (as \ui{File} $\rightarrow$
+        \ui{Open Project\ldots}). A pasted path may keep its quotes, start with \texttt{\textasciitilde/}, or name a file inside the project
+        (e.g.\ \file{model.json}); the project folder is the one that holds \file{project.json}.
 \end{itemize}
 Every change is saved as it is made; there is no ``save'' step for a normal project.
 

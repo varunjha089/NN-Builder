@@ -289,9 +289,10 @@ function ProjectTab({ st, toast, opened, reload }: { st: AppState; toast: (m: st
                 <button className="small" title={p.exists ? "Delete this project: its folder (design, runs, results) goes to the Trash" : "Take it off this list"}
                   onClick={() => setConfirmDel(p.path)}>{p.exists ? "Delete" : "Remove"}</button></>}</td></tr>)}
           </tbody></table> : <p className="muted">No saved projects yet. Create one, or open a demo below and save it (⌘S).</p>}
-          <p className="row"><input className="grow" value={path} onChange={(e) => setPath(e.target.value)} placeholder="folder of a project (contains project.json)"
+          <p className="row"><input className="grow" value={path} onChange={(e) => setPath(e.target.value)} placeholder="folder of a project (contains project.json), or Choose…"
             onKeyDown={(e) => { if (e.key === "Enter") openPath(); }} />
-            <button onClick={openPath}>Open folder</button></p>
+            <button onClick={openPath}>Open folder</button>
+            <button onClick={() => api.pickFolder("Choose a project folder (the one with project.json)").then((d) => { if (d) { setPath(d); return api.projectOpen(d).then(opened); } }).catch((e) => toast(errText(e)))}>Choose…</button></p>
         </div>
       </div>
       <button className="section-head fold" onClick={() => flipDemos()} aria-expanded={demosOpen}>

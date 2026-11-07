@@ -217,9 +217,31 @@ pub fn draft() -> Option<Project> {
     is_project(&draft_dir()).then(|| Project { dir: draft_dir() })
 }
 
+/// a project folder as the owner typed or pasted it: quotes (Finder's "Copy as Pathname" in a shell) and spaces around it removed,
+/// ~/ = the home folder, and a file inside a project (project.json, model.json, a .nnb) stands for its folder
+pub fn project_path(typed: &str) -> PathBuf {
+    let t = typed.trim().trim_matches(|c| c == '"' || c == '\'').trim();
+    let p = match t.strip_prefix("~/") {
+        Some(rest) => PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(rest),
+        None if t == "~" => PathBuf::from(std::env::var("HOME").unwrap_or_default()),
+        None => PathBuf::from(t),
+    };
+    if p.is_file() {
+        if let Some(parent) = p.parent().filter(|d| is_project(d)) {
+            return parent.to_path_buf();
+        }
+    }
+    p
+}
+
 pub fn open(path: &Path) -> Result<Project> {
+    let path = &project_path(&path.to_string_lossy());
+    if !path.exists() {
+        bail!("There is no folder {}.", path.display());
+    }
     if !is_project(path) {
-        bail!("That folder is not an NN Builder project (it has no project.json).");
+        bail!("{} is not an NN Builder project (it has no project.json). Choose the project's own folder, the one with project.json \
+               and model.json in it.", path.display());
     }
     let dir = path.canonicalize()?;
     if dir == draft_dir() || Some(&dir) == draft_dir().canonicalize().ok().as_ref() {

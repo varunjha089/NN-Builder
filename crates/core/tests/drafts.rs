@@ -27,6 +27,14 @@ fn demos_are_one_draft_until_saved() {
     // creating a project discards it
     store::create_draft("AlexNet demo", alexnet).unwrap();
     let other = store::create("Other", None).unwrap();
+    // a typed or pasted folder: quotes and spaces around it, or a file inside the project, open the same project
+    let dir = other.dir.to_string_lossy().to_string();
+    for typed in [format!("  '{dir}' "), format!("\"{dir}\""), format!("{dir}/model.json"), format!("{dir}/project.json")] {
+        assert_eq!(store::open(std::path::Path::new(&typed)).unwrap().dir, other.dir, "{typed}");
+    }
+    let err = store::open(&projects).unwrap_err().to_string();
+    assert!(err.contains("no project.json") && err.contains("projects"), "{err}");
+    assert!(store::open(std::path::Path::new("/no/such/folder")).unwrap_err().to_string().contains("There is no folder"));
     assert!(store::draft().is_none());
 
     // opening a project discards it

@@ -302,7 +302,8 @@ web/src/                   Design.tsx: the canvas reads left to right (handles l
                            by groupLayers(): Input, image stages by resolution (pool + a following Dropout stay in their stage), Embedding
                            and Encoder block k for transformers, Classifier; collapsible, with parameter subtotals; every block name in
                            its kind's colour (COLORS, neon at night), status colour only for warnings/errors;
-                           App.tsx (Projects page: New project and Open side by side, then the demos as clickable tiles in a section that
+                           App.tsx (Projects page: New project and Open side by side (Open: a path field (store::project_path cleans quotes, ~/, a file
+                           inside the project) + Open folder + Choose… = pick_folder), then the demos as clickable tiles in a section that
                            folds (remembered in localStorage "nnb-demos-open"); .page scrolls at the
                            window edge with the content centred, at most 1180 px; demo cards on the Projects page and File → New from Demo open "<Architecture> demo" as the draft: nothing
                            in the projects folder until Save… / File → Save Project… ⌘S (project_save_as); unsaved, it is discarded
