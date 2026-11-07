@@ -41,9 +41,90 @@ What is still open, in the suggested order. Done work is in git and CLAUDE.md; t
   environment variable (never in the repository). Ends the Keychain "Always Allow" question after every update.
 - **First real test of the automatic updater.** 0.4.0 is released (2026-11-06); the app installed on the owner's Mac is the same code
   but still says 0.3.0, so Help → Check for Updates → Install and restart there is the test.
-- **First real runs of the new training features** (only CI has run them, on a CPU): ImageNet weights, Grad-CAM and the mistakes
-  gallery, TorchScript / ONNX export, bfloat16, channels-last, the automatic batch split on a real out-of-memory, save memory, the
-  measured memory and data-wait figures. A short Kaggle run of the ResNet-18 demo with ImageNet weights and export would cover most.
+- **First real runs of the new training features**: done on Kaggle T4s on 2026-11-06/07 (ImageNet weights, LoRA, TorchScript / ONNX
+  export, save memory 7.22 → 2.18 GB, measured memory and data wait, several GPUs; see TEST_APP.md). Still never seen for real: bfloat16
+  (needs an A100-class GPU) and the automatic batch split on a real out-of-memory.
+- **The tests that need the owner's accounts or machines**: section 1c.
+
+## 1c. Tests that need the owner's accounts (written 2026-11-07)
+
+On 2026-11-07 every TEST_APP.md test that the Mac and Kaggle allow was done: 69 ✅, with the bugs found fixed. The six below remain.
+Each needs an account, a machine or money that only the owner has. Their logic is already covered by CI and the stand-in tests
+(`crates/core/tests/flows.rs`), so what is left is the real service. Do them in this order (free first, money last). Use a TEST project
+(Projects → New project), never a real one. Afterwards, mark the TEST_APP.md line and add a row to its Results log with the run id.
+
+**1. Earth Engine script (TEST_APP 4.3).** Needs a Google Earth Engine account (free for research; sign up with a Cloud project).
+- Steps: Dataset tab → My own files → "Get Sentinel-1/2 data from Google Earth Engine". Choose a small area (one tile), Sentinel-2 + WorldCover,
+  and Export to Drive. Paste the script into code.earthengine.google.com and run it. Start the export task from the Tasks panel.
+- Expect: the GeoTIFFs land in the Drive folder with the band order the tab shows. Once the folder is downloaded, Read folder lists the bands
+  (GDAL names from TIFF tag 42112), and "Set this tab to match the export" fills them in.
+- Pointers: `web/src/DatasetTab.tsx` GeeBox (the generated script); `crates/core/src/localdata.rs` tiff_info; manual sections "Your own files,
+  e.g. Sentinel-1/2 from Google Earth Engine" and "A large exported scene with a label image".
+- Then run Check data and a few epochs on Kaggle: this also tests the private Kaggle dataset upload with real exports.
+
+**2. Cloud folder as the source (TEST_APP 4.4).** Needs the export from step 1 in Google Drive (a shared link) or a Cloud Storage bucket.
+- Steps: Dataset → My own files → "in the cloud", then paste one of:
+  - a Drive folder link (gdown reads at most 50 files per folder, so prefer a zip of the export);
+  - `gs://bucket/folder` (Connection tab: a service-account JSON key, stored in the Keychain as "gcs");
+  - `rclone:remote:path` (rclone set up on the training machine).
+
+  Then Check data on Kaggle.
+- Expect: the machine fetches into `<data>/cloud/<key>` with no upload from the Mac, and the data check has no warnings.
+- Pointers: `python/harness.py` cloud_fetch(); `crates/core/src/dataset.rs` cloud_url_problem; GeeBox "Export to: Cloud Storage" (nnb_export/
+  prefix). CI tests only `file://`.
+- A private bucket needs the key on the machine. The app copies it only to SSH / AWS machines ("copy tokens"; `runs.rs` put_secret_script).
+  On Kaggle only a public bucket or a shared Drive link works (a gap to close later: Kaggle Secrets). Check that the key never appears in
+  the log.
+
+**3. College server over SSH (TEST_APP 6.2).** Needs the server's address and an account. A key login is easier; a password works through
+a one-time Terminal login.
+- Steps: Connection → add a machine (host or `~/.ssh/config` alias, user, port, key file or "password", jump host if needed) → Connect
+  (a password is typed in the Terminal window only) → Prepare (Python, GPUs, disk, venv with PyTorch, no sudo) → a short Train.
+- Expect:
+  - Prepare reports the GPUs and the launch method (SLURM `sbatch` > `systemd-run --user` > tmux / nohup) and warns if logout kills
+    processes.
+  - The run keeps going after the app quits and the Mac sleeps. Reopening the app reconnects, the curves continue, and the results come back.
+- Pointers: `crates/core/src/remote.rs` (connect_command, prepare_script + parse_prepare, choose_launch, put_secret_script); `runs.rs` start /
+  status; manual sections "The Connection tab" and "Independence from the connection".
+- Also answers the open CLAUDE.md questions: does the server use SLURM? Is lingering on?
+
+**4. Stop a several-GPU run (TEST_APP 6.4).** Needs a machine with ≥ 2 GPUs that the app can stop: the college server (step 3) or AWS.
+Kaggle notebooks cannot be stopped through the API, so Kaggle T4 x2 does not count.
+- Steps: GPUs = all, epochs ≥ 5 → Train → press Stop in the middle of an epoch.
+- Expect: all workers end (no python process left: check `nvidia-smi`), and results.json is written from the epochs done. The parent passes
+  SIGTERM to every rank, and rank 0 checkpoints and writes the results.
+- Pointers: `python/harness.py` run_parallel (signal forwarding, workers ended a minute after rank 0, destroy_process_group), sync_flags;
+  `runs.rs` stop. 2026-11-06 found that the workers did not exit on Kaggle T4 x2 (fixed). Watch for the same here.
+
+**5. AWS on demand (TEST_APP 6.5).** Costs money: g4dn.xlarge is about $0.53 an hour on demand in us-east-1 (check the region's price).
+- Needs:
+  - a g4dn.xlarge instance with shutdown behaviour **stop**;
+  - a G-instance vCPU quota above 0 (new accounts often have 0: ask AWS for 4);
+  - a key pair (.pem file path);
+  - an IAM access key allowed only `ec2:StartInstances` / `StopInstances` / `DescribeInstances` on that instance, plus
+    `ec2:DescribeSpotInstanceRequests`.
+- Steps: Connection → AWS (access key into the Keychain; instance id, region, key file) → Train a short run with a maximum run time set.
+- Expect: the app starts the instance, prepares it once and runs. The run ends with `shutdown -h now`, so the instance is stopped in the
+  console. Results opened later start, copy and stop the instance again.
+- Pointers: `python/helpers/aws_ec2.py`; `runs.rs` aws_up, fetch; CLAUDE.md "AWS EC2 g4dn.xlarge".
+- Check in the console afterwards that the instance is **stopped**, not running.
+
+**6. AWS spot and Continue elsewhere (TEST_APP 6.6, 6.7).** Costs money, less than on demand.
+- Needs: a **persistent** spot request with interruption behaviour **stop**, and the machine setting "Keep a copy of checkpoints on this Mac".
+- Steps for 6.6: a run of 20+ minutes. Simulate an interruption with AWS Fault Injection Service (action `aws:ec2:send-spot-instance-interruptions`),
+  or wait for a real one.
+- Expect for 6.6: a mid-epoch checkpoint and exit 75. When the instance returns, crontab `@reboot` → resume.sh continues at the same batch, also
+  while the Mac is off. used_seconds.txt counts the time over resumes.
+- Steps for 6.7: with a one-time request (or behaviour terminate), let it be terminated → Continue on another machine (Kaggle or the college
+  server).
+- Expect for 6.7: a new run from the Mac copy of the checkpoint, and the old run marked "continued".
+- Pointers: CLAUDE.md "Spot instances" (the table of situations); `runs.rs` run_script, RESUME_SH, resume_on, mirror_checkpoint; manual
+  section "EC2 spot instances".
+- Afterwards, cancel the spot request in the console. The app cannot cancel it, and a persistent request restarts the instance.
+
+**Cleanup (TEST_APP 1.3).** When the tests are done: Projects → Delete on each TEST project (the folder goes to the Trash), and move
+`~/NN_Builder_Test_Data` (generated data) to the Trash. The Kaggle private datasets `nnb-*` and the notebooks `nnb-test-*` can be deleted on
+kaggle.com (Your Work). Each is under 2 MB, but they count toward the account's dataset list.
 
 ## 1b. Handling more kinds of architecture (asked 2026-11-05; in this order, each building on the one before)
 
