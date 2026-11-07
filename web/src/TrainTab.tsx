@@ -77,6 +77,18 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
     return () => { stop = true; window.clearTimeout(timer); };
   }, [runId, toast]);
 
+  // the project's other active runs (other seeds) are followed too, every 30 s: they fetch their results when they end,
+  // and a queued Kaggle run is pushed although another run is the one shown
+  const others = runs.filter((r) => r.id !== runId && ["starting", "running", "queued"].includes(r.status)).map((r) => r.id).join(" ");
+  useEffect(() => {
+    if (!others) return;
+    const timer = window.setInterval(() => {
+      Promise.all(others.split(" ").map((id) => api.runStatus(id, 1e9).catch(() => null)))
+        .then(() => api.runs().then(setRuns)).catch(() => {});
+    }, 30000);
+    return () => window.clearInterval(timer);
+  }, [others]);
+
   const kind = targets.find((t) => t.name === target)?.kind ?? "kaggle";
   const set = (p: Partial<TrainSettings>) => setTrain({ ...train, ...p });
   const checkData = async () => {

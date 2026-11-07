@@ -842,8 +842,8 @@ fn kaggle_fetch(c: &KaggleCreds, d: &Path, info: &mut RunInfo) -> Result<()> {
     save(d, info)
 }
 
-const QUEUED_NOTE: &str = "Waiting for a free Kaggle GPU (Kaggle runs 2 GPU notebooks at a time): pushed when one is free, while this \
-    run is open (or the next time it is opened).";
+const QUEUED_NOTE: &str = "Waiting for a free Kaggle GPU (Kaggle runs 2 GPU notebooks at a time): pushed when one is free, while its \
+    project's Train tab is open (or the next time it is opened).";
 
 /// Kaggle refused a push because 2 GPU notebooks are already running
 fn is_session_limit(msg: &str) -> bool {

@@ -205,7 +205,8 @@ crates/core/src/
                            end, kaggle_output deleted after metrics/results/model/log are copied; the run card shows the last check.
                            Kaggle allows 2 GPU notebooks at a time: a push refused for that (runs::is_session_limit) makes the run
                            "queued" (RunInfo.kaggle_attach keeps the dataset slug) and status() pushes it again when due, so 3 or 5
-                           seeds no longer fail; the Train tab keeps polling queued runs. Kaggle CLI calls are tried 3 times on
+                           seeds no longer fail; the Train tab follows the shown run every 3 s and the project's other active runs every 30 s
+                           (so a queued seed is pushed while another seed is shown). Kaggle CLI calls are tried 3 times on
                            connection errors (cloud::kcap / transient).
   dataset.rs               Multispectral / radar: bands, band_order, sensor (s2 | s1 | other), s1_db; SENTINEL2_BANDS (EuroSAT order),
                            SENTINEL2_GEE, SENTINEL1_BANDS, band_key (B4 = B04, used in problems() and harness band_key); input channels =
