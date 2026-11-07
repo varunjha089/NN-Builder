@@ -3,6 +3,14 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 07_11_26_11_04_16
+
+**LZW GeoTIFFs: imagecodecs is installed before tifffile is first imported (reloading the package did not reach the module that looks for it)** (`026a8ae`)
+
+The first fix still failed on Kaggle: importlib.reload(tifffile) re-runs the package's __init__, not tifffile.tifffile where imagecodecs
+is looked up. CI: ci_tiff_check.py runs the harness's own tiff_read on an LZW file after uninstalling imagecodecs, with tifffile
+imported before and not.
+
 ## 07_11_26_10_57_32
 
 **Real Earth Engine exports: LZW GeoTIFFs read on Kaggle, 13-band headers read right, the second group's folder must be inside the dataset folder; EC2 messages** (`ae86554`)
