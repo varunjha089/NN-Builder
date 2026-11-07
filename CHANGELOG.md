@@ -3,6 +3,10 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 07_11_26_07_06_17
+
+**FUTURE_PLAN.md: section 1c, the tests that need the owner's accounts (Earth Engine, cloud folder, SSH server, several-GPU stop, AWS on demand / spot), with steps, expectations and code pointers** (`2d67fd0`)
+
 ## 07_11_26_06_56_44
 
 **TEST_APP.md: save memory measured on a real GPU (7.22 -> 2.18 GB, +15 % time)** (`017ac90`)
