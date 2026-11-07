@@ -203,6 +203,10 @@ crates/core/src/
                            (CI uses file://).
                            Kaggle runs: data in /tmp/nnb_data (not /kaggle/working, the notebook output), checkpoint removed at the
                            end, kaggle_output deleted after metrics/results/model/log are copied; the run card shows the last check.
+                           Kaggle allows 2 GPU notebooks at a time: a push refused for that (runs::is_session_limit) makes the run
+                           "queued" (RunInfo.kaggle_attach keeps the dataset slug) and status() pushes it again when due, so 3 or 5
+                           seeds no longer fail; the Train tab keeps polling queued runs. Kaggle CLI calls are tried 3 times on
+                           connection errors (cloud::kcap / transient).
   dataset.rs               Multispectral / radar: bands, band_order, sensor (s2 | s1 | other), s1_db; SENTINEL2_BANDS (EuroSAT order),
                            SENTINEL2_GEE, SENTINEL1_BANDS, band_key (B4 = B04, used in problems() and harness band_key); input channels =
                            bands.len() (≤ 32); from Kaggle or own files. Source "local" (own files, e.g. Google Earth Engine exports):
