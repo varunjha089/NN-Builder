@@ -3,6 +3,10 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 07_11_26_22_35_42
+
+**drafts.rs: join the project's files with the system's separator (Windows' \\?\ paths refused "/model.json")** (`3592e12`)
+
 ## 07_11_26_22_26_59
 
 **Design: Save as PNG (and File → Export Design as PNG) draws the whole design into one picture; manual: each test architecture as such a picture** (`c94bc7a`)
