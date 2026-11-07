@@ -3,6 +3,18 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 07_11_26_10_57_32
+
+**Real Earth Engine exports: LZW GeoTIFFs read on Kaggle, 13-band headers read right, the second group's folder must be inside the dataset folder; EC2 messages** (`ae86554`)
+
+Found with 40 real Sentinel-1/2 pairs exported from Earth Engine (TEST 17, check on Kaggle):
+- they are LZW-compressed; Kaggle has tifffile but not imagecodecs, so reading failed. tiff_read() installs imagecodecs and reloads
+  tifffile when a file needs it (all three TIFF readers use it).
+- Read folder said "432-bit": BitsPerSample / SampleFormat of a 13-band image are stored at an offset, which was read as the value.
+- a full path as the second band group's folder passed the check, but only the dataset folder is uploaded: refused now.
+Also: the no-capacity message no longer blames spot (it happened on demand), and the wait for a stopping instance is 10 minutes
+(a g4dn with a large disk took 6). Tests: design.rs (13-band TIFF header, fused folder).
+
 ## 07_11_26_10_05_52
 
 **Training: data-loading workers ignore stop signals, so Stop ends a run cleanly** (`ea3a2c7`)
