@@ -2806,8 +2806,11 @@ def main():
         if INTERRUPT:
             interrupted()
         if RANK:
+            # the other workers are done: rank 0 tests the model and writes the results. They wait for that at a barrier and then all
+            # leave the group together (one leaving while rank 0 still used it sometimes aborted it on exit: "terminate called ...")
+            torch.distributed.barrier()
             torch.distributed.destroy_process_group()
-            return   # the other workers are done: rank 0 tests the model and writes the results
+            return
         if early and os.path.exists(best_path):
             # the final model is the best epoch's, not the last one's
             model.load_state_dict(torch.load(best_path, map_location=device))
@@ -2860,6 +2863,7 @@ def main():
          **({"heads": [{"name": h["name"], "metric": h["metric"], "score": round(h["score"], 5)} for h in HEAD_SCORES]} if HEAD_SCORES else {}),
          **({"best_epoch": es["best_epoch"]} if early else {}), **({"test_top5": round(test_top5, 5)} if test_top5 is not None else {}))
     if WORLD > 1 and torch.distributed.is_initialized():
+        torch.distributed.barrier()   # the other workers wait here for the results (see above)
         torch.distributed.destroy_process_group()   # (an open NCCL group can keep the process from exiting)
     if ON_KAGGLE:
         # a Kaggle run is never resumed: the checkpoint would only make the output the app downloads bigger
@@ -2913,7 +2917,10 @@ def run_parallel(n):
                     p.kill()
         time.sleep(0.5)
     codes = [p.returncode for p in procs]
-    sys.exit(codes[0] if codes[0] != 0 else next((c for c in codes if c), 0))
+    if codes[0] == 0 and any(codes[1:]):
+        # rank 0 wrote the results: a worker that failed on its way out (or was ended after the minute) does not undo the run
+        print(f"(the other workers ended with {codes[1:]} after the results were written)", flush=True)
+    sys.exit(codes[0])
 
 
 if __name__ == "__main__":

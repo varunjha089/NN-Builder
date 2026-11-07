@@ -173,7 +173,9 @@ crates/core/src/
                            from NNB_RANK / NNB_WORLD; __main__ -> wanted_workers() (NNB_TEST_PROCESSES = CI's CPU processes) -> run_parallel():
                            Popen of train.py per rank (MASTER_ADDR/PORT), the parent writes py_pid.txt and forwards SIGTERM/INT/HUP/USR1/USR2,
                            exits with rank 0's code, ending the other workers a minute after rank 0 ends (a worker hanging on exit
-                           kept a Kaggle notebook running: rank 0 now also destroys the process group). main(): init_process_group (nccl /
+                           kept a Kaggle notebook running: rank 0 now also destroys the process group; the other ranks wait at a barrier until rank 0 has
+                           written the results, then all leave the group together: one leaving early sometimes aborted on exit in CI; a
+                           worker's code no longer fails a run whose rank 0 ended 0). main(): init_process_group (nccl /
                            gloo, 1 h timeout), rank 0 loads data and weights
                            first (barrier), ShardBatches (each rank every WORLD-th image of the one-GPU batch), SyncBatchNorm + DDP after the
                            one-batch check (rank 0), sync_flags (STOP / INTERRUPT / checkpoint due, MAX all-reduce) every step and at the

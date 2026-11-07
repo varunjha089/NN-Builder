@@ -541,6 +541,7 @@ def parallel(root):
     with open(os.path.join(folder, "log.txt"), "w") as log:
         code = subprocess.run([sys.executable, "train.py"], cwd=folder, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=900).returncode
     assert code == 0, open(os.path.join(folder, "log.txt")).read()[-3000:]
+    assert "terminate called" not in open(os.path.join(folder, "log.txt")).read(), "a worker aborted while leaving the process group"
     ev = [json.loads(l) for l in open(os.path.join(folder, "metrics.jsonl")) if l.strip()]
     starts = [e for e in ev if e["event"] == "start"]
     assert len(starts) == 1 and starts[0]["gpus"] == 2, "only rank 0 writes events"
