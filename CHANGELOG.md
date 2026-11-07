@@ -3,6 +3,15 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 07_11_26_07_37_34
+
+**AWS cost guards: an instance the app started is stopped again when anything fails before training begins; an on-demand instance with shutdown behaviour Terminate is refused** (`f10032e`)
+
+Before, a failure after the start (no public address, ssh not answering, Prepare, upload, launch, or in Prepare / fetch) marked the run
+failed but left the instance running and charging. aws_up now describes first (state before = "was", shutdown behaviour), and every
+caller stops the instance again when it started it; one that was already running is left alone. Policy docs gain
+ec2:DescribeInstanceAttribute. Tested with a stand-in EC2 that records its calls (flows.rs).
+
 ## 07_11_26_07_18_50
 
 **AWS_TEST_PLAN.md: the first real EC2 tests (g4dn.xlarge on demand, Mumbai) with costs, setup, guards and abort rules; found that a failure after starting the instance leaves it running (to fix first)** (`7489184`)
