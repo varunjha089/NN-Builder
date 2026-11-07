@@ -216,3 +216,49 @@ Bugs found and fixed (each with a test):
 Still open:
 - a faster mirror for the built-in datasets (the CIFAR-10 download cost about $0.10 of idle GPU);
 - spot (6.6, 6.7) and several GPUs (6.4) need permissions or machines the account does not have.
+
+## 8. Spot tests 6.6 and 6.7 (started 2026-11-07, updated as they run)
+
+The owner asked for these with the existing key, which may request spot instances, launch and terminate them, and create security
+groups. A **separate, new** instance is used, so the owner's gap-experiment instance and its disk are never at risk of termination.
+
+Setup (Claude, with the key, through boto3 on this Mac):
+- a security group allowing ssh (22) only from this Mac's public address;
+- a **persistent** spot request, interruption behaviour **stop**:
+  - g4dn.xlarge in Mumbai, the newest Deep Learning AMI;
+  - an existing key pair;
+  - a 30 GB disk deleted with the instance;
+  - name nn-builder-spot-test;
+  - maximum price = the on-demand price.
+- in the app: a machine for it with "Keep a copy of checkpoints on this Mac" on.
+
+Tests:
+- **6.6 interruption.** A long MNIST run (LeNet, MNIST downloads in seconds unlike CIFAR-10). Mid-run the instance is stopped from
+  outside (AWS Fault Injection Service, which would send the real 2-minute notice, is not allowed to the key; the notice path is covered
+  by CI). Expect:
+  - the run is cut off and the app shows it waiting;
+  - when the instance comes back, crontab @reboot (resume.sh) or the app resumes it from the last checkpoint;
+  - it finishes, and the instance stops itself.
+- **6.7 continue elsewhere.** A new run is cut off by **terminating** the spot instance (the spot request is cancelled first, or a
+  persistent request would start a replacement). Expect:
+  - the app shows "terminated";
+  - Continue on another machine (the on-demand gap-experiment) resumes from the Mac copy of the checkpoint and finishes.
+
+Guards:
+- spot price at most on-demand;
+- every run has a 0.5 h limit and stops its instance;
+- the spot request is cancelled and the spot instance terminated at the end (its disk goes with it);
+- a 10-second watch of both instances;
+- no retry loops.
+
+Expected cost: under $0.30.
+
+**Attempt 1 (2026-11-07, 17:48 IST): no spot capacity.** A persistent spot request for g4dn.xlarge was not fulfilled in any Mumbai zone
+(ap-south-1a / 1b / 1c: "capacity-not-available"; spot price then $0.253 / $0.259 / $0.269 per hour). Each request was cancelled within
+40 s. Checked afterwards:
+- all 4 requests cancelled, none fulfilled;
+- no instance launched;
+- nothing charged.
+
+Left in the account: the security group nnb-spot-test (ssh from one address; free; the key may not delete it, the owner can). 6.6 and
+6.7 wait for spot capacity. A persistent request fulfils by itself when capacity returns, so one is only left open while it is watched.
