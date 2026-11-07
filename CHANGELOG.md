@@ -3,6 +3,10 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 07_11_26_17_55_05
+
+**AWS_TEST_PLAN section 8 / TEST_APP: spot tests 6.6 and 6.7 planned; first attempt found no g4dn spot capacity in Mumbai (requests cancelled, nothing launched)** (`0a83497`)
+
 ## 07_11_26_16_46_44
 
 **TEST_APP.md: 4.3 and 4.4 done with a fresh Earth Engine export (the app's script) fetched by Kaggle from a Drive link, trained; FUTURE_PLAN 1d: what the real-data tests found but did not fix** (`57ed467`)
