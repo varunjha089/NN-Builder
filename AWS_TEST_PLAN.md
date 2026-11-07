@@ -121,6 +121,39 @@ Total **~55–70 minutes ≈ $0.55–0.70** plus the disk.
 
 These stay "Never" in TEST_APP.md (CI covers their logic).
 
+## 4b. No idle instance, data ready in time, a 10-second watch (owner's wishes, 2026-11-07)
+
+- **Idle time:** the phases follow each other at once, and no instance waits for a person:
+  - every run ends with `shutdown -h +2`: two minutes for the app to copy the results, then the instance stops itself;
+  - Prepare stops the instance as soon as it has checked it;
+  - a failure stops it at once (section 3).
+
+  The only idle time is these 2 minutes per run and the boot (about 1–2 minutes, longer on an AMI's first boot), about $0.02 each.
+- **Data:** every phase uses CIFAR-10 (170 MB). The first run downloads it on the instance into `~/.nn_builder/data`, on the instance's
+  disk, so the later phases find it there and download nothing. No other dataset is needed. Nothing is downloaded to the Mac, and the
+  Mac never trains.
+- **Watching:** while a phase runs, Claude checks every 10 s:
+  - the run's state, its last epoch and its log;
+  - the instance's state.
+
+  The app itself polls the run every 3 s over ssh, and AWS at most every 30 s while the instance is down. Claude acts on the abort rules
+  below at the first sign, without waiting for the run to end.
+
+## 4c. Before Phase 0 (state on 2026-11-07)
+
+- [x] App fixes (section 3), the Deep Learning AMI support and a 6-minute ssh wait for a slow first boot (no extra cost: the instance
+      boots anyway).
+- [x] Access key saved in the app (Keychain).
+- [ ] **That key is exposed**: a notes file stores its secret in plain text, and it was read into a Claude conversation. Rotate it:
+      IAM → the user → Security credentials → create a new access key, put it into the app, then deactivate and delete the old one.
+      Remove the secret from the notes file.
+- [ ] **That key has broad rights** (launch / terminate instances, delete volumes, every S3 bucket). The app needs only start / stop /
+      describe. Best: a new IAM user with the policy of section 2, step 6. At least add `ec2:DescribeInstanceAttribute`, or the app
+      cannot check the shutdown behaviour and only warns.
+- [ ] The instance (Mumbai, g4dn.xlarge, Deep Learning AMI, shutdown behaviour Stop, stopped): its **instance id**.
+- [ ] The key pair's **.pem file path** on this Mac (`chmod 400`), and the security group allowing ssh from this Mac's address.
+- [ ] The $5 budget alert.
+
 ## 5. Guards during the tests
 
 1. Before each phase, describe shows **stopped**, or Claude does not start.

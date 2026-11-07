@@ -351,13 +351,14 @@ pub fn aws_up(m: &mut Machine, creds: &Creds, log: &Log) -> Result<Value> {
             log(format!("Spot instance: {}", spot_summary(&v)));
         }
         log(format!("Running at {}; waiting for ssh ...", m.host));
-        for _ in 0..36 {
+        // (6 minutes: the first boot of an AMI such as the Deep Learning AMI loads its disk from the snapshot and can be slow)
+        for _ in 0..72 {
             if m.probe().is_ok() {
                 return Ok(());
             }
             std::thread::sleep(Duration::from_secs(5));
         }
-        bail!("ssh did not answer within 3 minutes (security group allows port 22? the right key file?)")
+        bail!("ssh did not answer within 6 minutes (security group allows port 22 from this Mac's address? the right key file and user?)")
     })();
     match res {
         Ok(()) => Ok(v),
