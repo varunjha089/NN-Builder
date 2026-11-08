@@ -279,3 +279,8 @@ Left in the account: the security group nnb-spot-test (ssh from one address; fre
   shutdown check had not seen "stopping", so resume.sh (started by cron at boot) skipped the run and the app showed "crashed". Fix 2:
   run.sh trusts the exit code: 75 with resume_wanted still present keeps the run resumable. The app's Stop removes resume_wanted
   first, so a Stop still ends a run.
+- Third try (run 083354, 08:33). This Mac's internet address had changed again, so ssh was refused by the security group, and the app
+  waited **18 minutes** on a paid instance although its ssh wait was meant to end after 6. Each of its 72 tries could itself wait 20 s.
+  Fixed: a real 6-minute deadline, and the message names the security group and this Mac's changing address. After the address was
+  added, the run trained and was interrupted at epoch 8 (08:53). The instance then stopped, but **AWS had no spot capacity to start it
+  again** (09:02, InsufficientInstanceCapacity), the situation "Continue on another machine" (6.7) is for.
