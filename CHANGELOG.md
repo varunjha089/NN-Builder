@@ -3,6 +3,14 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 08_11_26_09_20_29
+
+**Projects page: open-folder field on top, opened projects fold** (`647ea53`)
+
+The Open card now starts with the path field (Open folder, Choose…); under it
+the opened projects, most recent first, fold like the demo section and the
+choice is remembered.
+
 ## 08_11_26_09_17_15
 
 **Tests 6.6 and 6.7 done on a real spot instance** (`6dc469c`)
