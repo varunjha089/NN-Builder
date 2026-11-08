@@ -284,3 +284,11 @@ Left in the account: the security group nnb-spot-test (ssh from one address; fre
   Fixed: a real 6-minute deadline, and the message names the security group and this Mac's changing address. After the address was
   added, the run trained and was interrupted at epoch 8 (08:53). The instance then stopped, but **AWS had no spot capacity to start it
   again** (09:02, InsufficientInstanceCapacity), the situation "Continue on another machine" (6.7) is for.
+- 6.7 (09:04): the spot request was cancelled and the spot test instance terminated (with its disk). The app showed the run as
+  **terminated** and offered *Continue on another machine*. Continuing on gap-experiment resumed from the Mac's checkpoint copy
+  (epoch 8, resume at epoch 9, 30 s after the click), finished all 60 epochs (99.11 %), and the old run is marked "continued".
+
+Spot results: 6.7 ✅. 6.6 ✅ for the interruption itself: a mid-epoch checkpoint, exit 75, the run kept resumable, the app showing
+"interrupted" with the right advice, and the Mac copy. The **resume by itself at boot** was not seen on the real instance, because AWS
+had no spot capacity to start it again; it is covered by CI (ci_resume_check) and the stand-in flow test (flows.rs). Spot cost: about
+30 billed minutes ≈ $0.13, plus gap-experiment for about 6 minutes.
