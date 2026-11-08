@@ -147,3 +147,99 @@ on demand in Mumbai only). Costs money: g4dn.xlarge is about $0.53 an hour on de
 **Cleanup (TEST_APP 1.3).** The TEST projects stay (the owner keeps their designs). Test Delete on a new throwaway project instead
 (Projects → Delete: the folder goes to the Trash). The Kaggle notebooks `nnb-test-*` and private datasets `nnb-*` can stay or be deleted on
 kaggle.com (Your Work).
+
+## 2. Feature ideas (written 2026-11-08, not started)
+
+Things the app does not do yet. Already done, so not listed: Grad-CAM, ONNX / TorchScript export, ImageNet weights (ResNet-18, VGG-16,
+ViT-B/16), seeds with the Compare panel, the GPU memory estimate and the LaTeX parameter table.
+
+**Suggested order:** first 2.1 (Hugging Face models), which also gives the Earth-observation backbones; then 2.2 (predict a scene); then 2.5
+(sweeps), which fits the overnight lab pool. Together, 2.1 and 2.2 give a remote-sensing project what it needs: a stronger model and maps it
+can show.
+
+### 2.1 Fine-tune a Hugging Face model on the project's dataset
+
+Today Hugging Face is only a dataset source. `load_pretrained` in `python/harness.py` copies torchvision's ImageNet weights into a matching
+demo design, and only for resnet18, vgg16 and vit_b_16.
+
+**Design: a "Hugging Face model" block on the canvas.**
+- The block takes a model id (a timm model on the Hub, a `transformers` vision model, or an Earth-observation backbone such as Prithvi) and a
+  mode: all layers, LoRA, or frozen.
+- It stands for the whole pretrained network. The user adds their own head behind it:
+  - classification: Global pool → Dense → Output;
+  - segmentation: up-sampling blocks → Segmentation output.
+- Seeds, Compare, Grad-CAM, export, lab pools and the overnight report keep working.
+- **No PyTorch on the Mac.** The app reads the model's `config.json` and size information from the Hub API. That gives the output shape,
+  the parameter count and the GPU memory estimate before training. Only the GPU machine downloads the weights.
+
+**What it has to handle:**
+- **Band count.** Most models expect 3 RGB channels, so the first layer is widened as `load_pretrained` already does (`expand_rgb`):
+  B04/B03/B02 take the R/G/B weights and the other bands start from their mean. Models made for Sentinel bands (Prithvi) are used as
+  they are, with the bands mapped by name.
+- **Image size.** For ViTs, the position embeddings are resized to the tile size.
+- **Normalisation.** Taken from the model's config. An Earth-observation model uses the dataset's band means instead.
+- **Fine-tuning modes:**
+  - full fine-tuning, with a smaller learning rate for the backbone than for the head;
+  - frozen backbone with a trained head (linear probe), a cheap paper baseline;
+  - LoRA through PEFT, so that large models fit on a T4 or V100.
+- **Gated models** use the Hugging Face token already stored in the Connection tab.
+- **Libraries.** The run installs `timm` / `transformers` / `peft` on the GPU machine, and `terratorch` for Prithvi-type models.
+- **Limit:** the block is a black box. Layers inside the Hugging Face model cannot be edited, only the blocks around it.
+
+**Work:**
+- the new block in the shape engine, the DSL and the canvas;
+- a Hub lookup in Rust;
+- loading and band handling in `harness.py`;
+- CI checks on GitHub Actions;
+- the manual;
+- real Kaggle runs: one image classifier on EuroSAT and one segmentation backbone on a flood or land-cover set.
+
+**First scope:** timm image models plus Prithvi.
+
+### 2.2 Predict a whole scene and get a map back
+
+The user picks a trained run and a new Sentinel-1/2 scene, or an Earth Engine export. The GPU machine:
+- tiles the scene with overlap;
+- joins the tiles back together;
+- returns a georeferenced class map or mask (`.tif`, with the input's CRS and grid) plus a probability map.
+
+Today a run stops at test scores; this gives maps that open directly in QGIS.
+
+### 2.3 Earth-observation foundation models as backbones
+
+Mostly covered by 2.1 once it exists. Candidates: Prithvi (NASA/IBM, built for HLS and floods), SSL4EO-S12 (trained on Sentinel-1 and
+Sentinel-2), SatlasPretrain, and DOFA (any band set). With multispectral bands these usually beat ImageNet weights.
+
+### 2.4 Spatial cross-validation
+
+Split the folds by region or tile block instead of at random, because neighbouring pixels leak between the train and test sets. The
+result is k-fold mean ± std. Reviewers of remote-sensing papers ask for it.
+
+### 2.5 Hyperparameter sweeps
+
+The user gives ranges for learning rate, batch size and depth, and the app runs a grid, random or Optuna search. On a lab pool, one trial
+runs on each free machine overnight, and the trials are ranked in the overnight report.
+
+### 2.6 Grow a run as GPUs free up
+
+On a shared multi-GPU server with GPU = `free`, a run starts on 1 GPU and adds more after a checkpoint, using the existing resume.
+
+### 2.7 Ablation runs
+
+The user ticks blocks to remove or swap. The app trains each version on the same seeds and builds the comparison table.
+
+### 2.8 Paper results table and figure pack
+
+- **Table:** for the ticked runs, mean ± std over seeds, per-class F1, IoU, kappa, and parameters / FLOPs, as LaTeX or CSV.
+- **Figure pack:** training curves, the confusion matrix and sample maps, as PDF or PNG.
+
+### 2.9 Uncertainty
+
+An MC-dropout or test-time-augmentation option. It gives a per-pixel uncertainty map next to the prediction, which is useful for flood
+mapping.
+
+### 2.10 Smaller ones
+
+- **Notifications.** A macOS notification when the app sees a run end, done or failed. Nothing leaves the network.
+- **Dataset preview on a map.** Where the training tiles lie, with the test tiles marked, to check for leakage at a glance.
+- **Model size and speed.** Inference time and FLOPs per image on the target GPU, plus an int8 quantized export for deployment.
