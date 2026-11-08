@@ -3,6 +3,14 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 08_11_26_10_47_00
+
+**train.py: name each worker's GPU to NCCL, quiet the dataset download** (`4fbce93`)
+
+init_process_group gets device_id on CUDA, so NCCL no longer guesses the GPU from
+the rank (its "can cause a hang" warning) and barrier() knows it. The
+torchvision download bar (hundreds of log lines on Kaggle) is silenced.
+
 ## 08_11_26_10_34_35
 
 **train.py: a GPU use line halfway through every epoch** (`7447e30`)
