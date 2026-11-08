@@ -1005,3 +1005,62 @@ fn run_sh_on_spot_keeps_a_shutdown_resumable() {
         assert!(out.status.success(), "spot={spot}: {}\n{sh}", String::from_utf8_lossy(&out.stderr));
     }
 }
+
+/// GPU "free" on a shared server: run.sh waits while every GPU is busy, then trains on the idle ones only (GPUs = 2 takes two), and the
+/// waiting is logged; Stop while waiting ends it as "stopped". A fake nvidia-smi reports all four busy for its first four answers.
+#[cfg(unix)]
+#[test]
+fn run_sh_waits_for_free_gpus() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let exe = |name: &str, body: &str| {
+        let f = bin.join(name);
+        std::fs::write(&f, format!("#!/bin/bash\n{body}")).unwrap();
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    // index, MiB used, % busy: GPU 1 and 3 become idle after four looks; GPU 0 stays in use, GPU 2 stays busy
+    exe("nvidia-smi", r#"N=$(cat "$(dirname "$0")/n" 2>/dev/null || echo 0); echo $((N+1)) > "$(dirname "$0")/n"
+if [ "$N" -lt 4 ]; then printf '0, 12110, 23\n1, 9000, 50\n2, 27165, 94\n3, 27611, 100\n'
+else printf '0, 12110, 23\n1, 8, 0\n2, 27165, 94\n3, 4, 3\n'; fi"#);
+    exe("python", "echo \"CUDA=$CUDA_VISIBLE_DEVICES\" >> log.txt");
+    let p = remote::Prepared { python: bin.join("python").to_string_lossy().into(), cuda: true, ..Default::default() };
+    let m = Machine { name: "lab".into(), host: "h".into(), ..Default::default() };
+    let run = |t: TrainSettings, name: &str| {
+        let rd = dir.path().join(name);
+        std::fs::create_dir_all(&rd).unwrap();
+        std::fs::write(rd.join("run.sh"), nnb_core::runs::run_script(&t, &p, &m, "free", false)).unwrap();
+        let _ = std::fs::remove_file(bin.join("n"));
+        let st = std::process::Command::new("bash").arg(rd.join("run.sh")).env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .env("NNB_TEST_LOOK", "0").env("NNB_TEST_EVERY", "0").env_remove("SLURM_JOB_ID").status().unwrap();
+        assert!(st.success());
+        (std::fs::read_to_string(rd.join("log.txt")).unwrap(), std::fs::read_to_string(rd.join("metrics.jsonl")).unwrap())
+    };
+    let (log, events) = run(TrainSettings { gpus: 2, ..Default::default() }, "two");
+    assert!(log.contains("waiting for 2 free GPU(s)") && log.contains("CUDA=1,3"), "{log}");
+    assert!(events.contains("waiting for 2 free GPU(s)") && events.contains("GPU(s) 1,3 are free"), "{events}");
+    let (log, _) = run(TrainSettings { gpus: 1, ..Default::default() }, "one");
+    assert!(log.contains("CUDA=1\n"), "GPUs = 1 takes the first idle one: {log}");
+
+    // Stop while waiting: TERM to run.sh -> a "stopped" event and exit code 143, train.py never started
+    let rd = dir.path().join("stop");
+    std::fs::create_dir_all(&rd).unwrap();
+    std::fs::write(rd.join("run.sh"), nnb_core::runs::run_script(&TrainSettings::default(), &p, &m, "free", false)).unwrap();
+    std::fs::write(bin.join("n"), "-1000").unwrap();
+    let mut child = std::process::Command::new("bash").arg(rd.join("run.sh")).env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+        .env("NNB_TEST_LOOK", "0").env("NNB_TEST_EVERY", "1").spawn().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    unsafe { libc_kill(child.id() as i32, 15) };
+    assert!(child.wait().unwrap().success());
+    let events = std::fs::read_to_string(rd.join("metrics.jsonl")).unwrap();
+    assert!(events.contains("\"event\": \"stopped\"") && events.contains("waiting for a free GPU"), "{events}");
+    assert_eq!(std::fs::read_to_string(rd.join("exit_code.txt")).unwrap().trim(), "143");
+    assert!(!std::fs::read_to_string(rd.join("log.txt")).unwrap_or_default().contains("CUDA="));
+}
+
+#[cfg(unix)]
+unsafe fn libc_kill(pid: i32, sig: i32) {
+    extern "C" { fn kill(pid: i32, sig: i32) -> i32; }
+    kill(pid, sig);
+}

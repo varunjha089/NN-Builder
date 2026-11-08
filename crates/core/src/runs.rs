@@ -230,8 +230,8 @@ fn start_seeded(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_token
     if !a.ok {
         bail!("The design has problems (red blocks or the Dataset tab). Fix them before training.");
     }
-    if !gpu.is_empty() && !gpu.chars().all(|c| c.is_ascii_digit() || c == ',') {
-        bail!("GPU: a number like 0, or 0,1 (empty = any).");
+    if !gpu.is_empty() && gpu != "free" && !gpu.chars().all(|c| c.is_ascii_digit() || c == ',') {
+        bail!("GPU: a number like 0, or 0,1, or free (wait for idle GPUs); empty = any.");
     }
     preflight(target, creds)?;
     let mut id = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
@@ -550,7 +550,8 @@ fn launch_remote(pr: &Project, d: &Path, info: &mut RunInfo, m: &mut Machine, t:
     }
     let hours = t.max_hours.ceil() as u64;
     let launch = match method.as_str() {
-        "slurm" => format!("cd {rpath} && J=$(sbatch --parsable --job-name=nnb-{id} --output=slurm.out --gres=gpu:1 --time={hours}:00:00 run.sh) && echo \"NNB_JOB $J\"", id = info.id),
+        "slurm" => format!("cd {rpath} && J=$(sbatch --parsable --job-name=nnb-{id} --output=slurm.out --gres=gpu:{n} --time={hours}:00:00 run.sh) && echo \"NNB_JOB $J\"", id = info.id,
+                           n = t.gpus.max(1)),
         "systemd" => format!("systemd-run --user --unit=nnb-{id} --collect --working-directory={rpath} bash {rpath}/run.sh >/dev/null 2>&1 && echo NNB_JOB nnb-{id}", id = info.id),
         "tmux" => format!("cd {rpath} && tmux new-session -d -s nnb-{id} -c \"$PWD\" 'bash run.sh' && echo NNB_JOB nnb-{id}", id = info.id),
         _ => format!("cd {rpath} && S=''; command -v setsid >/dev/null 2>&1 && S=setsid; (nohup $S bash run.sh >/dev/null 2>&1 < /dev/null &); \
@@ -610,6 +611,44 @@ fn upload_local(m: &Machine, ds: &crate::dataset::Dataset, log: &Log) -> Result<
     Ok(())
 }
 
+/// a GPU counts as free when it has under this much memory in use (MiB; a desktop's Xorg takes a few) and is under this % busy
+pub const FREE_GPU_MIB: u32 = 1024;
+pub const FREE_GPU_BUSY: u32 = 10;
+
+/// run.sh with GPU "free" on a shared server: wait until enough GPUs are idle (in two looks 15 s apart, so a GPU between someone's jobs
+/// is not taken), then train on those. GPUs = N waits for N; GPUs = all takes every idle one as soon as there is one. The waiting does
+/// not count against the time budget, Stop ends it (as "stopped"), and under SLURM (which hands out the GPUs itself) there is no wait.
+/// (NNB_TEST_LOOK / NNB_TEST_EVERY shorten the pauses in tests.)
+fn free_gpu_wait(want: u32) -> String {
+    format!(r#"nnb_idle() {{ nvidia-smi --query-gpu=index,memory.used,utilization.gpu --format=csv,noheader,nounits 2>/dev/null | awk -F', *' '$2 < {mib} && $3 < {busy} {{print $1}}' | sort; }}
+if [ -z "${{SLURM_JOB_ID:-}}" ] && command -v nvidia-smi >/dev/null 2>&1; then
+  WANT={want}
+  trap 'echo "NNB: stopped while waiting for a free GPU" >> log.txt; echo "{{\"event\": \"stopped\", \"time\": $(date +%s), \"message\": \"stopped while waiting for a free GPU\"}}" >> metrics.jsonl; echo 143 > exit_code.txt; exit 0' TERM INT HUP
+  echo $$ > pid.txt
+  NEED=$WANT; [ "$NEED" = 0 ] && NEED=1
+  echo "{{\"event\": \"info\", \"time\": $(date +%s), \"message\": \"waiting for $NEED free GPU(s) (under {mib} MiB in use and {busy} % busy), looking every minute\"}}" >> metrics.jsonl
+  LAST=0
+  while true; do
+    A=$(nnb_idle); sleep ${{NNB_TEST_LOOK:-15}}; B=$(nnb_idle)
+    FREE=$(comm -12 <(echo "$A") <(echo "$B") | grep . | sort -n | paste -sd, -)
+    N=$(echo "$FREE" | tr , '
+' | grep -c .)
+    if [ "$N" -ge "$NEED" ]; then
+      [ "$WANT" != 0 ] && FREE=$(echo "$FREE" | cut -d, -f1-"$WANT")
+      break
+    fi
+    if [ $(( $(date +%s) - LAST )) -ge 600 ]; then
+      echo "NNB: $(date '+%H:%M') waiting for $NEED free GPU(s); free now: ${{FREE:-none}}" >> log.txt; LAST=$(date +%s)
+    fi
+    sleep ${{NNB_TEST_EVERY:-45}}
+  done
+  export CUDA_VISIBLE_DEVICES=$FREE
+  echo "NNB: $(date '+%H:%M') GPU(s) $FREE free: training on them" >> log.txt
+  echo "{{\"event\": \"info\", \"time\": $(date +%s), \"message\": \"GPU(s) $FREE are free: training on them\"}}" >> metrics.jsonl
+fi
+"#, mib = FREE_GPU_MIB, busy = FREE_GPU_BUSY)
+}
+
 /// run.sh: runs train.py within a budget of running time summed over all resumes (used_seconds.txt), one copy at a time (flock on run.lock),
 /// records the exit code. AWS: watches the instance metadata for a spot interruption notice (-> SIGUSR1: checkpoint and exit 75) and a
 /// rebalance recommendation (-> SIGUSR2: checkpoint now). Spot: resume_wanted stays while the run is unfinished, for resume.sh.
@@ -657,7 +696,11 @@ pub fn run_script(t: &codegen::TrainSettings, p: &Prepared, m: &Machine, gpu: &s
         re = RESUME_EXIT,
         stop_note = if stop.is_empty() { "" } else { "; then stops the instance" },
         data = remote::remote_path(&format!("{}/data", m.workdir.trim_end_matches('/'))),
-        gpu = if gpu.is_empty() { String::new() } else { format!("export CUDA_VISIBLE_DEVICES={gpu}\n") },
+        gpu = match gpu {
+            "" => String::new(),
+            "free" => free_gpu_wait(t.gpus),
+            g => format!("export CUDA_VISIBLE_DEVICES={g}\n"),
+        },
         mark = if spot { "touch resume_wanted\n" } else { "" },
         watch_fn = if watch { SPOT_WATCH } else { "" },
         timeout = if p.timeout { "timeout --signal=TERM --kill-after=180 ${LEFT}s " } else { "" },

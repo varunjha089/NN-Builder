@@ -149,7 +149,10 @@ def gpu_use(epoch, step, steps):
         out = subprocess.run(["nvidia-smi", "--query-gpu=index,name,memory.used,memory.total,utilization.gpu", "--format=csv,noheader,nounits"],
                              capture_output=True, text=True, timeout=5).stdout
         rows = [[c.strip() for c in l.split(",")] for l in out.strip().splitlines() if l.count(",") == 4]
-        parts = [f"GPU {i} {name}: {float(used) / 1024:.1f} / {float(total) / 1024:.1f} GB, {busy} % busy" for i, name, used, total, busy in rows if int(i) < WORLD]
+        # nvidia-smi numbers the GPUs physically; CUDA_VISIBLE_DEVICES (GPU on the machine, or the free ones) names the ones training
+        vis = [v.strip() for v in os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",") if v.strip().isdigit()]
+        mine = vis[:WORLD] if vis else [str(i) for i in range(WORLD)]
+        parts = [f"GPU {i} {name}: {float(used) / 1024:.1f} / {float(total) / 1024:.1f} GB, {busy} % busy" for i, name, used, total, busy in rows if i in mine]
     except Exception:
         parts = []
     if not parts:  # no nvidia-smi: this worker's own GPU from PyTorch

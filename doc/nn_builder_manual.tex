@@ -1127,7 +1127,8 @@ Needs & Kaggle token & SSH access & AWS key, key file, quota\\
 \textbf{Setting} & \textbf{Meaning and advice}\\
 \midrule\endhead
 Train on & Kaggle, or a machine from the Connection tab\\
-GPU on the machine & which GPU(s) to use on a shared server (empty = any free one)\\
+GPU on the machine & which GPU(s) to use on a shared server: empty = all of them, \texttt{0} or \texttt{0,1} = those, \texttt{free} =
+  wait until enough GPUs are idle and take them (below)\\
 Epochs & passes over the training data\\
 Batch size & images per step; larger is faster but needs more memory (halve it on ``out of memory'')\\
 Learning rate & 0.001 suits Adam on small networks; very large networks (ViT-Base and bigger) need 0.0001 or less~\cite{steiner2021howtotrain}\\
@@ -1149,6 +1150,14 @@ Copy my token to the machine & needed for Kaggle data on a server/EC2 and for ga
 Start from ImageNet weights & transfer learning: torchvision's pretrained ResNet-18, VGG-16 or ViT-B/16 loaded into the matching demo, tensor by tensor (a new output head for your classes starts at random); optionally train only the new head. Images are then normalised with ImageNet's statistics. Usually far better than training from scratch on small datasets; use a smaller learning rate (e.g.\ 0.0001) when fine-tuning everything\\
 \bottomrule
 \end{longtable}
+
+\paragraph{A shared GPU server: wait for free GPUs.} On a server that other people use, some GPUs may be full (memory almost used up,
+90--100\,\% busy). Type \texttt{free} as the GPU on the machine. The run then waits on the server, looking every minute, until enough
+GPUs are idle: under 1\,GB of memory in use and under 10\,\% busy, in two looks 15\,s apart, so a GPU between someone's jobs is not taken.
+With \ui{GPUs} = 2 it waits for two; with \ui{GPUs} = all it starts as soon as one is idle and takes every idle one. The run card shows
+``waiting for 2 free GPU(s)'' and then ``GPU(s) 1,3 are free: training on them''; the log adds a line every ten minutes while it waits.
+Waiting does not count against the time limit, and \ui{Stop} ends it. A run that has started keeps its GPUs: it does not add GPUs that
+become free later. Under SLURM there is no waiting here: the scheduler queues the job and hands out the GPUs itself.
 
 \screenshot{07_train}{The Train tab: where to train, the main settings, augmentation, and the list of runs. Settings for SSH and EC2
 machines (time limit, checkpoint interval, automatic resumes, stopping the instance) appear when such a machine is chosen.}{fig:train}

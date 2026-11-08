@@ -123,7 +123,11 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
         <label>Train on<select value={target} onChange={(e) => setTarget(e.target.value)}>
           {targets.map((t) => <option key={t.name} value={t.name}>{t.name}{t.kind === "aws" ? " (AWS EC2)" : t.kind === "ssh" ? (t.prepared ? " (SSH)" : " (SSH, prepared on first run)") : " (Kaggle GPU)"}</option>)}
         </select></label>
-        {kind !== "kaggle" && <label>GPU on the machine<input value={gpu} onChange={(e) => setGpu(e.target.value.trim())} placeholder="any (or 0, or 0,1)" /></label>}
+        {kind !== "kaggle" && <label>GPU on the machine<input value={gpu} onChange={(e) => setGpu(e.target.value.trim())} placeholder="any (or 0, or 0,1, or free)" list="gpu-choices" />
+          <datalist id="gpu-choices"><option value="free">wait for idle GPUs (shared server)</option></datalist></label>}
+        {kind !== "kaggle" && gpu === "free" && <p className="muted small">free: the run waits on the machine until {train.gpus === 0 ? "at least one GPU" :
+          `${train.gpus} GPU${train.gpus === 1 ? "" : "s"}`} {train.gpus === 1 ? "is" : "are"} idle (under 1 GB in use and 10 % busy, in two looks 15 s apart; looked at every minute),
+          then trains on {train.gpus === 0 ? "every idle one" : "those"}. The waiting does not count against the time limit; Stop ends it. (Under SLURM the scheduler hands out the GPUs.)</p>}
         <label>Epochs<input type="number" min={1} max={1000} value={train.epochs} onChange={(e) => set({ epochs: Number(e.target.value) })} /></label>
         <label>Batch size<input type="number" min={1} max={8192} value={train.batch_size} onChange={(e) => set({ batch_size: Number(e.target.value) })} /></label>
         <label>Learning rate<input type="number" step={0.0001} min={0.0000001} max={1} value={train.lr} onChange={(e) => set({ lr: Number(e.target.value) })} /></label>

@@ -482,7 +482,12 @@ train. It could come back later as an optional "export to C++" for teaching.
   1. **SLURM** (`sbatch`) if the cluster has a job queue: the proper way on shared clusters;
   2. `systemd-run --user` (survives logout only if "lingering" is enabled, which may need the administrator);
   3. `tmux` / `nohup setsid` (some servers kill all of a user's processes at logout: the app tests this once in Prepare and warns).
-- Free GPU chosen from `nvidia-smi` (shared GPUs); `CUDA_VISIBLE_DEVICES` set for the run.
+- GPU on the machine (Train tab): empty = all; "0,1" = `CUDA_VISIBLE_DEVICES`; "free" = run.sh waits (runs::free_gpu_wait) until
+  GPUs = N GPUs are idle (under FREE_GPU_MIB 1024 MiB used and FREE_GPU_BUSY 10 % busy in two `nvidia-smi` looks 15 s apart, every minute;
+  GPUs = all: as soon as one is, taking every idle one), then sets `CUDA_VISIBLE_DEVICES` to them. Info events in metrics.jsonl, a log line
+  every 10 min; not counted in the time budget; Stop while waiting -> "stopped" event + exit 143; no wait under SLURM (`SLURM_JOB_ID`).
+  NNB_TEST_LOOK / NNB_TEST_EVERY shorten the pauses (test run_sh_waits_for_free_gpus). SLURM asks `--gres=gpu:<GPUs, at least 1>`.
+  gpu_use() reports the GPUs named in `CUDA_VISIBLE_DEVICES` (physical nvidia-smi numbers).
 - The app copies new `metrics.jsonl` lines every few seconds while open, re-attaches to running jobs by run id after a restart, and copies the
   results back when the run ends. Checkpoints + resume cover a killed job.
 
