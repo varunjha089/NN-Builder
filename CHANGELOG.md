@@ -3,6 +3,15 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 08_11_26_09_17_15
+
+**Tests 6.6 and 6.7 done on a real spot instance** (`6dc469c`)
+
+6.7: terminated spot instance, the run continued on another EC2 machine from the
+Mac checkpoint copy and finished (99.11 %). 6.6: interruption, exit 75 and the
+resume mark work for real; the resume at boot was not seen because AWS had no
+spot capacity to restart the instance (CI covers it).
+
 ## 08_11_26_09_09_38
 
 **EC2: the wait for ssh after a start is a real 6-minute deadline; the message names the security group and this Mac's changing address** (`9480ea0`)
