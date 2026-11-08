@@ -3,6 +3,14 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 08_11_26_07_23_26
+
+**Spot: run.sh keeps a run resumable whenever train.py exits 75 and resume_wanted is still there (the app's Stop removes it first)** (`1ac3d13`)
+
+Second real spot test: train.py checkpointed and exited 75 during the shutdown, but run.sh's own shutdown check had not seen
+"stopping" when its signal came, took it for a Stop and removed resume_wanted; resume.sh at boot then skipped the run (the app said
+crashed). The exit code is the reliable signal. Test: design.rs run_sh_on_spot_keeps_a_shutdown_resumable.
+
 ## 08_11_26_07_02_35
 
 **Spot: a shutdown without the 2-minute notice is an interruption (checkpoint, exit 75, resumed at boot), not a Stop** (`bf718ff`)
