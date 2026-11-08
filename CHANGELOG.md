@@ -3,6 +3,10 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 08_11_26_20_02_35
+
+**Tests: lab pool machines get their own work folder (CI on Linux counted the earlier runs' locks)** (`0ec9568`)
+
 ## 08_11_26_17_25_05
 
 **FUTURE_PLAN: feature ideas (Hugging Face fine-tuning, scene prediction, sweeps, ...)** (`5d751e9`)
