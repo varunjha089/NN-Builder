@@ -268,8 +268,25 @@ pub fn forget(p: &Path) -> Result<()> {
 pub fn listing() -> Vec<Value> {
     settings()["projects"].as_array().cloned().unwrap_or_default().iter().filter_map(|v| v.as_str()).map(|p| {
         let pp = Path::new(p);
-        json!({"path": p, "exists": is_project(pp), "name": if is_project(pp) { Project { dir: pp.into() }.name() } else { pp.file_name().unwrap_or_default().to_string_lossy().into() }})
+        let description = read_json::<Value>(&pp.join("project.json")).and_then(|v| v["description"].as_str().map(String::from)).unwrap_or_default();
+        json!({"path": p, "exists": is_project(pp), "name": if is_project(pp) { Project { dir: pp.into() }.name() } else { pp.file_name().unwrap_or_default().to_string_lossy().into() },
+            "description": description})
     }).collect()
+}
+
+/// the owner's own words about a listed project, kept in its project.json ("description"; empty removes it)
+pub fn set_description(path: &str, text: &str) -> Result<()> {
+    let dir = Path::new(path.trim());
+    if !listing().iter().any(|p| p["path"].as_str() == Some(path.trim())) || !is_project(dir) {
+        bail!("{} is not a project in the list.", dir.display());
+    }
+    let mut meta: Value = read_json(&dir.join("project.json")).context("project.json could not be read")?;
+    let Some(m) = meta.as_object_mut() else { bail!("project.json is not an object") };
+    match text.trim() {
+        "" => m.remove("description"),
+        t => m.insert("description".into(), json!(t)),
+    };
+    write_json(&dir.join("project.json"), &meta)
 }
 
 pub fn last_project() -> Option<Project> {

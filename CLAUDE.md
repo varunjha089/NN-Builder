@@ -305,8 +305,11 @@ web/src/                   Design.tsx: Save as PNG (PngExporter inside <ReactFlo
                            and Encoder block k for transformers, Classifier; collapsible, with parameter subtotals; every block name in
                            its kind's colour (COLORS, neon at night), status colour only for warnings/errors;
                            App.tsx (Projects page: New project and Open side by side (Open: a path field (store::project_path cleans quotes, ~/, a file
-                           inside the project) + Open folder + Choose… = pick_folder), under them "Opened projects", most recent first, in a
-                           section that folds (localStorage "nnb-recent-open"), then the demos as clickable tiles in a section that
+                           inside the project) + Open folder + Choose… = pick_folder), under them "Running Task" (heading neon pink; runs_active =
+                           runs::active_everywhere: starting/running/queued runs of every listed project from run.json, no network, re-read
+                           every 30 s; a tile opens the project at that run on Train), then "Opened projects" as tiles, most recent first, with a
+                           description (project_describe = store::set_description, "description" in project.json, empty removes it), folding
+                           (localStorage "nnb-recent-open"), then the demos as clickable tiles in a section that
                            folds (remembered in localStorage "nnb-demos-open"); .page scrolls at the
                            window edge with the content centred, at most 1180 px; demo cards on the Projects page and File → New from Demo open "<Architecture> demo" as the draft: nothing
                            in the projects folder until Save… / File → Save Project… ⌘S (project_save_as); unsaved, it is discarded

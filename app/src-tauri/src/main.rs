@@ -215,6 +215,16 @@ async fn project_delete(app: tauri::AppHandle, st: State<'_, App>, path: String)
 }
 
 #[tauri::command]
+async fn project_describe(path: String, text: String) -> R<()> {
+    store::set_description(&path, &text).map_err(e)
+}
+
+#[tauri::command]
+async fn runs_active() -> R<Value> {
+    blocking(|| Ok(json!(runs::active_everywhere()))).await
+}
+
+#[tauri::command]
 async fn set_projects_dir(path: String) -> R<()> {
     store::save_setting("projects_dir", json!(path.trim())).map_err(e)
 }
@@ -1096,7 +1106,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            app_state, templates_list, template_apply, project_from_template, project_save_as, project_new, project_open, set_projects_dir, project_delete, set_max_blocks, project_load, save_graph, design_from_text, design_format, save_dataset, save_train, code, export_code, design_png,
+            app_state, templates_list, template_apply, project_from_template, project_save_as, project_new, project_open, set_projects_dir, project_describe, runs_active, project_delete, set_max_blocks, project_load, save_graph, design_from_text, design_format, save_dataset, save_train, code, export_code, design_png,
             set_kaggle, set_hf, set_aws, set_gcs, clear_secret, test_kaggle, test_hf, test_aws, tools_install,
             machine_save, machine_delete, machine_test, machine_connect, machine_prepare, hf_info, hf_preview, kaggle_files, local_scan, local_csv, pick_folder,
             update_settings, set_auto_update, update_check, update_install, update_restart, targets, run_start, run_start_seeds, runs_summary, runs_export, run_resume_on, runs_list, run_status, run_stop, run_fetch, run_results, run_reveal, job_status, open_url

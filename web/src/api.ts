@@ -55,8 +55,11 @@ export interface Prepared {
   host_info: string; gpus: string[]; python: string; torch: string; cuda: boolean; slurm: boolean; systemd: boolean; linger: boolean; tmux: boolean; timeout: boolean;
 }
 
+export type ActiveRun = { project: string; path: string; id: string; target: string; kind: string; status: string; epoch: number; epochs: number;
+  dataset: string; created: string; last_poll: number };
+
 export interface AppState {
-  version: string; home: string; projects: { path: string; name: string; exists: boolean }[]; projects_dir: string;
+  version: string; home: string; projects: { path: string; name: string; exists: boolean; description: string }[]; projects_dir: string;
   design_size: DesignSize;
   project: { name: string; path: string; draft: boolean } | null; tools_ready: boolean;
   secrets: { kaggle: string | null; huggingface: boolean; aws: string | null; gcs?: boolean };
@@ -95,6 +98,8 @@ export const api = {
   projectOpen: (path: string) => invoke<void>("project_open", { path }),
   projectDelete: (path: string) => invoke<string>("project_delete", { path }),
   setProjectsDir: (path: string) => invoke<void>("set_projects_dir", { path }),
+  projectDescribe: (path: string, text: string) => invoke<void>("project_describe", { path, text }),
+  runsActive: () => invoke<ActiveRun[]>("runs_active"),
   load: () => invoke<ProjectData>("project_load"),
   saveGraph: (graph: Graph) => invoke<{ analysis: Analysis; graph: Graph }>("save_graph", { graph }),
   designFromText: (text: string) => invoke<{ ok: boolean; graph?: Graph; analysis?: Analysis; errors?: { line: number; col: number; message: string }[] }>("design_from_text", { text }),

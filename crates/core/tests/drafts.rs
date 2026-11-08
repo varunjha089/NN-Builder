@@ -57,4 +57,30 @@ fn demos_are_one_draft_until_saved() {
     assert_eq!(store::listing().len(), 2);
     assert!(store::save_as(&saved, "Again", None).is_err(), "a saved project is not saved again");
     assert!(store::create("My LeNet", None).is_err(), "names stay unique");
+
+    // a description goes into project.json and the list; empty removes it; only listed projects take one
+    let path = saved.dir.to_string_lossy().to_string();
+    store::set_description(&path, "  LeNet on MNIST, try dropout next \n").unwrap();
+    let row = store::listing().into_iter().find(|p| p["path"] == path.as_str()).unwrap();
+    assert_eq!(row["description"], "LeNet on MNIST, try dropout next");
+    assert_eq!(saved.name(), "My LeNet", "the rest of project.json stays");
+    store::set_description(&path, " ").unwrap();
+    let meta: Value = store::read_json(&saved.dir.join("project.json")).unwrap();
+    assert!(meta.get("description").is_none());
+    assert!(store::set_description(&base.path().to_string_lossy(), "x").is_err());
+
+    // running tasks across projects: only the runs still going, newest first, with the epochs done
+    let run = |id: &str, status: &str, epochs: usize| {
+        let d = saved.runs_dir().join(id);
+        std::fs::create_dir_all(&d).unwrap();
+        store::write_json(&d.join("run.json"), &serde_json::json!({"id": id, "target": "Kaggle", "kind": "kaggle", "created": "", "status": status,
+            "epochs": 10, "dataset": "mnist"})).unwrap();
+        std::fs::write(d.join("metrics.jsonl"), "{\"event\": \"epoch\"}\n".repeat(epochs)).unwrap();
+    };
+    run("20260101-000000", "done", 10);
+    run("20260102-000000", "running", 3);
+    run("20260103-000000", "queued", 0);
+    let act = nnb_core::runs::active_everywhere();
+    assert_eq!(act.iter().map(|r| r["id"].as_str().unwrap()).collect::<Vec<_>>(), ["20260103-000000", "20260102-000000"]);
+    assert_eq!((act[1]["epoch"].as_u64(), act[1]["project"].as_str()), (Some(3), Some("My LeNet")));
 }

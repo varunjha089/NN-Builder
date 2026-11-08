@@ -117,6 +117,17 @@ canvas.pix { image-rendering: pixelated; border: 1px solid var(--line); }
 .demo p { flex: 1; margin: 6px 0 10px; line-height: 1.5; }
 .demo .dfoot { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--line); padding-top: 8px; font-size: 11.5px; }
 .demo .go { margin-left: auto; color: var(--accent); font-weight: 600; }
+.ptile { cursor: default; }
+.ptile:hover { transform: none; }
+.ptile.gone { opacity: .65; }
+.ptile .ppath { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 8px; }
+.ptile .dfoot button { margin: 0; }
+.ptile .dfoot .go { background: none; border: 0; padding: 0; cursor: pointer; font-size: 12px; }
+.pdesc { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 10px; }
+.pdesc textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 12.5px; resize: vertical; }
+.pbar { display: block; height: 4px; border-radius: 2px; background: var(--line); margin: -4px 0 10px; overflow: hidden; }
+.pbar > span { display: block; height: 100%; background: var(--accent); }
+.section-head.running h3 { color: #c2189b; }
 .ptop { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; margin: 6px 0 4px; }
 .ptop .card { margin: 0; }
 .ptop h3 { margin-top: 2px; }
@@ -155,6 +166,8 @@ table.layers td:nth-child(n+2), table.layers th:nth-child(n+2) { white-space: no
 [data-theme="night"] button.demo:hover:not(:disabled) { text-shadow: none; border-color: var(--accent); box-shadow: 0 0 14px rgba(0,229,255,.45), inset 0 0 12px rgba(0,229,255,.08); }
 [data-theme="night"] .demo .dtitle strong { color: #fff; text-shadow: 0 0 6px rgba(0,229,255,.5); }
 [data-theme="night"] .demo .go { text-shadow: 0 0 6px var(--accent); }
+[data-theme="night"] .section-head.running h3 { color: #ff4fd8; text-shadow: 0 0 6px rgba(255,79,216,.75), 0 0 16px rgba(255,79,216,.45); }
+[data-theme="night"] button.link, [data-theme="night"] button.link:hover:not(:disabled) { border: 0; box-shadow: none; color: var(--accent); text-shadow: 0 0 5px var(--accent); }
 [data-theme="night"] .card, [data-theme="night"] .demo, [data-theme="night"] .templates, [data-theme="night"] .aug, [data-theme="night"] .job {
   border-color: rgba(0,229,255,.45); box-shadow: 0 0 10px rgba(0,229,255,.18), inset 0 0 12px rgba(0,229,255,.06); }
 [data-theme="night"] button { border-color: rgba(255,79,216,.5); color: #ffd6f6; }

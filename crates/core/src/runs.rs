@@ -1253,6 +1253,28 @@ pub fn listing(pr: &Project) -> Vec<Value> {
     out
 }
 
+/// the runs still going in every listed project (starting, running, queued), as their run.json last saw them: the app follows a run
+/// only while its project is open, so these are not fetched again here (no network)
+pub fn active_everywhere() -> Vec<Value> {
+    let mut out = vec![];
+    for p in store::listing() {
+        let (Some(path), true) = (p["path"].as_str(), p["exists"] == true) else { continue };
+        let pr = Project { dir: PathBuf::from(path) };
+        let Ok(rd) = std::fs::read_dir(pr.runs_dir()) else { continue };
+        for d in rd.filter_map(|e| e.ok()).map(|e| e.path()) {
+            let i = info(&d);
+            if !["starting", "running", "queued"].contains(&i.status.as_str()) {
+                continue;
+            }
+            let done = read_events(&d, 0).iter().filter(|e| e["event"] == "epoch").count();
+            out.push(serde_json::json!({"project": p["name"], "path": path, "id": i.id, "target": i.target, "kind": i.kind, "status": i.status,
+                "epoch": done, "epochs": i.epochs, "dataset": i.dataset, "created": i.created, "last_poll": i.last_poll}));
+        }
+    }
+    out.sort_by(|a, b| b["id"].as_str().cmp(&a["id"].as_str()));
+    out
+}
+
 /// one row per run for comparing and exporting: settings, epochs, best epoch, test accuracy (and top-5, mIoU), time; and mean / sample
 /// standard deviation per group (runs started together with different seeds; runs outside a group form their own)
 pub fn summary(pr: &Project, ids: &[String]) -> Result<Value> {

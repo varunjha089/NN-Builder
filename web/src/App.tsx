@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { setTheme, toggleTheme, useTheme, usePanels, setPanels, luminance, PANEL_DEFAULTS, PANEL_PRESETS, type Panel } from "./theme";
-import { api, errText, type Analysis, type AppState, type Dataset, type Graph, type JobSnap, type Template, type TrainSettings, type UpdateCheck } from "./api";
+import { api, errText, type ActiveRun, type Analysis, type AppState, type Dataset, type Graph, type JobSnap, type Template, type TrainSettings, type UpdateCheck } from "./api";
 import { Design, arrange } from "./Design";
 import { DatasetTab } from "./DatasetTab";
 import { TrainTab } from "./TrainTab";
@@ -199,7 +199,8 @@ export default function App() {
         <button onClick={() => setUpdate(null)}>Later</button>
       </div>}
       <main>
-        {tab === "project" && <ProjectTab st={st} toast={toast} opened={async () => { await reload(); await loadProject(); setTab("design"); }} reload={reload} />}
+        {tab === "project" && <ProjectTab st={st} toast={toast} opened={async () => { await reload(); await loadProject(); setTab("design"); }} reload={reload}
+          openRun={async (path, id) => { await api.projectOpen(path); await reload(); await loadProject(); setRunId(id); setTab("train"); }} />}
         {tab === "design" && graph && <Design st={st} graph={graph} setGraph={setGraph} analysis={analysis} persist={persist} focus={selectId} toast={toast}
           reloadProject={() => { reload(); loadProject(true); }} remember={remember} />}
         {tab === "text" && graph && <TextTab graph={graph} analysis={analysis} persist={persist} applyText={applyText} toast={toast}
@@ -256,7 +257,8 @@ function CodeTab({ toast }: { toast: (m: string) => void }) {
   );
 }
 
-function ProjectTab({ st, toast, opened, reload }: { st: AppState; toast: (m: string) => void; opened: () => void; reload: () => void }) {
+function ProjectTab({ st, toast, opened, reload, openRun }: { st: AppState; toast: (m: string) => void; opened: () => void; reload: () => void;
+  openRun: (path: string, id: string) => Promise<void> }) {
   const [name, setName] = useState("");
   const [path, setPath] = useState("");
   // the project whose Delete was pressed once (asked again in its row before anything is moved)
@@ -265,6 +267,18 @@ function ProjectTab({ st, toast, opened, reload }: { st: AppState; toast: (m: st
   useEffect(() => { api.templates().then(setDemos).catch(() => {}); }, []);
   const [demosOpen, setDemosOpen] = useState(() => { try { return localStorage.getItem("nnb-demos-open") !== "0"; } catch { return true; } });
   const [recentOpen, setRecentOpen] = useState(() => { try { return localStorage.getItem("nnb-recent-open") !== "0"; } catch { return true; } });
+  // runs still going in any project (as their run.json last saw them), read again every 30 s while this page is shown
+  const [active, setActive] = useState<ActiveRun[]>([]);
+  useEffect(() => {
+    const look = () => api.runsActive().then(setActive).catch(() => {});
+    look();
+    const t = window.setInterval(look, 30000);
+    return () => window.clearInterval(t);
+  }, []);
+  // the project whose description is being written, and the text
+  const [editing, setEditing] = useState<string | null>(null);
+  const [desc, setDesc] = useState("");
+  const saveDesc = (path: string) => api.projectDescribe(path, desc).then(() => { setEditing(null); reload(); }).catch((e) => toast(errText(e)));
   const flipRecent = () => setRecentOpen((o) => { try { localStorage.setItem("nnb-recent-open", o ? "0" : "1"); } catch { /* not remembered */ } return !o; });
   const flipDemos = () => setDemosOpen((o) => { try { localStorage.setItem("nnb-demos-open", o ? "0" : "1"); } catch { /* not remembered */ } return !o; });
   const create = () => api.projectNew(name).then(() => { setName(""); opened(); }).catch((e) => toast(errText(e)));
@@ -289,20 +303,43 @@ function ProjectTab({ st, toast, opened, reload }: { st: AppState; toast: (m: st
             <button onClick={() => api.pickFolder("Choose a project folder (the one with project.json)").then((d) => { if (d) { setPath(d); return api.projectOpen(d).then(opened); } }).catch((e) => toast(errText(e)))}>Choose…</button></p>
         </div>
       </div>
+      <div className="section-head running"><h3>Running Task</h3>
+        <span className="muted small">{active.length ? `${active.length} in all projects · as last seen; open one to follow it` : "nothing running"}</span></div>
+      {active.length > 0 && <div className="demos">
+        {active.map((r) => <button key={r.path + r.id} className="demo" onClick={() => openRun(r.path, r.id).catch((e) => toast(errText(e)))}
+          title="Open this project at this run (Train tab)">
+          <span className="dtitle"><strong>{r.project}</strong><span className="pill">{r.status}</span></span>
+          <p className="small muted">Run {r.id} on {r.target} · {r.dataset}</p>
+          {r.epochs > 0 && <span className="pbar"><span style={{ width: `${Math.min(100, (100 * r.epoch) / r.epochs)}%` }} /></span>}
+          <span className="dfoot"><span className="muted">epoch {r.epoch} / {r.epochs}{r.last_poll ? ` · seen ${new Date(r.last_poll * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}</span>
+            <span className="go">Follow →</span></span>
+        </button>)}
+      </div>}
       <button className="section-head fold" onClick={() => flipRecent()} aria-expanded={recentOpen}>
         <span className="caret">{recentOpen ? "▾" : "▸"}</span><h3>Opened projects</h3>
         <span className="muted small">{st.projects.length} · most recent first</span></button>
-      {recentOpen && (st.projects.length ? <table className="grid"><tbody>
-        {st.projects.map((p) => <tr key={p.path}><td><strong>{p.name}</strong><div className="muted small">{p.path}</div></td>
-          <td className="num nowrap">{confirmDel === p.path ? <>
-            <span className="small st-warn">{p.exists ? "Move to the Trash?" : "Remove from the list?"} </span>
+      {recentOpen && (st.projects.length ? <div className="demos">
+        {st.projects.map((p) => <div key={p.path} className={`demo ptile ${p.exists ? "" : "gone"}`}>
+          <span className="dtitle"><strong>{p.name}</strong>{!p.exists && <span className="pill">missing</span>}</span>
+          {editing === p.path ? <div className="pdesc">
+            <textarea autoFocus rows={3} value={desc} placeholder="What this project is for, what to try next…" onChange={(e) => setDesc(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) saveDesc(p.path); if (e.key === "Escape") setEditing(null); }} />
+            <span className="row"><button className="small primary" onClick={() => saveDesc(p.path)}>Save</button>
+              <button className="small" onClick={() => setEditing(null)}>Cancel</button><span className="muted small">⌘↩ saves</span></span>
+          </div> : <p className={`small ${p.description ? "" : "muted"}`}>{p.description || (p.exists ? "No description yet." : "This folder is gone.")}
+            {p.exists && <>{" "}<button className="link small" onClick={() => { setEditing(p.path); setDesc(p.description); }}>
+              {p.description ? "Edit" : "Add a description"}</button></>}</p>}
+          <span className="muted small ppath" title={p.path}>{p.path}</span>
+          <span className="dfoot">{confirmDel === p.path ? <>
+            <span className="small st-warn">{p.exists ? "Move to the Trash?" : "Remove from the list?"}</span>
             <button className="small danger" onClick={() => { setConfirmDel(null); api.projectDelete(p.path).then((m) => { toast(m); reload(); }).catch((e) => toast(errText(e))); }}>
-              {p.exists ? "Delete" : "Remove"}</button>{" "}
+              {p.exists ? "Delete" : "Remove"}</button>
             <button className="small" onClick={() => setConfirmDel(null)}>Cancel</button></> : <>
-            {p.exists ? <button onClick={() => api.projectOpen(p.path).then(opened).catch((e) => toast(errText(e)))}>Open</button> : <span className="muted">missing</span>}{" "}
             <button className="small" title={p.exists ? "Delete this project: its folder (design, runs, results) goes to the Trash" : "Take it off this list"}
-              onClick={() => setConfirmDel(p.path)}>{p.exists ? "Delete" : "Remove"}</button></>}</td></tr>)}
-      </tbody></table> : <p className="muted">No saved projects yet. Create one, or open a demo below and save it (⌘S).</p>)}
+              onClick={() => setConfirmDel(p.path)}>{p.exists ? "Delete" : "Remove"}</button>
+            {p.exists && <button className="link go" onClick={() => api.projectOpen(p.path).then(opened).catch((e) => toast(errText(e)))}>Open →</button>}</>}</span>
+        </div>)}
+      </div> : <p className="muted">No saved projects yet. Create one, or open a demo below and save it (⌘S).</p>)}
       <button className="section-head fold" onClick={() => flipDemos()} aria-expanded={demosOpen}>
         <span className="caret">{demosOpen ? "▾" : "▸"}</span><h3>Start from a demo architecture</h3>
         <span className="muted small">{demos.length} networks · also in Design → Famous architectures</span></button>

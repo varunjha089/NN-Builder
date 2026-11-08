@@ -203,8 +203,17 @@ A \emph{project} is a folder. The Projects page has two cards side by side:
         \ui{Open Project\ldots}). A pasted path may keep its quotes, start with \texttt{\textasciitilde/}, or name a file inside the project
         (e.g.\ \file{model.json}); the project folder is the one that holds \file{project.json}.
 \end{itemize}
-Under the two cards, \ui{Opened projects} lists the projects used before, the most recently opened first, each with its folder, \ui{Open}
-and \ui{Delete}; under that come the demo architectures. Click a section's heading to fold it away; the app remembers which are folded.
+Under the two cards come three sections:
+\begin{itemize}
+  \item \ui{Running Task} (its heading in pink): every run still starting, running or queued, in any project, as a tile with the
+        project, the machine, the dataset and the epochs done. The numbers are as the app last saw them (it follows a run while its project
+        is open); click a tile to open that project at that run on the \ui{Train} tab, where it is followed again.
+  \item \ui{Opened projects}: the projects used before as tiles, the most recently opened first, each with its description, its folder,
+        \ui{Delete} and \ui{Open}. \ui{Add a description} (or \ui{Edit}) writes a few words about the project; \ui{Save} (or
+        \ui{Cmd}-Return) keeps them in the project's \file{project.json}, and an empty description removes it.
+  \item The demo architectures (section~\ref{sec:demos}).
+\end{itemize}
+Click the heading of \ui{Opened projects} or of the demos to fold it away; the app remembers which are folded.
 Every change is saved as it is made; there is no ``save'' step for a normal project.
 
 \screenshot{01_projects}{The Projects page (night theme): New project and Open side by side, then the demo architectures as tiles.}{fig:projects}
