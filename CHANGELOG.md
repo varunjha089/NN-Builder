@@ -3,6 +3,16 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 08_11_26_07_02_35
+
+**Spot: a shutdown without the 2-minute notice is an interruption (checkpoint, exit 75, resumed at boot), not a Stop** (`bf718ff`)
+
+Found by the first real spot test: the instance was stopped from outside at epoch 8; systemd sent TERM to the run during the
+shutdown, train.py took it for the app's Stop, wrote results and run.sh removed resume_wanted, so the run was not resumed when the
+instance came back. On spot (NNB_SPOT=1 from run.sh) a TERM while systemctl is-system-running says "stopping" now sets INTERRUPT,
+and run.sh's trap does not mark the run as stopped then. Tests: design.rs (run.sh for spot / on demand, bash -n), CI ci_resume_check
+(TERM with NNB_TEST_SHUTDOWN -> exit 75 + checkpoint; without -> stopped). AWS_TEST_PLAN: 6.6 so far.
+
 ## 07_11_26_22_35_42
 
 **drafts.rs: join the project's files with the system's separator (Windows' \\?\ paths refused "/model.json")** (`3592e12`)
