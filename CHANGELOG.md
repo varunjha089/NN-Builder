@@ -3,6 +3,15 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 08_11_26_09_39_46
+
+**Projects page: Running Task tiles, opened projects as tiles with a description** (`656839f`)
+
+Running Task (pink heading) lists the runs still going in every listed project
+(runs::active_everywhere, from run.json, no network); a tile opens the project at
+that run on Train. Opened projects become tiles like the demos, with a
+description kept in project.json (store::set_description).
+
 ## 08_11_26_09_30_35
 
 **Projects page: opened projects as their own folding section** (`9458dd5`)
