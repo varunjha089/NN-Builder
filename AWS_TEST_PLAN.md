@@ -262,3 +262,14 @@ Expected cost: under $0.30.
 
 Left in the account: the security group nnb-spot-test (ssh from one address; free; the key may not delete it, the owner can). 6.6 and
 6.7 wait for spot capacity. A persistent request fulfils by itself when capacity returns, so one is only left open while it is watched.
+
+**Attempt 2 (2026-11-08, 06:42 IST): fulfilled** in ap-south-1a at $0.2535 per hour (the first zone tried).
+
+6.6 as it ran (TEST 20: LeNet-5 on MNIST, 60 epochs, a 0.5 h limit, "Keep a copy of checkpoints on this Mac" on):
+- 06:44: the run started on the spot instance. Prepare found the T4 and the AMI's PyTorch, and the crontab @reboot entry for resume.sh
+  was installed.
+- 06:50:31, at epoch 8, the instance was stopped from outside (an interruption without notice):
+  - the app showed the run **interrupted**, with the note that a persistent request restarts the instance and the run resumes;
+  - the epoch-8 checkpoint was already on the Mac (mirror.json, copied 06:50:30).
+- 06:57 stopped; 06:58:55 started again. AWS refused the start until the spot request had changed from "marked-for-stop" to
+  "instance-stopped-by-user" (about 1.5 minutes after the instance stopped).

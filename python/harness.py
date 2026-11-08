@@ -128,9 +128,28 @@ def emit(event, **data):
     print("NNB_EVENT " + line, flush=True)
 
 
+SPOT = os.environ.get("NNB_SPOT") == "1"   # run.sh on an EC2 spot instance
+
+
+def shutting_down():
+    """the machine is shutting down (systemd's state "stopping"); NNB_TEST_SHUTDOWN=1 pretends so (CI)"""
+    if os.environ.get("NNB_TEST_SHUTDOWN") == "1":
+        return True
+    try:
+        return subprocess.run(["systemctl", "is-system-running"], capture_output=True, text=True, timeout=2).stdout.strip() == "stopping"
+    except Exception:
+        return False
+
+
 def on_stop(signum, frame):
-    global STOP
-    STOP = True
+    global STOP, INTERRUPT
+    # on a spot instance, TERM while the machine shuts down (an interruption without the 2-minute notice, a stop from the console, AWS
+    # maintenance) is an interruption: checkpoint and exit 75 to be resumed, not the end of the run. It ended the run with results on
+    # the first real spot test (2026-11-08); the app's Stop comes while the machine runs normally and still ends it.
+    if SPOT and signum == signal.SIGTERM and shutting_down():
+        INTERRUPT = True
+    else:
+        STOP = True
 
 
 def on_interrupt(signum, frame):

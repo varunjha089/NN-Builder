@@ -510,6 +510,7 @@ train. It could come back later as an optional "export to C++" for teaching.
   | Stop pressed while the instance is down | `cancel` is recorded: stopped (not resumed) as soon as it answers |
   | Starting an interrupted spot instance by hand / no capacity | explained, not retried in a loop: AWS restarts it itself; "insufficient capacity" says try later or use another machine |
   | User Stop / time limit | TERM: the run ends normally with results; resume_wanted removed; never resumed |
+  | Shutdown without the notice (stop from the console, maintenance, a missed notice) | spot only: run.sh exports NNB_SPOT=1; TERM while `systemctl is-system-running` says stopping makes train.py checkpoint and exit 75 and run.sh keep resume_wanted (it was a Stop before: found by the first real spot test, 2026-11-08; CI: ci_resume_check with NNB_TEST_SHUTDOWN) |
 
   Mac side: status asks AWS (describe, at most every 30 s) instead of ssh while the instance is down; checkpoints are copied in a background
   thread with rsync (temporary file + rename, so the copy is always whole; mirror.json says which one). The window shows the last checkpoint

@@ -988,3 +988,19 @@ fn small_cnn_dropout_rates_are_exact() {
     let rates: Vec<f64> = g.nodes.iter().filter(|n| n.kind == "dropout").map(|n| n.params["rate"].as_f64().unwrap()).collect();
     assert_eq!(rates, vec![0.2, 0.3, 0.4, 0.5]);
 }
+
+/// run.sh on a spot instance: train.py learns it is spot (NNB_SPOT=1) and a TERM while the machine shuts down keeps resume_wanted;
+/// on demand a TERM is a Stop. Both scripts are valid bash.
+#[cfg(unix)]
+#[test]
+fn run_sh_on_spot_keeps_a_shutdown_resumable() {
+    let p = remote::Prepared { python: "/opt/pytorch/bin/python".into(), cuda: true, timeout: true, ..Default::default() };
+    let m = Machine { name: "ec2".into(), kind: "aws".into(), region: "ap-south-1".into(), instance_id: "i-0123456789abcdef0".into(), ..Default::default() };
+    for spot in [true, false] {
+        let sh = nnb_core::runs::run_script(&TrainSettings::default(), &p, &m, "", spot);
+        assert_eq!(sh.contains("NNB_SPOT=1"), spot);
+        assert_eq!(sh.contains("is-system-running"), spot);
+        let out = std::process::Command::new("bash").arg("-n").arg("-c").arg(&sh).output().unwrap();
+        assert!(out.status.success(), "spot={spot}: {}\n{sh}", String::from_utf8_lossy(&out.stderr));
+    }
+}

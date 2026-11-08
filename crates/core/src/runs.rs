@@ -612,7 +612,15 @@ fn upload_local(m: &Machine, ds: &crate::dataset::Dataset, log: &Log) -> Result<
 pub fn run_script(t: &codegen::TrainSettings, p: &Prepared, m: &Machine, gpu: &str, spot: bool) -> String {
     let secs = (t.max_hours * 3600.0).round() as u64;
     let stop = if m.kind == "aws" && t.stop_instance { "sudo -n shutdown -h +2 >> log.txt 2>&1\n" } else { "" };
-    let ck_env = if spot && t.checkpoint_minutes <= 0.0 { format!(" NNB_CHECKPOINT_MINUTES={}", codegen::SPOT_CHECKPOINT_MINUTES) } else { String::new() };
+    let ck_env = if spot && t.checkpoint_minutes <= 0.0 { format!(" NNB_CHECKPOINT_MINUTES={}", codegen::SPOT_CHECKPOINT_MINUTES) } else { String::new() }
+        + if spot { " NNB_SPOT=1" } else { "" };
+    // spot: TERM while the machine shuts down is an interruption (train.py checkpoints and exits 75), so run.sh keeps resume_wanted
+    let trap = if spot {
+        "trap 'if [ \"$(systemctl is-system-running 2>/dev/null)\" = stopping ]; then kill -USR1 \"$(cat py_pid.txt 2>/dev/null)\" 2>/dev/null; \
+         else STOPPED=1; kill -TERM $TP 2>/dev/null; fi' TERM INT HUP"
+    } else {
+        "trap 'STOPPED=1; kill -TERM $TP 2>/dev/null' TERM INT HUP"
+    };
     let watch = m.kind == "aws";
     format!(
         "#!/bin/bash\n\
@@ -630,7 +638,7 @@ pub fn run_script(t: &codegen::TrainSettings, p: &Prepared, m: &Machine, gpu: &s
          {watch_fn}\
          {timeout}{py} train.py >> log.txt 2>&1 &\n\
          TP=$!\n\
-         trap 'STOPPED=1; kill -TERM $TP 2>/dev/null' TERM INT HUP\n\
+         {trap}\n\
          {watch_start}wait $TP; CODE=$?\n\
          while kill -0 $TP 2>/dev/null; do wait $TP; CODE=$?; done\n\
          {watch_end}echo $(( USED + $(date +%s) - T0 )) > used_seconds.txt\n\
@@ -648,6 +656,7 @@ pub fn run_script(t: &codegen::TrainSettings, p: &Prepared, m: &Machine, gpu: &s
         timeout = if p.timeout { "timeout --signal=TERM --kill-after=180 ${LEFT}s " } else { "" },
         py = sh_quote(&p.python),
         watch_start = if watch { "spot_watch & W=$!\n" } else { "" },
+        trap = trap,
         watch_end = if watch { "kill $W 2>/dev/null\n" } else { "" },
     )
 }

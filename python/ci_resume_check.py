@@ -118,6 +118,29 @@ def main(run):
     assert os.path.exists(os.path.join(stop, "results.json")), "no results after Stop"
     print(f"Ctrl-C to the process group with 2 loader workers: stopped cleanly (exit {code}), results written")
 
+    # a spot run: TERM while the machine shuts down (NNB_TEST_SHUTDOWN pretends it) is an interruption (exit 75, checkpoint, resumable);
+    # the same TERM while it runs normally is the app's Stop
+    for shutdown in (True, False):
+        d = os.path.join(run, "spot_shutdown" if shutdown else "spot_stop")
+        os.makedirs(d, exist_ok=True)
+        for f in os.listdir(run):
+            if f.endswith(".py") or f.endswith(".json") and f != "results.json":
+                shutil.copy(os.path.join(run, f), d)
+        e = {**env, "NNB_SPOT": "1", **({"NNB_TEST_SHUTDOWN": "1"} if shutdown else {})}
+        log = open(os.path.join(d, "log.txt"), "a")
+        p = subprocess.Popen([sys.executable, "train.py"], cwd=d, env=e, stdout=log, stderr=subprocess.STDOUT)
+        wait_for(p, d, lambda ev: any(x["event"] == "batch" and x["epoch"] == 2 for x in ev), "a batch of epoch 2 (spot)")
+        p.send_signal(signal.SIGTERM)
+        code = p.wait(timeout=300)
+        ev = events(d)
+        if shutdown:
+            assert code == 75, f"a shutdown on spot must exit 75 (resume), got {code}"
+            assert any(x["event"] == "interrupted" for x in ev) and not any(x["event"] in ("stopped", "done") for x in ev), ev[-3:]
+            assert os.path.exists(os.path.join(d, "checkpoint.pt")), "no checkpoint to resume from"
+        else:
+            assert ev[-1]["event"] == "stopped", f"TERM without a shutdown is a Stop: {ev[-1]}"
+    print("spot: TERM during a shutdown -> checkpoint + exit 75 (resumable); TERM otherwise -> stopped with results")
+
 
 if __name__ == "__main__":
     main(sys.argv[1])
