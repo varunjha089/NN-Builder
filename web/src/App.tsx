@@ -287,22 +287,22 @@ function ProjectTab({ st, toast, opened, reload }: { st: AppState; toast: (m: st
             onKeyDown={(e) => { if (e.key === "Enter") openPath(); }} />
             <button onClick={openPath}>Open folder</button>
             <button onClick={() => api.pickFolder("Choose a project folder (the one with project.json)").then((d) => { if (d) { setPath(d); return api.projectOpen(d).then(opened); } }).catch((e) => toast(errText(e)))}>Choose…</button></p>
-          <button className="section-head fold" onClick={() => flipRecent()} aria-expanded={recentOpen}>
-            <span className="caret">{recentOpen ? "▾" : "▸"}</span><h3>Opened projects</h3>
-            <span className="muted small">{st.projects.length} · most recent first</span></button>
-          {recentOpen && (st.projects.length ? <table className="grid"><tbody>
-            {st.projects.map((p) => <tr key={p.path}><td><strong>{p.name}</strong><div className="muted small">{p.path}</div></td>
-              <td className="num nowrap">{confirmDel === p.path ? <>
-                <span className="small st-warn">{p.exists ? "Move to the Trash?" : "Remove from the list?"} </span>
-                <button className="small danger" onClick={() => { setConfirmDel(null); api.projectDelete(p.path).then((m) => { toast(m); reload(); }).catch((e) => toast(errText(e))); }}>
-                  {p.exists ? "Delete" : "Remove"}</button>{" "}
-                <button className="small" onClick={() => setConfirmDel(null)}>Cancel</button></> : <>
-                {p.exists ? <button onClick={() => api.projectOpen(p.path).then(opened).catch((e) => toast(errText(e)))}>Open</button> : <span className="muted">missing</span>}{" "}
-                <button className="small" title={p.exists ? "Delete this project: its folder (design, runs, results) goes to the Trash" : "Take it off this list"}
-                  onClick={() => setConfirmDel(p.path)}>{p.exists ? "Delete" : "Remove"}</button></>}</td></tr>)}
-          </tbody></table> : <p className="muted">No saved projects yet. Create one, or open a demo below and save it (⌘S).</p>)}
         </div>
       </div>
+      <button className="section-head fold" onClick={() => flipRecent()} aria-expanded={recentOpen}>
+        <span className="caret">{recentOpen ? "▾" : "▸"}</span><h3>Opened projects</h3>
+        <span className="muted small">{st.projects.length} · most recent first</span></button>
+      {recentOpen && (st.projects.length ? <table className="grid"><tbody>
+        {st.projects.map((p) => <tr key={p.path}><td><strong>{p.name}</strong><div className="muted small">{p.path}</div></td>
+          <td className="num nowrap">{confirmDel === p.path ? <>
+            <span className="small st-warn">{p.exists ? "Move to the Trash?" : "Remove from the list?"} </span>
+            <button className="small danger" onClick={() => { setConfirmDel(null); api.projectDelete(p.path).then((m) => { toast(m); reload(); }).catch((e) => toast(errText(e))); }}>
+              {p.exists ? "Delete" : "Remove"}</button>{" "}
+            <button className="small" onClick={() => setConfirmDel(null)}>Cancel</button></> : <>
+            {p.exists ? <button onClick={() => api.projectOpen(p.path).then(opened).catch((e) => toast(errText(e)))}>Open</button> : <span className="muted">missing</span>}{" "}
+            <button className="small" title={p.exists ? "Delete this project: its folder (design, runs, results) goes to the Trash" : "Take it off this list"}
+              onClick={() => setConfirmDel(p.path)}>{p.exists ? "Delete" : "Remove"}</button></>}</td></tr>)}
+      </tbody></table> : <p className="muted">No saved projects yet. Create one, or open a demo below and save it (⌘S).</p>)}
       <button className="section-head fold" onClick={() => flipDemos()} aria-expanded={demosOpen}>
         <span className="caret">{demosOpen ? "▾" : "▸"}</span><h3>Start from a demo architecture</h3>
         <span className="muted small">{demos.length} networks · also in Design → Famous architectures</span></button>
