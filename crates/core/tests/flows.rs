@@ -373,10 +373,11 @@ fn remote_and_kaggle_runs() {
     // ---- a lab pool: two machines in the group "lab" that resume after a reboot. "any:lab" takes the first free one (an idle GPU, no
     //      NN Builder run), the next seed another; a busy GPU or nothing answering is explained. The run is resumable (resume_wanted while
     //      it runs, crontab @reboot), and the overnight report lists it with its machine.
+    //      Own work folder: on Linux the probe would count the run.lock files still held by the runs above (the Mac has no flock).
     script(&bin, "crontab", FAKE_CRONTAB);
     script(&bin, "nvidia-smi", "#!/bin/bash\nif [ -f \"$NNB_FAKE_REMOTE/gpu_busy\" ]; then echo '0, 27611, 100'; else echo '0, 4, 0'; fi\n");
     for n in ["lab-1", "lab-2"] {
-        remote::save_machine(Machine { name: n.into(), host: format!("{n}.example.edu"), user: "student".into(), group: "lab".into(), resume_reboot: true,
+        remote::save_machine(Machine { name: n.into(), host: format!("{n}.example.edu"), user: "student".into(), group: "lab".into(), resume_reboot: true, workdir: ".nnb_lab".into(),
             python: format!("{}/fakepython", remote_home.display()), launch: "nohup".into(), ..Default::default() }).unwrap();
     }
     assert_eq!(runs::pick_free("lab", &[], &log).unwrap(), "lab-1");
@@ -393,7 +394,7 @@ fn remote_and_kaggle_runs() {
     let id = runs::start(&pr, "any:lab", "", &Creds::default(), false, &log).unwrap_or_else(|e| panic!("{e}\n{:?}", lines.lock().unwrap()));
     let d = pr.runs_dir().join(&id);
     assert!(runs::info(&d).target == "lab-1" && runs::info(&d).resumable);
-    let run_sh = std::fs::read_to_string(remote_home.join(format!(".nn_builder/runs/{id}/run.sh"))).unwrap();
+    let run_sh = std::fs::read_to_string(remote_home.join(format!(".nnb_lab/runs/{id}/run.sh"))).unwrap();
     assert!(run_sh.contains("touch resume_wanted") && run_sh.contains("NNB_SPOT=1") && !run_sh.contains("shutdown"), "{run_sh}");
     assert!(std::fs::read_to_string(remote_home.join("crontab.txt")).unwrap_or_default().contains("@reboot bash"), "resume.sh at boot");
     let mut state = String::new();
@@ -405,7 +406,7 @@ fn remote_and_kaggle_runs() {
         }
     }
     assert_eq!(state, "done", "lab run");
-    assert!(!remote_home.join(format!(".nn_builder/runs/{id}/resume_wanted")).exists(), "a finished run is not resumed");
+    assert!(!remote_home.join(format!(".nnb_lab/runs/{id}/resume_wanted")).exists(), "a finished run is not resumed");
     let rep = runs::finished_since(before);
     assert!(rep.iter().any(|r| r["id"] == id.as_str() && r["target"] == "lab-1" && r["status"] == "done" && r["test_acc"].as_f64() == Some(0.9)), "{rep:?}");
     assert!(runs::finished_since(before + 1e6).is_empty());
