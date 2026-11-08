@@ -1258,6 +1258,9 @@ whose weights and optimizer state fit can usually train with a reasonable batch;
 parameter) do not shrink. After the first epoch the run card shows the memory really used (the peak of the GPU allocator), the precision,
 and whether batches were split; it also warns when the GPU waited for data more than 30\% of an epoch (loading and augmenting images is
 then the bottleneck: the data workers already use one CPU core each, up to 8).
+Halfway through every epoch the log (\file{log.txt}, or the notebook's log on Kaggle) also has a plain line such as
+\texttt{GPU use (epoch 25, step 781/1563): training on 2 of 2 GPU(s) · GPU 0 Tesla T4: 3.2 / 15.0 GB, 87 \% busy · GPU 1 \ldots}:
+how many GPUs train, and for each the memory in use (all processes on it) and how busy it is, read with \texttt{nvidia-smi}.
 
 \subsection{How large a design the application handles}
 The application never holds weights, so the number of parameters does not matter to it; the number of \emph{blocks} does. Measured on a

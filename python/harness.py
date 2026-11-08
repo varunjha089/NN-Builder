@@ -141,6 +141,23 @@ def shutting_down():
         return False
 
 
+def gpu_use(epoch, step, steps):
+    """a plain log line halfway through each epoch: how many GPUs train and how much of each is in use. nvidia-smi sees every GPU
+    without opening a CUDA context on the other workers' GPUs (torch.cuda.mem_get_info(i) would take memory on each)"""
+    head = f"GPU use (epoch {epoch}, step {step}/{steps}): training on {WORLD} of {torch.cuda.device_count()} GPU(s)"
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=index,name,memory.used,memory.total,utilization.gpu", "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, timeout=5).stdout
+        rows = [[c.strip() for c in l.split(",")] for l in out.strip().splitlines() if l.count(",") == 4]
+        parts = [f"GPU {i} {name}: {float(used) / 1024:.1f} / {float(total) / 1024:.1f} GB, {busy} % busy" for i, name, used, total, busy in rows if int(i) < WORLD]
+    except Exception:
+        parts = []
+    if not parts:  # no nvidia-smi: this worker's own GPU from PyTorch
+        free, total = torch.cuda.mem_get_info()
+        parts = [f"GPU {RANK}: {(total - free) / 2**30:.1f} / {total / 2**30:.1f} GB (all processes)"]
+    print(head + " · " + " · ".join(parts), flush=True)
+
+
 def on_stop(signum, frame):
     global STOP, INTERRUPT
     # on a spot instance, TERM while the machine shuts down (an interruption without the 2-minute notice, a stop from the console, AWS
@@ -2754,6 +2771,8 @@ def main():
                 dirty["v"] = True
                 if step % every == 0 or step == steps:
                     emit("batch", epoch=epoch, step=step, steps=steps, loss=round(batch_loss, 5))
+                if RANK == 0 and device.type == "cuda" and step == max(steps // 2, 1):
+                    gpu_use(epoch, step, steps)
                 due = step < steps and (CKPT_NOW or (ck_every and time.time() - last_ck >= ck_every))
                 if WORLD > 1:
                     STOP, INTERRUPT, due = sync_flags(STOP, INTERRUPT, due)
