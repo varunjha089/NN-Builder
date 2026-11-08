@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { setTheme, toggleTheme, useTheme, usePanels, setPanels, luminance, PANEL_DEFAULTS, PANEL_PRESETS, type Panel } from "./theme";
-import { api, errText, type ActiveRun, type Analysis, type AppState, type Dataset, type Graph, type JobSnap, type Template, type TrainSettings, type UpdateCheck } from "./api";
+import { api, errText, type ActiveRun, type ReportRun, type Analysis, type AppState, type Dataset, type Graph, type JobSnap, type Template, type TrainSettings, type UpdateCheck } from "./api";
 import { Design, arrange } from "./Design";
 import { DatasetTab } from "./DatasetTab";
 import { TrainTab } from "./TrainTab";
@@ -91,6 +91,8 @@ export default function App() {
 
   useEffect(() => {
     reload().then((s) => (s.project ? loadProject() : setTab("project"))).catch((e) => toast(errText(e)));
+    // runs that ended while the app was closed (e.g. overnight on the lab machines): looked at once, then a hint to the report
+    api.runsFollowAll().then((r) => { if (r.runs.length) toast(`${r.runs.length} run${r.runs.length === 1 ? "" : "s"} ended since you last looked: Projects → Overnight report.`); }).catch(() => {});
     const un = listen<string>("open-tab", (e) => setTab(e.payload as Tab));
     // automatic update check: at most once a day, when switched on (the Rust side decides)
     api.updateCheck(false).then((u) => { if (u?.release?.newer) setUpdate(u.release); }).catch(() => {});
@@ -268,13 +270,20 @@ function ProjectTab({ st, toast, opened, reload, openRun }: { st: AppState; toas
   const [demosOpen, setDemosOpen] = useState(() => { try { return localStorage.getItem("nnb-demos-open") !== "0"; } catch { return true; } });
   const [recentOpen, setRecentOpen] = useState(() => { try { return localStorage.getItem("nnb-recent-open") !== "0"; } catch { return true; } });
   // runs still going in any project (as their run.json last saw them), read again every 30 s while this page is shown
+  // and every 2 minutes all of them are looked at on their machines (a machine out of reach is skipped), which also fills the
+  // overnight report: the runs that ended since it was last marked seen
   const [active, setActive] = useState<ActiveRun[]>([]);
+  const [report, setReport] = useState<{ since: number; runs: ReportRun[] } | null>(null);
   useEffect(() => {
     const look = () => api.runsActive().then(setActive).catch(() => {});
+    const follow = () => api.runsFollowAll().then((r) => { setActive(r.active); setReport({ since: r.since, runs: r.runs }); }).catch(() => {});
     look();
-    const t = window.setInterval(look, 30000);
-    return () => window.clearInterval(t);
+    follow();
+    const t = window.setInterval(look, 30000), f = window.setInterval(follow, 120000);
+    return () => { window.clearInterval(t); window.clearInterval(f); };
   }, []);
+  const when = (t: number) => new Date(t * 1000).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+  const span = (s: number) => s >= 3600 ? `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min` : `${Math.max(1, Math.round(s / 60))} min`;
   // the project whose description is being written, and the text
   const [editing, setEditing] = useState<string | null>(null);
   const [desc, setDesc] = useState("");
@@ -315,6 +324,20 @@ function ProjectTab({ st, toast, opened, reload, openRun }: { st: AppState; toas
             <span className="go">Follow →</span></span>
         </button>)}
       </div>}
+      {report && report.runs.length > 0 && <>
+        <div className="section-head"><h3>Overnight report</h3>
+          <span className="muted small">{report.runs.length} run{report.runs.length === 1 ? "" : "s"} ended since {when(report.since)}</span>
+          <button className="small" onClick={() => api.runsReportSeen().then(() => setReport({ since: Date.now() / 1000, runs: [] })).catch((e) => toast(errText(e)))}>Mark as seen</button></div>
+        <div className="demos">
+          {report.runs.map((r) => <button key={r.path + r.id} className={`demo rep ${r.status}`} onClick={() => openRun(r.path, r.id).catch((e) => toast(errText(e)))}
+            title="Open this project at this run">
+            <span className="dtitle"><strong>{r.project}</strong><span className="pill">{r.status}</span></span>
+            <p className="small">{r.test_acc != null ? <><strong>{r.task === "regress" ? `R² ${r.test_acc.toFixed(3)}` : `${(r.test_acc * 100).toFixed(2)} %`}</strong> test · </> : null}
+              epoch {r.epoch} / {r.epochs}{r.seconds != null ? ` · ${span(r.seconds)}` : ""}
+              {r.message ? <span className="muted"> · {r.message}</span> : null}</p>
+            <span className="dfoot"><span className="muted">{r.target} · ended {when(r.end)}</span><span className="go">Open →</span></span>
+          </button>)}
+        </div></>}
       <button className="section-head fold" onClick={() => flipRecent()} aria-expanded={recentOpen}>
         <span className="caret">{recentOpen ? "▾" : "▸"}</span><h3>Opened projects</h3>
         <span className="muted small">{st.projects.length} · most recent first</span></button>

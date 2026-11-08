@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { api, errText, type AppState, type Machine } from "./api";
 
-const EMPTY: Machine = { name: "", kind: "ssh", host: "", user: "", port: "", key: "", jump: "", auth: "key", workdir: "", python: "", launch: "auto", region: "", instance_id: "", mirror: false };
+const EMPTY: Machine = { name: "", kind: "ssh", host: "", user: "", port: "", key: "", jump: "", auth: "key", workdir: "", python: "", launch: "auto", region: "", instance_id: "", mirror: false, group: "", resume_reboot: true };
 
 const POLICY = `{
   "Version": "2012-10-17",
@@ -87,7 +87,8 @@ export function ConnectionTab({ st, reload, toast, startJob }: { st: AppState; r
         {st.machines.map(({ machine: x, prepared: p }) => (
           <div key={x.name} className="machine">
             <div><strong>{x.name}</strong> <span className="muted">{x.kind === "aws" ? `AWS ${x.instance_id} (${x.region}) · ${x.user}` : `${x.user ? x.user + "@" : ""}${x.host}${x.port ? ":" + x.port : ""}`}
-              {" · "}{x.auth === "password" ? "password" : x.key ? `key ${x.key}` : "key from ssh config/agent"}{x.jump ? ` · via ${x.jump}` : ""} · launch: {x.launch}</span></div>
+              {" · "}{x.auth === "password" ? "password" : x.key ? `key ${x.key}` : "key from ssh config/agent"}{x.jump ? ` · via ${x.jump}` : ""} · launch: {x.launch}
+              {x.group ? ` · group ${x.group}` : ""}{x.resume_reboot ? " · resumes after a reboot" : ""}</span></div>
             <div className="muted small">{p ? `Prepared: PyTorch ${p.torch} (${p.cuda ? "CUDA" : "CPU only"}) · ${p.gpus.length ? p.gpus.join(" | ") : "no NVIDIA GPU"} · `
               + `keeps running via: ${p.slurm ? "SLURM" : p.systemd && p.linger ? "systemd (lingering)" : p.tmux ? "tmux" : "nohup"}` : "Not prepared yet (Prepare installs PyTorch there; the first run does it too)."}</div>
             <p className="row">
@@ -125,6 +126,10 @@ export function ConnectionTab({ st, reload, toast, startJob }: { st: AppState; r
           <label className="chk wide"><input type="checkbox" checked={!!m.mirror} onChange={(e) => up({ mirror: e.target.checked })} />
             Keep a copy of checkpoints on this Mac (copied whenever a new one is written, while the app is open; recommended for EC2 spot instances:
             if AWS terminates the instance, the run can continue on another machine from this copy)</label>
+          <label>Group<input value={m.group ?? ""} onChange={(e) => up({ group: e.target.value })} placeholder="optional: lab (machines of one group form a pool)" /></label>
+          {m.kind === "ssh" && <label className="chk wide"><input type="checkbox" checked={!!m.resume_reboot} onChange={(e) => up({ resume_reboot: e.target.checked })} />
+            Resume runs after a reboot: a run cut off by a restart or a power cut starts again from its last checkpoint when the machine is back
+            (train.py saves one every few minutes; adds an @reboot line to your crontab there), also while this Mac is off</label>}
           <label className="wide">Python with PyTorch on the machine<input value={m.python} onChange={(e) => up({ python: e.target.value })} placeholder="optional; empty = the app makes ~/.nn_builder/venv (no sudo)" /></label>
         </div>
         <p className="row"><button className="primary" onClick={() => run(api.machineSave(m).then(() => { setM(EMPTY); setEditing(false); }),

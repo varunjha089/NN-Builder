@@ -224,6 +224,37 @@ async fn runs_active() -> R<Value> {
     blocking(|| Ok(json!(runs::active_everywhere()))).await
 }
 
+/// look at every run still going in any project (as the Train tab does for the open one; all at once, so machines out of reach cost one
+/// ssh timeout), then the overnight report: the runs that ended since the owner last marked it seen (first time: the last 24 hours)
+#[tauri::command]
+async fn runs_follow_all() -> R<Value> {
+    blocking(|| {
+        let active = runs::active_everywhere();
+        if !active.is_empty() {
+            let c = creds();
+            std::thread::scope(|sc| {
+                for r in &active {
+                    let c = &c;
+                    sc.spawn(move || {
+                        if let (Some(path), Some(id)) = (r["path"].as_str(), r["id"].as_str()) {
+                            // (not store::open: that would make it the last project and discard an unsaved demo)
+                            let pr = store::Project { dir: PathBuf::from(path) };
+                            let _ = runs::status(&pr, id, usize::MAX, c);
+                        }
+                    });
+                }
+            });
+        }
+        let since = store::settings()["report_seen"].as_f64().unwrap_or_else(|| now_secs() as f64 - 86400.0);
+        Ok(json!({"since": since, "runs": runs::finished_since(since), "active": runs::active_everywhere()}))
+    }).await
+}
+
+#[tauri::command]
+async fn runs_report_seen() -> R<()> {
+    store::save_setting("report_seen", json!(now_secs())).map_err(e)
+}
+
 #[tauri::command]
 async fn set_projects_dir(path: String) -> R<()> {
     store::save_setting("projects_dir", json!(path.trim())).map_err(e)
@@ -720,8 +751,16 @@ async fn pick_folder(app: tauri::AppHandle, title: String) -> R<Option<String>> 
 #[tauri::command]
 async fn targets() -> R<Value> {
     let mut t = vec![json!({"name": KAGGLE, "kind": "kaggle"})];
-    for m in remote::machines() {
+    let ms = remote::machines();
+    for m in &ms {
         t.push(json!({"name": m.name, "kind": m.kind, "prepared": remote::prepared(&m.name).is_some()}));
+    }
+    // pools: "any free machine of <group>" (runs::pick_free chooses when the run starts)
+    let mut groups: Vec<&str> = ms.iter().map(|m| m.group.as_str()).filter(|g| !g.is_empty()).collect();
+    groups.sort();
+    groups.dedup();
+    for g in groups {
+        t.push(json!({"name": format!("{}{g}", runs::GROUP_PREFIX), "kind": "group", "count": ms.iter().filter(|m| m.group == g).count()}));
     }
     Ok(json!(t))
 }
@@ -1106,7 +1145,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            app_state, templates_list, template_apply, project_from_template, project_save_as, project_new, project_open, set_projects_dir, project_describe, runs_active, project_delete, set_max_blocks, project_load, save_graph, design_from_text, design_format, save_dataset, save_train, code, export_code, design_png,
+            app_state, templates_list, template_apply, project_from_template, project_save_as, project_new, project_open, set_projects_dir, project_describe, runs_active, runs_follow_all, runs_report_seen, project_delete, set_max_blocks, project_load, save_graph, design_from_text, design_format, save_dataset, save_train, code, export_code, design_png,
             set_kaggle, set_hf, set_aws, set_gcs, clear_secret, test_kaggle, test_hf, test_aws, tools_install,
             machine_save, machine_delete, machine_test, machine_connect, machine_prepare, hf_info, hf_preview, kaggle_files, local_scan, local_csv, pick_folder,
             update_settings, set_auto_update, update_check, update_install, update_restart, targets, run_start, run_start_seeds, runs_summary, runs_export, run_resume_on, runs_list, run_status, run_stop, run_fetch, run_results, run_reveal, job_status, open_url

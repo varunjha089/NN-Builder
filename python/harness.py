@@ -128,7 +128,7 @@ def emit(event, **data):
     print("NNB_EVENT " + line, flush=True)
 
 
-SPOT = os.environ.get("NNB_SPOT") == "1"   # run.sh on an EC2 spot instance
+SPOT = os.environ.get("NNB_SPOT") == "1"   # run.sh of a resumable run: an EC2 spot instance, or a machine that resumes after a reboot
 
 
 def shutting_down():

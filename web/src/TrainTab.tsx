@@ -44,7 +44,7 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
   st: AppState; ok: boolean; analysis: Analysis | null; train: TrainSettings; setTrain: (t: TrainSettings) => void; runId: string | null; openRun: (id: string | null) => void;
   toast: (m: string) => void; startJob: () => void; datasetSource: string; datasetTask: string;
 }) {
-  const [targets, setTargets] = useState<{ name: string; kind: string; prepared?: boolean }[]>([]);
+  const [targets, setTargets] = useState<{ name: string; kind: string; prepared?: boolean; count?: number }[]>([]);
   const [target, setTarget] = useState("Kaggle");
   const [gpu, setGpu] = useState("");
   const [copyTokens, setCopyTokens] = useState(false);
@@ -98,6 +98,8 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
   }, [others]);
 
   const kind = targets.find((t) => t.name === target)?.kind ?? "kaggle";
+  // a pool ("any:lab"): the button names it in words
+  const tname = kind === "group" ? `a free ${target.slice(4)} machine` : target;
   const set = (p: Partial<TrainSettings>) => setTrain({ ...train, ...p });
   const checkData = async () => {
     try { await api.runStart(target, gpu, copyTokens, true); startJob(); toast(`Checking the data on ${target} …`); } catch (e) { toast(errText(e)); }
@@ -121,8 +123,12 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
       <p className="muted">Training never runs on this Mac. Choose where: Kaggle (free GPU notebooks), or a machine from the Connection tab (college server or AWS).</p>
       <div className="form">
         <label>Train on<select value={target} onChange={(e) => setTarget(e.target.value)}>
-          {targets.map((t) => <option key={t.name} value={t.name}>{t.name}{t.kind === "aws" ? " (AWS EC2)" : t.kind === "ssh" ? (t.prepared ? " (SSH)" : " (SSH, prepared on first run)") : " (Kaggle GPU)"}</option>)}
+          {targets.map((t) => <option key={t.name} value={t.name}>{t.kind === "group" ? `Any free machine of ${t.name.slice(4)} (${t.count} machines)`
+            : `${t.name}${t.kind === "aws" ? " (AWS EC2)" : t.kind === "ssh" ? (t.prepared ? " (SSH)" : " (SSH, prepared on first run)") : " (Kaggle GPU)"}`}</option>)}
         </select></label>
+        {kind === "group" && <p className="muted small">When the run starts, the app asks every machine of {target.slice(4)} at once and takes the first that
+          answers, has an idle GPU (under 1 GB in use and 10 % busy) and no NN Builder run going. This Mac must be on their network (lab Wi-Fi / VPN) to start it;
+          afterwards the run goes on by itself, and the Projects page reports it once you are back on that network.</p>}
         {kind !== "kaggle" && <label>GPU on the machine<input value={gpu} onChange={(e) => setGpu(e.target.value.trim())} placeholder="any (or 0, or 0,1, or free)" list="gpu-choices" />
           <datalist id="gpu-choices"><option value="free">wait for idle GPUs (shared server)</option></datalist></label>}
         {kind !== "kaggle" && gpu === "free" && <p className="muted small">free: the run waits on the machine until {train.gpus === 0 ? "at least one GPU" :
@@ -298,15 +304,16 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
             {" "}A rough estimate: the first epoch shows the real use.</p>}
         </>;
       })()}
-      <p className="row"><button className="primary" onClick={start} disabled={!ok}>Train on {target}{seeds > 1 ? ` ×${seeds}` : ""} ▶</button>
+      <p className="row"><button className="primary" onClick={start} disabled={!ok}>Train on {tname}{seeds > 1 ? ` ×${seeds}` : ""} ▶</button>
         <label className="small">seeds<select value={seeds} onChange={(e) => setSeeds(Number(e.target.value))}
           title="Repeat the same training with different random seeds, to report a mean and its spread">
           <option value={1}>1 (seed {train.seed})</option><option value={3}>3 (seeds {train.seed}–{train.seed + 2})</option>
           <option value={5}>5 (seeds {train.seed}–{train.seed + 4})</option></select></label>
-        {seeds > 1 && kind !== "kaggle" && <span className="muted small">The runs start together on the machine and share its GPU.</span>}
+        {seeds > 1 && kind === "group" && <span className="muted small">Each seed goes to another free machine of {target.slice(4)}.</span>}
+        {seeds > 1 && kind !== "kaggle" && kind !== "group" && <span className="muted small">The runs start together on the machine and share its GPU.</span>}
         {seeds > 1 && kind === "kaggle" && <span className="muted small">One Kaggle notebook per seed; Kaggle may queue some of them.</span>}
         <button onClick={checkData} disabled={!ok} title="Load the data on the machine, report it (images per class, bands, empty pixels, what looks wrong)
-and check one batch through the network, without training: a few minutes instead of a wasted GPU hour">Check data on {target}</button>
+and check one batch through the network, without training: a few minutes instead of a wasted GPU hour">Check data on {tname}</button>
         {!ok && <span className="st-error">Fix the design and the dataset first.</span>}</p>
 
       {status && <div className="card">

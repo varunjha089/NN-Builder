@@ -50,6 +50,12 @@ pub struct Machine {
     /// copy is what "Resume on another machine" continues from)
     #[serde(default)]
     pub mirror: bool,
+    /// machines with the same group (e.g. "lab") form a pool: Train on "any free machine of lab" takes one that is idle
+    #[serde(default)]
+    pub group: String,
+    /// SSH: a run cut off by a reboot or a power cut starts again from its last checkpoint when the machine is back (crontab @reboot)
+    #[serde(default)]
+    pub resume_reboot: bool,
 }
 
 /// what Prepare found on the machine
@@ -76,11 +82,17 @@ impl Machine {
     /// validate what the window sends; Err with a plain-words reason
     pub fn clean(mut self) -> Result<Machine> {
         for f in [&mut self.name, &mut self.host, &mut self.user, &mut self.port, &mut self.key, &mut self.jump, &mut self.workdir, &mut self.python,
-            &mut self.region, &mut self.instance_id] {
+            &mut self.region, &mut self.instance_id, &mut self.group] {
             *f = f.trim().to_string();
         }
         if self.name.is_empty() || self.name.len() > 40 || !safe(&self.name, " -_.") {
             bail!("Give the machine a short name (letters, digits, spaces, - _ .).");
+        }
+        if self.group.len() > 30 || !safe(&self.group, " -_.") {
+            bail!("Group: a short name (letters, digits, spaces, - _ .), e.g. lab.");
+        }
+        if self.kind == "aws" {
+            self.resume_reboot = false; // spot instances resume by themselves; an on-demand instance is not rebooted under a run
         }
         if self.name.eq_ignore_ascii_case("kaggle") {
             bail!("The name Kaggle is used for Kaggle notebooks.");

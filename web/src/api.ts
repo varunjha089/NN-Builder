@@ -49,12 +49,14 @@ export interface TrainSettings {
 
 export interface Machine {
   name: string; kind: "ssh" | "aws"; host: string; user: string; port: string; key: string; jump: string; auth: "key" | "password";
-  workdir: string; python: string; launch: string; region: string; instance_id: string; mirror: boolean;
+  workdir: string; python: string; launch: string; region: string; instance_id: string; mirror: boolean; group: string; resume_reboot: boolean;
 }
 export interface Prepared {
   host_info: string; gpus: string[]; python: string; torch: string; cuda: boolean; slurm: boolean; systemd: boolean; linger: boolean; tmux: boolean; timeout: boolean;
 }
 
+export type ReportRun = { project: string; path: string; id: string; target: string; status: string; test_acc: number | null; task: string | null;
+  epoch: number; epochs: number; end: number; seconds: number | null; message: string | null; dataset: string };
 export type ActiveRun = { project: string; path: string; id: string; target: string; kind: string; status: string; epoch: number; epochs: number;
   dataset: string; created: string; last_poll: number };
 
@@ -100,6 +102,8 @@ export const api = {
   setProjectsDir: (path: string) => invoke<void>("set_projects_dir", { path }),
   projectDescribe: (path: string, text: string) => invoke<void>("project_describe", { path, text }),
   runsActive: () => invoke<ActiveRun[]>("runs_active"),
+  runsFollowAll: () => invoke<{ since: number; runs: ReportRun[]; active: ActiveRun[] }>("runs_follow_all"),
+  runsReportSeen: () => invoke<void>("runs_report_seen"),
   load: () => invoke<ProjectData>("project_load"),
   saveGraph: (graph: Graph) => invoke<{ analysis: Analysis; graph: Graph }>("save_graph", { graph }),
   designFromText: (text: string) => invoke<{ ok: boolean; graph?: Graph; analysis?: Analysis; errors?: { line: number; col: number; message: string }[] }>("design_from_text", { text }),

@@ -270,6 +270,16 @@ crates/core/src/
                            private KAGGLE_CONFIG_DIR), class_folders, aws() (python/helpers/aws_ec2.py: describe/start/stop)
   runs.rs                  spot: run_script (run.sh with flock, time budget over resumes, IMDS watcher), RESUME_SH + crontab @reboot,
                            Poll, aws_explain, mirror_checkpoint, cancel_remote, resume_on (see "Spot instances" below)
+                           Lab pools: Machine.group ("any:<group>" = runs::GROUP_PREFIX target; Tauri targets lists groups, kind "group");
+                           resolve_target -> pick_free (all machines of the group probed at once: nvidia-smi + held run.lock flocks;
+                           judge_probe: free = answers, a GPU under FREE_GPU_MIB/FREE_GPU_BUSY, no NN Builder run), used by start,
+                           start_check, start_seeds (each seed another machine) and resume_on. Machine.resume_reboot (SSH, not under
+                           SLURM): RunInfo.resumable -> run_script's spot handling (resume_wanted, NNB_SPOT=1, shutdown = interruption,
+                           SPOT_CHECKPOINT_MINUTES) + resume.sh/crontab @reboot; poll counts the run.lock as alive; cancel_remote also
+                           TERMs pid.txt (run.sh, e.g. while waiting for a free GPU). Overnight report: runs::finished_since(since)
+                           (ended runs of every listed project after a time; end = last event time), Tauri runs_follow_all (status() of
+                           every active run in all projects at once, then the report since setting "report_seen", default 24 h) and
+                           runs_report_seen; Projects page every 2 min + once at app start (toast).
                            start (Kaggle push | ssh/aws: aws_up, prepare if needed, optional token copy, run.sh with timeout + exit code +
                            shutdown on AWS, rsync, launch via slurm/systemd/tmux/nohup), status (rate-limited polls: Kaggle 30 s, ssh 3 s;
                            metrics appended by byte offset; fetch when ended), stop, fetch (AWS: start/copy/stop), listing, results
@@ -308,7 +318,7 @@ web/src/                   Design.tsx: Save as PNG (PngExporter inside <ReactFlo
                            App.tsx (Projects page: New project and Open side by side (Open: a path field (store::project_path cleans quotes, ~/, a file
                            inside the project) + Open folder + Choose… = pick_folder), under them "Running Task" (heading neon pink; runs_active =
                            runs::active_everywhere: starting/running/queued runs of every listed project from run.json, no network, re-read
-                           every 30 s; a tile opens the project at that run on Train), then "Opened projects" as tiles, most recent first, with a
+                           every 30 s; a tile opens the project at that run on Train), "Overnight report" (runs_follow_all, see runs.rs), then "Opened projects" as tiles, most recent first, with a
                            description (project_describe = store::set_description, "description" in project.json, empty removes it), folding
                            (localStorage "nnb-recent-open"), then the demos as clickable tiles in a section that
                            folds (remembered in localStorage "nnb-demos-open"); .page scrolls at the

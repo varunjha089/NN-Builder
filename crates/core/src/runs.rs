@@ -122,6 +122,9 @@ pub struct RunInfo {
     pub seed: u64,
     #[serde(default)]
     pub group: String,
+    /// resume.sh starts this run again after a reboot (an EC2 spot run, or a machine with "resume after a reboot")
+    #[serde(default)]
+    pub resumable: bool,
 }
 
 /// what a run may need from the Keychain (the app passes them in; core never stores them)
@@ -193,13 +196,88 @@ fn end_event(d: &Path) -> Option<String> {
 // ---------------------------------------------------------------- start
 /// make the run folder and start it on the target; returns the run id. Long (AWS start, prepare): call it from a background job.
 pub fn start(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_tokens: bool, log: &Log) -> Result<String> {
-    start_seeded(pr, target, gpu, creds, copy_tokens, log, None, "")
+    let target = resolve_target(target, &[], log)?;
+    start_seeded(pr, &target, gpu, creds, copy_tokens, log, None, "")
+}
+
+/// Train on "any free machine of <group>": the target name of such a choice
+pub const GROUP_PREFIX: &str = "any:";
+
+/// a target as typed: a machine or Kaggle as it is; "any:<group>" becomes the first free machine of the group (skipping `used`)
+pub fn resolve_target(target: &str, used: &[String], log: &Log) -> Result<String> {
+    match target.strip_prefix(GROUP_PREFIX) {
+        Some(g) => pick_free(g, used, log),
+        None => Ok(target.to_string()),
+    }
+}
+
+/// what one look at a machine of a group says: free (GPUs idle, no NN Builder run on it) or why not
+pub fn judge_probe(out: &str) -> std::result::Result<String, String> {
+    if !out.contains("NNB_PROBE") {
+        return Err("does not answer (on the lab network? VPN?)".into());
+    }
+    if out.contains("NNB_NOGPU") {
+        return Err("no NVIDIA GPU (nvidia-smi missing)".into());
+    }
+    let runs: usize = out.lines().find_map(|l| l.strip_prefix("NNB_RUNS ")).and_then(|n| n.trim().parse().ok()).unwrap_or(0);
+    if runs > 0 {
+        return Err(format!("busy: {runs} NN Builder run(s) on it"));
+    }
+    let gpus: Vec<(String, f64, f64)> = out.lines().filter_map(|l| l.strip_prefix("NNB_GPU ")).filter_map(|l| {
+        let c: Vec<&str> = l.split(',').map(|x| x.trim()).collect();
+        Some((c.first()?.to_string(), c.get(1)?.parse().ok()?, c.get(2)?.parse().ok()?))
+    }).collect();
+    let idle: Vec<&String> = gpus.iter().filter(|g| g.1 < FREE_GPU_MIB as f64 && g.2 < FREE_GPU_BUSY as f64).map(|g| &g.0).collect();
+    if idle.is_empty() {
+        let busy = gpus.iter().map(|g| format!("GPU {} {:.1} GB used, {:.0} % busy", g.0, g.1 / 1024.0, g.2)).collect::<Vec<_>>().join(", ");
+        return Err(format!("in use by someone ({busy})"));
+    }
+    Ok(format!("free (GPU {} idle)", idle.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")))
+}
+
+/// the first machine of the group, in the Connection tab's order, that answers, has an idle GPU and no NN Builder run going (all are asked
+/// at once, so a machine that does not answer costs one ssh timeout, not one each)
+pub fn pick_free(group: &str, used: &[String], log: &Log) -> Result<String> {
+    let all: Vec<Machine> = remote::machines().into_iter().filter(|m| m.group == group && !used.contains(&m.name)).collect();
+    if all.is_empty() {
+        bail!("{}", if used.is_empty() { format!("No machine is in the group {group:?} (Connection tab: Group).") }
+                    else { format!("Every machine of the group {group:?} already has one of these runs.") });
+    }
+    log(format!("Looking for a free machine in {group} ({} machines) ...", all.len()));
+    let looks: Vec<(String, std::result::Result<String, String>)> = std::thread::scope(|sc| {
+        let hs: Vec<_> = all.iter().map(|m| sc.spawn(move || {
+            let w = remote::remote_path(m.workdir.trim_end_matches('/'));
+            let probe = format!(
+                "echo NNB_PROBE
+command -v nvidia-smi >/dev/null 2>&1 || {{ echo NNB_NOGPU; exit 0; }}
+                 nvidia-smi --query-gpu=index,memory.used,utilization.gpu --format=csv,noheader,nounits | sed 's/^/NNB_GPU /'
+                 B=0; for d in {w}/runs/*/; do [ -f \"$d/run.lock\" ] || continue
+                 if command -v flock >/dev/null 2>&1; then flock -n \"$d/run.lock\" true 2>/dev/null || B=$((B+1)); fi; done; echo NNB_RUNS $B
+");
+            (m.name.clone(), judge_probe(&m.run_script(&probe).1))
+        })).collect();
+        hs.into_iter().map(|h| h.join().unwrap_or_else(|_| (String::new(), Err("could not be asked".into())))).collect()
+    });
+    for (name, r) in &looks {
+        log(format!("  {name}: {}", r.as_ref().unwrap_or_else(|e| e)));
+    }
+    match looks.iter().find(|(_, r)| r.is_ok()) {
+        Some((name, _)) => {
+            log(format!("Training on {name}."));
+            Ok(name.clone())
+        }
+        None if looks.iter().all(|(_, r)| r.as_ref().err().is_some_and(|e| e.starts_with("does not answer"))) =>
+            bail!("No machine of {group} answers: is this Mac on the lab network (Wi-Fi / VPN)?"),
+        None => bail!("No machine of {group} is free right now:\n{}\nTry again later, or choose one machine with GPU \"free\" to wait on it.",
+            looks.iter().map(|(n, r)| format!("  {n}: {}", r.as_ref().unwrap_or_else(|e| e))).collect::<Vec<_>>().join("\n")),
+    }
 }
 
 /// Check data: a short run on the target that loads the data, reports it (files per class, bands, empty pixels, what looks wrong) and
 /// runs the one-batch shape check, without training
 pub fn start_check(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_tokens: bool, log: &Log) -> Result<String> {
-    start_seeded(pr, target, gpu, creds, copy_tokens, log, None, CHECK)
+    let target = resolve_target(target, &[], log)?;
+    start_seeded(pr, &target, gpu, creds, copy_tokens, log, None, CHECK)
 }
 
 /// the group name that marks a Check data run inside start_seeded
@@ -210,9 +288,17 @@ pub fn start_seeds(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_to
     let base = pr.train().seed;
     let group = format!("g{}", chrono::Local::now().format("%Y%m%d-%H%M%S"));
     let mut ids = vec![];
+    // a group: each seed on another free machine of it
+    let mut used: Vec<String> = vec![];
     for i in 0..count.clamp(1, 10) as u64 {
         log(format!("--- seed {} ({} of {count}) ---", base + i, i + 1));
-        ids.push(start_seeded(pr, target, gpu, creds, copy_tokens, log, Some(base + i), &group)?);
+        let t = match resolve_target(target, &used, log) {
+            Ok(t) => t,
+            Err(e) if !ids.is_empty() => bail!("{e}\n{} of the {count} seeds were started.", ids.len()),
+            Err(e) => return Err(e),
+        };
+        used.push(t.clone());
+        ids.push(start_seeded(pr, &t, gpu, creds, copy_tokens, log, Some(base + i), &group)?);
     }
     Ok(ids)
 }
@@ -526,14 +612,18 @@ fn launch_remote(pr: &Project, d: &Path, info: &mut RunInfo, m: &mut Machine, t:
     }
     let method = remote::choose_launch(m, &p);
     let rdir = format!("{}/runs/{}", m.workdir.trim_end_matches('/'), info.id);
-    std::fs::write(d.join("run.sh"), run_script(t, &p, m, gpu, info.spot))?;
+    // (under SLURM a job cut off by a reboot is the scheduler's to requeue)
+    info.resumable = info.spot || (m.kind == "ssh" && m.resume_reboot && method != "slurm");
+    std::fs::write(d.join("run.sh"), run_script(t, &p, m, gpu, info.resumable))?;
     std::fs::write(d.join("max_resumes.txt"), format!("{}\n", t.max_resumes))?;
-    if info.spot {
+    if info.resumable {
         let (_, out) = m.run_script(&install_resume_script(m));
+        let what = if info.spot { "Spot: interrupted runs are resumed when the instance boots again" }
+                   else { "Resume after a reboot: a run cut off by a reboot or a power cut starts again from its last checkpoint when the machine is back" };
         if out.contains("NNB_CRON") {
-            log("Spot: interrupted runs are resumed when the instance boots again (crontab @reboot), also while this Mac is off.".into());
+            log(format!("{what} (crontab @reboot), also while this Mac is off."));
         } else {
-            log("Spot: crontab is not available on the instance, so an interrupted run is resumed only while this app is open.".into());
+            log(format!("{what}, but crontab is not available there: only while this app is open and can reach it."));
         }
     }
 
@@ -652,6 +742,8 @@ fi
 /// run.sh: runs train.py within a budget of running time summed over all resumes (used_seconds.txt), one copy at a time (flock on run.lock),
 /// records the exit code. AWS: watches the instance metadata for a spot interruption notice (-> SIGUSR1: checkpoint and exit 75) and a
 /// rebalance recommendation (-> SIGUSR2: checkpoint now). Spot: resume_wanted stays while the run is unfinished, for resume.sh.
+/// `spot` = resumable: an EC2 spot run, or an SSH run that resumes after a reboot (the same handling: resume_wanted, a shutdown is an
+/// interruption, checkpoints every few minutes)
 pub fn run_script(t: &codegen::TrainSettings, p: &Prepared, m: &Machine, gpu: &str, spot: bool) -> String {
     let secs = (t.max_hours * 3600.0).round() as u64;
     let stop = if m.kind == "aws" && t.stop_instance { "sudo -n shutdown -h +2 >> log.txt 2>&1\n" } else { "" };
@@ -734,7 +826,8 @@ const SPOT_WATCH: &str = r#"spot_watch() {
 /// resume.sh (in the machine's work folder): starts again every run that still wants it (resume_wanted, no final event, not running),
 /// counting automatic resumes against max_resumes.txt. Run by crontab @reboot (after a pause for the GPU driver), or by the app with "now".
 pub const RESUME_SH: &str = r#"#!/bin/bash
-# written by NN Builder: starts again the runs that an EC2 spot interruption cut off (crontab @reboot; "now" = without the pause)
+# written by NN Builder: starts again the runs that an interruption cut off: an EC2 spot interruption, a reboot or a power cut
+# (crontab @reboot; "now" = without the pause)
 [ "$1" = now ] || sleep 45
 cd "$(dirname "$0")/runs" 2>/dev/null || exit 0
 for d in */; do
@@ -788,7 +881,7 @@ struct Poll {
 
 /// copy new metrics lines and the log tail from the machine; None when it does not answer
 fn poll_remote(m: &Machine, d: &Path, info: &mut RunInfo) -> Option<Poll> {
-    let lock = if info.kind == "aws" {
+    let lock = if info.kind == "aws" || info.resumable {
         // a run started again by resume.sh has a new process: the lock it holds says it is running
 "if command -v flock >/dev/null 2>&1 && ! flock -n run.lock true 2>/dev/null; then A=1; fi\n\
          [ -f py_pid.txt ] && kill -0 \"$(cat py_pid.txt)\" 2>/dev/null && A=1\n"
@@ -1185,7 +1278,8 @@ fn cancel_remote(m: &Machine, info: &RunInfo) -> Result<()> {
     };
     // a run started again by resume.sh has a new process: also signal the one in py_pid.txt
     let cmd = format!(
-        "cd {rd} 2>/dev/null || {{ echo NNB_OK; exit 0; }}\nrm -f resume_wanted\n{kill} 2>/dev/null\n[ -f py_pid.txt ] && kill -TERM \"$(cat py_pid.txt)\" 2>/dev/null\necho NNB_OK\n",
+        "cd {rd} 2>/dev/null || {{ echo NNB_OK; exit 0; }}\nrm -f resume_wanted\n{kill} 2>/dev/null\n[ -f py_pid.txt ] && kill -TERM \"$(cat py_pid.txt)\" 2>/dev/null\n\
+         [ -f pid.txt ] && kill -TERM \"$(cat pid.txt)\" 2>/dev/null\necho NNB_OK\n",
         rd = remote::remote_path(&info.remote_dir)
     );
     let (_, out) = m.run_script(&cmd);
@@ -1229,6 +1323,7 @@ pub fn resume_on(pr: &Project, from: &str, target: &str, gpu: &str, creds: &Cred
     if target == KAGGLE {
         bail!("Resuming on Kaggle is not supported (the checkpoint would have to be uploaded as a Kaggle dataset). Choose an SSH or AWS machine.");
     }
+    let target = &resolve_target(target, &[], log)?;
     let mut m = remote::machine(target).ok_or_else(|| anyhow!("Unknown machine {target:?} (Connection tab)."))?;
     let mut old = info(&src);
     let id = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
@@ -1315,6 +1410,37 @@ pub fn active_everywhere() -> Vec<Value> {
         }
     }
     out.sort_by(|a, b| b["id"].as_str().cmp(&a["id"].as_str()));
+    out
+}
+
+/// the runs of every listed project that ended after `since` (seconds since 1970), newest first: the overnight report. The end is the
+/// time of the run's last event (or of its last look); runs continued elsewhere are left out (their continuation is listed)
+pub fn finished_since(since: f64) -> Vec<Value> {
+    let mut out = vec![];
+    for p in store::listing() {
+        let (Some(path), true) = (p["path"].as_str(), p["exists"] == true) else { continue };
+        let pr = Project { dir: PathBuf::from(path) };
+        let Ok(rd) = std::fs::read_dir(pr.runs_dir()) else { continue };
+        for d in rd.filter_map(|e| e.ok()).map(|e| e.path()) {
+            let i = info(&d);
+            if i.id.is_empty() || ["starting", "running", "queued", "continued"].contains(&i.status.as_str()) {
+                continue;
+            }
+            let ev = read_events(&d, 0);
+            let end = ev.iter().rev().find_map(|e| e["time"].as_f64()).unwrap_or(i.last_poll);
+            if end <= since {
+                continue;
+            }
+            let began = ev.iter().find(|e| e["event"] == "start").and_then(|e| e["time"].as_f64());
+            let last = ev.iter().rev().find(|e| ["done", "stopped", "error"].contains(&e["event"].as_str().unwrap_or("")));
+            out.push(serde_json::json!({"project": p["name"], "path": path, "id": i.id, "target": i.target, "status": i.status,
+                "test_acc": ev.iter().rev().find_map(|e| e["test_acc"].as_f64()), "task": ev.iter().find(|e| e["event"] == "start").and_then(|e| e["task"].as_str()),
+                "epoch": ev.iter().filter(|e| e["event"] == "epoch").count(), "epochs": i.epochs, "end": end,
+                "seconds": began.map(|b| (end - b).max(0.0)), "message": last.and_then(|e| e["message"].as_str()).map(String::from).or_else(|| (!i.error.is_empty()).then(|| i.error.clone())),
+                "dataset": i.dataset}));
+        }
+    }
+    out.sort_by(|a, b| b["end"].as_f64().partial_cmp(&a["end"].as_f64()).unwrap_or(std::cmp::Ordering::Equal));
     out
 }
 

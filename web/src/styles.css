@@ -128,6 +128,9 @@ canvas.pix { image-rendering: pixelated; border: 1px solid var(--line); }
 .pbar { display: block; height: 4px; border-radius: 2px; background: var(--line); margin: -4px 0 10px; overflow: hidden; }
 .pbar > span { display: block; height: 100%; background: var(--accent); }
 .section-head.running h3 { color: #c2189b; }
+.demo.rep.done .pill { color: var(--ok); background: var(--okbg); }
+.demo.rep.failed .pill, .demo.rep.crashed .pill, .demo.rep.error .pill { color: var(--err); background: var(--errbg); }
+.demo.rep.stopped .pill, .demo.rep.interrupted .pill, .demo.rep.terminated .pill { color: var(--warn); background: var(--warnbg); }
 .ptop { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; margin: 6px 0 4px; }
 .ptop .card { margin: 0; }
 .ptop h3 { margin-top: 2px; }

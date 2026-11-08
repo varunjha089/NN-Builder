@@ -203,11 +203,18 @@ A \emph{project} is a folder. The Projects page has two cards side by side:
         \ui{Open Project\ldots}). A pasted path may keep its quotes, start with \texttt{\textasciitilde/}, or name a file inside the project
         (e.g.\ \file{model.json}); the project folder is the one that holds \file{project.json}.
 \end{itemize}
-Under the two cards come three sections:
+Under the two cards come these sections:
 \begin{itemize}
   \item \ui{Running Task} (its heading in pink): every run still starting, running or queued, in any project, as a tile with the
         project, the machine, the dataset and the epochs done. The numbers are as the app last saw them (it follows a run while its project
         is open); click a tile to open that project at that run on the \ui{Train} tab, where it is followed again.
+  \item \ui{Overnight report} (when there is something to report): every run, in any project, that ended since you last pressed
+        \ui{Mark as seen} (the first time: in the last 24 hours), with its result (test accuracy, or $R^2$), the epochs done, how long it
+        took, the machine and when it ended; done in green, failed or crashed in red, stopped or interrupted in amber. Click one to open
+        it. While this page is shown, the application looks at every unfinished run on its machine every two minutes (machines out of
+        reach, e.g.\ the lab computers from outside the lab network, are skipped until they answer); when it starts, it looks once and
+        says how many runs ended while it was closed. So: start runs on the lab machines in the evening, and next morning on the lab
+        Wi-Fi open the application and read the report.
   \item \ui{Opened projects}: the projects used before as tiles, the most recently opened first, each with its description, its folder,
         \ui{Delete} and \ui{Open}. \ui{Add a description} (or \ui{Edit}) writes a few words about the project; \ui{Save} (or
         \ui{Cmd}-Return) keeps them in the project's \file{project.json}, and an empty description removes it.
@@ -1101,6 +1108,19 @@ stops it at the end.
 
 \textbf{Keep a copy of checkpoints on this Mac.} For either kind: every new checkpoint is copied back while the application is open,
 so a run can continue on another machine if its own machine is lost (essential for spot instances that may be terminated).
+
+\textbf{Group.} Machines with the same group (for example \texttt{lab} for five lab computers with one GPU each) form a pool.
+\ui{Train on} then offers \ui{Any free machine of lab}: when the run starts, the application asks every machine of the group at once
+and takes the first that answers, has an idle GPU (under 1\,GB in use and 10\,\% busy) and no NN Builder run going; it lists what it
+found for each (free, in use by someone, busy with a run, does not answer). With several seeds, each seed goes to another free machine.
+This Mac must be on the machines' network (the lab Wi-Fi or the VPN) to start the run; afterwards the run goes on without it.
+
+\textbf{Resume runs after a reboot} (SSH machines, on for new ones). A lab computer may be restarted overnight, for updates or by a
+power cut. With this setting a run keeps a mark while it is unfinished, \file{train.py} saves a checkpoint every few minutes, and an
+\texttt{@reboot} line in your crontab on the machine starts the run again from its last checkpoint when the machine is back, also while
+this Mac is off. A clean restart (the system shutting down) is treated as an interruption, not as \ui{Stop}. Under SLURM the scheduler
+requeues jobs itself, so this does not apply there. Without crontab on the machine, the run is started again only while the application
+is open and can reach the machine.
 
 %=====================================================================================================================================
 \section{Training}

@@ -370,6 +370,46 @@ fn remote_and_kaggle_runs() {
     assert!(std::fs::read_to_string(pr.runs_dir().join(&id).join("log.txt")).unwrap().contains("training"));
     assert!(runs::stop(&pr, &id).unwrap_err().to_string().contains("Cancel run"));
 
+    // ---- a lab pool: two machines in the group "lab" that resume after a reboot. "any:lab" takes the first free one (an idle GPU, no
+    //      NN Builder run), the next seed another; a busy GPU or nothing answering is explained. The run is resumable (resume_wanted while
+    //      it runs, crontab @reboot), and the overnight report lists it with its machine.
+    script(&bin, "crontab", FAKE_CRONTAB);
+    script(&bin, "nvidia-smi", "#!/bin/bash\nif [ -f \"$NNB_FAKE_REMOTE/gpu_busy\" ]; then echo '0, 27611, 100'; else echo '0, 4, 0'; fi\n");
+    for n in ["lab-1", "lab-2"] {
+        remote::save_machine(Machine { name: n.into(), host: format!("{n}.example.edu"), user: "student".into(), group: "lab".into(), resume_reboot: true,
+            python: format!("{}/fakepython", remote_home.display()), launch: "nohup".into(), ..Default::default() }).unwrap();
+    }
+    assert_eq!(runs::pick_free("lab", &[], &log).unwrap(), "lab-1");
+    assert_eq!(runs::pick_free("lab", &["lab-1".into()], &log).unwrap(), "lab-2");
+    assert!(runs::pick_free("lab", &["lab-1".into(), "lab-2".into()], &log).is_err());
+    std::fs::write(remote_home.join("gpu_busy"), "").unwrap();
+    let e = runs::pick_free("lab", &[], &log).unwrap_err().to_string();
+    assert!(e.contains("lab-1: in use by someone (GPU 0 27.0 GB used, 100 % busy)"), "{e}");
+    std::fs::remove_file(remote_home.join("gpu_busy")).unwrap();
+    assert!(runs::judge_probe("").unwrap_err().starts_with("does not answer"));
+    assert!(runs::judge_probe("NNB_PROBE\nNNB_GPU 0, 4, 0\nNNB_RUNS 1\n").unwrap_err().contains("busy: 1 NN Builder run"));
+    let before = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64();
+    std::thread::sleep(Duration::from_millis(1100));
+    let id = runs::start(&pr, "any:lab", "", &Creds::default(), false, &log).unwrap_or_else(|e| panic!("{e}\n{:?}", lines.lock().unwrap()));
+    let d = pr.runs_dir().join(&id);
+    assert!(runs::info(&d).target == "lab-1" && runs::info(&d).resumable);
+    let run_sh = std::fs::read_to_string(remote_home.join(format!(".nn_builder/runs/{id}/run.sh"))).unwrap();
+    assert!(run_sh.contains("touch resume_wanted") && run_sh.contains("NNB_SPOT=1") && !run_sh.contains("shutdown"), "{run_sh}");
+    assert!(std::fs::read_to_string(remote_home.join("crontab.txt")).unwrap_or_default().contains("@reboot bash"), "resume.sh at boot");
+    let mut state = String::new();
+    for _ in 0..40 {
+        std::thread::sleep(Duration::from_millis(1100));
+        state = runs::status(&pr, &id, 0, &Creds::default()).unwrap().state;
+        if !["starting", "running"].contains(&state.as_str()) {
+            break;
+        }
+    }
+    assert_eq!(state, "done", "lab run");
+    assert!(!remote_home.join(format!(".nn_builder/runs/{id}/resume_wanted")).exists(), "a finished run is not resumed");
+    let rep = runs::finished_since(before);
+    assert!(rep.iter().any(|r| r["id"] == id.as_str() && r["target"] == "lab-1" && r["status"] == "done" && r["test_acc"].as_f64() == Some(0.9)), "{rep:?}");
+    assert!(runs::finished_since(before + 1e6).is_empty());
+
     // ---- an EC2 spot instance: interruption notice -> checkpoint + exit 75 -> resumed -> done; checkpoint copied to the Mac;
     //      then the run continued on another machine from that copy
     script(&bin, "curl", FAKE_CURL);
