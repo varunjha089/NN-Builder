@@ -3,6 +3,17 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 08_11_26_11_12_30
+
+**Shared GPU servers: GPU "free" waits for idle GPUs, then takes them** (`881a1a9`)
+
+With GPU on the machine = free, run.sh looks at nvidia-smi every minute until
+enough GPUs are idle (under 1 GB used and 10 % busy in two looks 15 s apart;
+GPUs = N waits for N, GPUs = all takes every idle one), then trains on them.
+Waiting is not counted in the time budget and Stop ends it as "stopped"; no
+wait under SLURM, which now asks for --gres=gpu:<GPUs>. The GPU use line names
+the GPUs in CUDA_VISIBLE_DEVICES.
+
 ## 08_11_26_10_47_00
 
 **train.py: name each worker's GPU to NCCL, quiet the dataset download** (`4fbce93`)
