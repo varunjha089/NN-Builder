@@ -264,6 +264,8 @@ function ProjectTab({ st, toast, opened, reload }: { st: AppState; toast: (m: st
   const [demos, setDemos] = useState<Template[]>([]);
   useEffect(() => { api.templates().then(setDemos).catch(() => {}); }, []);
   const [demosOpen, setDemosOpen] = useState(() => { try { return localStorage.getItem("nnb-demos-open") !== "0"; } catch { return true; } });
+  const [recentOpen, setRecentOpen] = useState(() => { try { return localStorage.getItem("nnb-recent-open") !== "0"; } catch { return true; } });
+  const flipRecent = () => setRecentOpen((o) => { try { localStorage.setItem("nnb-recent-open", o ? "0" : "1"); } catch { /* not remembered */ } return !o; });
   const flipDemos = () => setDemosOpen((o) => { try { localStorage.setItem("nnb-demos-open", o ? "0" : "1"); } catch { /* not remembered */ } return !o; });
   const create = () => api.projectNew(name).then(() => { setName(""); opened(); }).catch((e) => toast(errText(e)));
   const openPath = () => api.projectOpen(path).then(opened).catch((e) => toast(errText(e)));
@@ -281,7 +283,14 @@ function ProjectTab({ st, toast, opened, reload }: { st: AppState; toast: (m: st
         </div>
         <div className="card">
           <h3>Open</h3>
-          {st.projects.length ? <table className="grid"><tbody>
+          <p className="row"><input className="grow" value={path} onChange={(e) => setPath(e.target.value)} placeholder="folder of a project (contains project.json), or Choose…"
+            onKeyDown={(e) => { if (e.key === "Enter") openPath(); }} />
+            <button onClick={openPath}>Open folder</button>
+            <button onClick={() => api.pickFolder("Choose a project folder (the one with project.json)").then((d) => { if (d) { setPath(d); return api.projectOpen(d).then(opened); } }).catch((e) => toast(errText(e)))}>Choose…</button></p>
+          <button className="section-head fold" onClick={() => flipRecent()} aria-expanded={recentOpen}>
+            <span className="caret">{recentOpen ? "▾" : "▸"}</span><h3>Opened projects</h3>
+            <span className="muted small">{st.projects.length} · most recent first</span></button>
+          {recentOpen && (st.projects.length ? <table className="grid"><tbody>
             {st.projects.map((p) => <tr key={p.path}><td><strong>{p.name}</strong><div className="muted small">{p.path}</div></td>
               <td className="num nowrap">{confirmDel === p.path ? <>
                 <span className="small st-warn">{p.exists ? "Move to the Trash?" : "Remove from the list?"} </span>
@@ -291,11 +300,7 @@ function ProjectTab({ st, toast, opened, reload }: { st: AppState; toast: (m: st
                 {p.exists ? <button onClick={() => api.projectOpen(p.path).then(opened).catch((e) => toast(errText(e)))}>Open</button> : <span className="muted">missing</span>}{" "}
                 <button className="small" title={p.exists ? "Delete this project: its folder (design, runs, results) goes to the Trash" : "Take it off this list"}
                   onClick={() => setConfirmDel(p.path)}>{p.exists ? "Delete" : "Remove"}</button></>}</td></tr>)}
-          </tbody></table> : <p className="muted">No saved projects yet. Create one, or open a demo below and save it (⌘S).</p>}
-          <p className="row"><input className="grow" value={path} onChange={(e) => setPath(e.target.value)} placeholder="folder of a project (contains project.json), or Choose…"
-            onKeyDown={(e) => { if (e.key === "Enter") openPath(); }} />
-            <button onClick={openPath}>Open folder</button>
-            <button onClick={() => api.pickFolder("Choose a project folder (the one with project.json)").then((d) => { if (d) { setPath(d); return api.projectOpen(d).then(opened); } }).catch((e) => toast(errText(e)))}>Choose…</button></p>
+          </tbody></table> : <p className="muted">No saved projects yet. Create one, or open a demo below and save it (⌘S).</p>)}
         </div>
       </div>
       <button className="section-head fold" onClick={() => flipDemos()} aria-expanded={demosOpen}>

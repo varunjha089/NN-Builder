@@ -124,6 +124,7 @@ canvas.pix { image-rendering: pixelated; border: 1px solid var(--line); }
 .section-head { display: flex; align-items: baseline; gap: 12px; margin-top: 22px; }
 .section-head h3 { margin: 0; }
 button.section-head.fold { background: none; border: 0; padding: 0; width: 100%; text-align: left; cursor: pointer; }
+.card .section-head { margin: 4px 0 6px; }
 .section-head .caret { width: 14px; color: var(--muted); }
 [data-theme="night"] button.section-head.fold, [data-theme="night"] button.section-head.fold:hover:not(:disabled) { box-shadow: none; text-shadow: none; }
 .section-head.fold:hover h3 { text-decoration: underline; text-underline-offset: 3px; }
