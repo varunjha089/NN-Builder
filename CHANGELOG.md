@@ -3,6 +3,13 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 08_11_26_09_09_38
+
+**EC2: the wait for ssh after a start is a real 6-minute deadline; the message names the security group and this Mac's changing address** (`9480ea0`)
+
+Third real spot test: this Mac's internet address had changed, the security group refused ssh, and 72 tries of up to 20 s each kept a
+paid instance waiting 18 minutes instead of 6. AWS_TEST_PLAN: the spot tests as they ran.
+
 ## 08_11_26_07_23_26
 
 **Spot: run.sh keeps a run resumable whenever train.py exits 75 and resume_wanted is still there (the app's Stop removes it first)** (`1ac3d13`)
