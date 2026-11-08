@@ -71,7 +71,7 @@ crates/core/src/
                            (codegen checkpoint_cuts: forward cut where only one tensor crosses, ~sqrt(n) parts, _partN methods +
                            torch.utils.checkpoint; generated only when on; not with several outputs / early exits: the Train tab
                            says so, canSaveMemory); bf16 on compute capability 8+, channels-last for conv nets,
-                           workers "auto" = min(8, CPUs) with prefetch 4, "memory" event (measured peak after the first epoch), gpu_use() log line halfway through each epoch (rank 0, CUDA: GPUs
+                           workers "auto" = min(8, CPUs) with prefetch 4, "memory" event (measured peak after the first epoch), init_process_group(device_id=) on CUDA (no NCCL "guessing device ID" warning; TypeError fallback for PyTorch < 2.3), torchvision download bar silenced, gpu_use() log line halfway through each epoch (rank 0, CUDA: GPUs
                            training, per GPU memory used / total and % busy from nvidia-smi, so no CUDA context on other GPUs),
                            data_wait per epoch; loader workers ignore INT/TERM/HUP/USR1/USR2 (quiet_worker: Stop signals the whole process group, and a dead
                            worker made the run fail instead of stop; CI: ci_resume_check part 4 with NNB_TEST_WORKERS=2); Train tab "GPU memory" box and run-card notes; status polls slow to 15 s when the

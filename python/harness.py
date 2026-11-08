@@ -1649,7 +1649,10 @@ def load_data(cfg):
         from torchvision import datasets
         cls = {"mnist": datasets.MNIST, "fashion_mnist": datasets.FashionMNIST, "cifar10": datasets.CIFAR10}[DATASET["builtin"]]
         root = os.path.join(DATA, "torchvision")
-        train, test = cls(root, train=True, download=True, transform=train_t), cls(root, train=False, download=True, transform=test_t)
+        # torchvision's download bar writes every update as a new line in a log (Kaggle's, log.txt): hundreds of lines
+        import contextlib, io
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+            train, test = cls(root, train=True, download=True, transform=train_t), cls(root, train=False, download=True, transform=test_t)
         train_eval = cls(root, train=True, download=False, transform=test_t)
     elif src == "huggingface":
         from datasets import load_dataset
@@ -2508,8 +2511,15 @@ def main():
             device = torch.device("cuda", RANK)
             torch.cuda.set_device(device)
         # an hour: the other workers wait while rank 0 evaluates; a hang ends after it instead of using the GPU until the time limit
-        torch.distributed.init_process_group("nccl" if device.type == "cuda" else "gloo", rank=RANK, world_size=WORLD,
-                                             timeout=datetime.timedelta(hours=1))
+        kw = dict(rank=RANK, world_size=WORLD, timeout=datetime.timedelta(hours=1))
+        if device.type == "cuda":
+            # each worker names its GPU, so NCCL does not guess it from the rank ("this can cause a hang") and barrier() knows it
+            kw["device_id"] = device
+        try:
+            torch.distributed.init_process_group("nccl" if device.type == "cuda" else "gloo", **kw)
+        except TypeError:  # PyTorch before 2.3: no device_id
+            kw.pop("device_id", None)
+            torch.distributed.init_process_group("nccl" if device.type == "cuda" else "gloo", **kw)
         if RANK:
             torch.distributed.barrier()   # rank 0 downloads the data and weights first; the others then find them in the cache
     DEVICE = device
