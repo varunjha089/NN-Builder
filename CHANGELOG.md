@@ -3,6 +3,21 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 08_11_26_11_31_31
+
+**Lab pools, resume after a reboot, overnight report** (`13e3b6e`)
+
+- Machine group: Train on "any free machine of <group>" asks every machine of
+  the group at once and takes the first that answers with an idle GPU and no
+  NN Builder run (seeds go to different machines); it says why the others
+  were not taken (in use, busy, not answering: on the lab network?).
+- Resume runs after a reboot (SSH, not SLURM): the run keeps resume_wanted,
+  checkpoints every few minutes, a clean shutdown counts as an interruption,
+  and crontab @reboot starts it again from its checkpoint.
+- Overnight report on the Projects page: the app looks at every unfinished
+  run in all projects (every 2 min, and once at start) and lists the runs that
+  ended since "Mark as seen" with result, epochs, time and machine.
+
 ## 08_11_26_11_12_30
 
 **Shared GPU servers: GPU "free" waits for idle GPUs, then takes them** (`881a1a9`)
