@@ -3,6 +3,15 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 08_11_26_10_34_35
+
+**train.py: a GPU use line halfway through every epoch** (`7447e30`)
+
+Rank 0 prints how many GPUs train and, per GPU, memory used / total and how
+busy it is (nvidia-smi, so no CUDA context opens on the other workers' GPUs;
+PyTorch's own figure when nvidia-smi is missing). TEST_APP: 6.3 again on
+Kaggle T4 x2 (TEST 21, 85.42 %); 6.4 needs an SSH machine with 2+ GPUs.
+
 ## 08_11_26_09_39_46
 
 **Projects page: Running Task tiles, opened projects as tiles with a description** (`656839f`)
