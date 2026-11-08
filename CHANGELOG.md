@@ -3,6 +3,13 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 08_11_26_09_30_35
+
+**Projects page: opened projects as their own folding section** (`9458dd5`)
+
+Moved out of the Open card to a full-width section above the demo
+architectures; the Open card keeps only the folder field.
+
 ## 08_11_26_09_20_29
 
 **Projects page: open-folder field on top, opened projects fold** (`647ea53`)
