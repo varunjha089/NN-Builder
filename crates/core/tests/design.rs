@@ -1000,6 +1000,7 @@ fn run_sh_on_spot_keeps_a_shutdown_resumable() {
         let sh = nnb_core::runs::run_script(&TrainSettings::default(), &p, &m, "", spot);
         assert_eq!(sh.contains("NNB_SPOT=1"), spot);
         assert_eq!(sh.contains("is-system-running"), spot);
+        assert!(sh.contains("= 75 ] && [ -f resume_wanted ]; then exit 0"), "exit 75 keeps the run resumable, whatever the signal was");
         let out = std::process::Command::new("bash").arg("-n").arg("-c").arg(&sh).output().unwrap();
         assert!(out.status.success(), "spot={spot}: {}\n{sh}", String::from_utf8_lossy(&out.stderr));
     }

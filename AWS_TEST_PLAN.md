@@ -273,3 +273,9 @@ Left in the account: the security group nnb-spot-test (ssh from one address; fre
   - the epoch-8 checkpoint was already on the Mac (mirror.json, copied 06:50:30).
 - 06:57 stopped; 06:58:55 started again. AWS refused the start until the spot request had changed from "marked-for-stop" to
   "instance-stopped-by-user" (about 1.5 minutes after the instance stopped).
+- Found: the run did **not** resume. During the shutdown the stop signal made train.py end the run as "stopped" (99.1 % after 10
+  epochs) and run.sh removed resume_wanted. Fix 1 (8b70b8d): on spot, a TERM while the machine shuts down is an interruption.
+- Second try (run 071124, 07:11): train.py now checkpointed mid-epoch 10 and exited 75, but run.sh still removed resume_wanted. Its own
+  shutdown check had not seen "stopping", so resume.sh (started by cron at boot) skipped the run and the app showed "crashed". Fix 2:
+  run.sh trusts the exit code: 75 with resume_wanted still present keeps the run resumable. The app's Stop removes resume_wanted
+  first, so a Stop still ends a run.

@@ -614,7 +614,10 @@ pub fn run_script(t: &codegen::TrainSettings, p: &Prepared, m: &Machine, gpu: &s
     let stop = if m.kind == "aws" && t.stop_instance { "sudo -n shutdown -h +2 >> log.txt 2>&1\n" } else { "" };
     let ck_env = if spot && t.checkpoint_minutes <= 0.0 { format!(" NNB_CHECKPOINT_MINUTES={}", codegen::SPOT_CHECKPOINT_MINUTES) } else { String::new() }
         + if spot { " NNB_SPOT=1" } else { "" };
-    // spot: TERM while the machine shuts down is an interruption (train.py checkpoints and exits 75), so run.sh keeps resume_wanted
+    // spot: TERM while the machine shuts down is an interruption (train.py checkpoints and exits 75). run.sh trusts that exit code: 75
+    // with resume_wanted still there (the app's Stop removes it first) keeps the run resumable and does not shut the instance down.
+    // (Deciding by the shutdown state in run.sh too removed resume_wanted on the second real spot test, 2026-11-08: its own check
+    // did not see "stopping" when its signal came.)
     let trap = if spot {
         "trap 'if [ \"$(systemctl is-system-running 2>/dev/null)\" = stopping ]; then kill -USR1 \"$(cat py_pid.txt 2>/dev/null)\" 2>/dev/null; \
          else STOPPED=1; kill -TERM $TP 2>/dev/null; fi' TERM INT HUP"
@@ -643,7 +646,7 @@ pub fn run_script(t: &codegen::TrainSettings, p: &Prepared, m: &Machine, gpu: &s
          while kill -0 $TP 2>/dev/null; do wait $TP; CODE=$?; done\n\
          {watch_end}echo $(( USED + $(date +%s) - T0 )) > used_seconds.txt\n\
          echo $CODE > exit_code.txt\n\
-         if [ \"$CODE\" = {re} ] && [ \"$STOPPED\" = 0 ]; then exit 0; fi\n\
+         if [ \"$CODE\" = {re} ] && [ -f resume_wanted ]; then exit 0; fi\n\
          rm -f resume_wanted\n\
          {stop}",
         h = t.max_hours,
