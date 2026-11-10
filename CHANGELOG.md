@@ -3,6 +3,10 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 10_11_26_09_29_21
+
+**TEST_APP: TEST 22 (custom blocks) and TEST 23 (GShard MoE) on a Kaggle T4** (`756dbe7`)
+
 ## 10_11_26_08_34_54
 
 **CI: the MoE capacity check no longer overwrites the early-exit results it prints** (`4a741ee`)
