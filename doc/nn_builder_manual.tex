@@ -1100,6 +1100,58 @@ readable only by its owner, through the SSH connection's input, never on a comma
         60 MB) used to talk to Kaggle and AWS. No deep-learning library is installed.
 \end{description}
 
+\subsection{Adding a machine, step by step}
+\label{sec:add-machine}
+The form \ui{Add a machine} is at the bottom of the Connection tab (Figure~\ref{fig:add-machine}). The grey text in each field is only a hint
+(an example, or the default used when the field stays empty). A machine needs only a type, a name and a host (usually with a user);
+everything else may stay as it is.
+
+\screenshot{connection_add_machine.png}{The form \emph{Add a machine} for a college or other SSH server. Grey text is only a hint; usually
+only Name, Host and User need to be filled in.}{fig:add-machine}
+
+\begin{enumerate}
+  \item \textbf{Type.} \ui{College / any SSH server} for a machine you reach with \texttt{ssh} (a college GPU server, a lab computer, a
+        rented server); \ui{AWS EC2 instance} for an instance the application should start and stop (the fields change to Region,
+        Instance id, User and Key file, the AWS key above must be saved first).
+  \item \textbf{Name.} Your own short name, shown in \ui{Train on} (for example \texttt{college-gpu}): letters, digits, spaces, \texttt{-}, \texttt{\_} and
+        \texttt{.}. Saving under a name already in the list replaces that machine.
+  \item \textbf{Host and User.} The server's address (\texttt{gpu01.college.edu} or an IP) and your login name on it, exactly as you
+        would type \texttt{ssh user@host}. If you already have an entry for it in \file{\textasciitilde/.ssh/config}, put that alias in
+        Host and leave User, Port, Jump host and Key file empty: \texttt{ssh} takes them from the file.
+  \item \textbf{Port.} 22 unless the server's administrator gave you another one.
+  \item \textbf{Login.} \ui{Key / ssh config} when \texttt{ssh} logs you in without asking for a password (a key in
+        \file{\textasciitilde/.ssh}); \ui{Password (log in once in Terminal)} when it asks for one. The application never sees the
+        password: you type it in a Terminal window and it reuses that connection.
+  \item \textbf{Jump host} (optional). When the server is reachable only through a gateway (\texttt{ssh -J user@gateway \ldots}), the
+        gateway as \texttt{user@gateway.college.edu}. Not needed when this Mac is on the college network or VPN.
+  \item \textbf{Key file} (optional). A key that is not one of \texttt{ssh}'s default ones, e.g.\ \file{\textasciitilde/.ssh/id\_ed25519}.
+  \item \textbf{Keep runs going with.} Leave it on \ui{automatic}; it picks SLURM, \texttt{systemd-run}, \texttt{tmux} or
+        \texttt{nohup} as the machine allows. Choose SLURM yourself on a cluster where jobs must go through the queue.
+  \item \textbf{Remote folder.} Where runs, data and the Python environment go, relative to your home folder on the machine (default
+        \file{.nn\_builder}). Change it when your home folder is small and the server has a larger scratch disk.
+  \item \textbf{Keep a copy of checkpoints on this Mac.} Off for a college server; turn it on for EC2 spot instances.
+  \item \textbf{Group} (optional). The same word (e.g.\ \texttt{lab}) on several machines makes them a pool: \ui{Train on} then offers
+        \ui{Any free machine of lab}.
+  \item \textbf{Resume runs after a reboot.} Leave it on (the default for new machines) so a run cut off by a restart or power cut
+        continues from its last checkpoint.
+  \item \textbf{Python with PyTorch on the machine} (optional). Leave it empty and the application makes its own environment with
+        PyTorch in the remote folder, without administrator rights. Fill it in only to use a Python that already has PyTorch (for
+        example \file{/opt/conda/bin/python}).
+  \item \ui{Save}. The machine appears in the list above the form, and a message says what to do next.
+\end{enumerate}
+
+\noindent After saving, in the machine's row:
+\begin{enumerate}
+  \item With a password login: \ui{Connect (log in once)}, then type the password in the Terminal window that opens.
+  \item \ui{Test} checks that the application can log in. For an AWS machine, \ui{Check instance} reports its state and shutdown
+        behaviour instead.
+  \item \ui{Prepare} looks at Python, the GPUs (\texttt{nvidia-smi}) and the disk, and installs PyTorch if needed (a few minutes the
+        first time). The row then shows the PyTorch version, the GPUs and how runs are kept going. The first run prepares the machine by
+        itself if you skip this.
+  \item The machine is now offered in the Training tab under \ui{Train on}.
+\end{enumerate}
+\ui{Edit} changes a machine with the same form; \ui{Delete} removes it from the list only (nothing on the machine is touched).
+
 \subsection{Machines}
 \textbf{College / any SSH server.} Host (or an alias from \file{\textasciitilde/.ssh/config}), user, port, login by key or
 \emph{password}, optional jump host, remote folder (default \file{.nn\_builder}), optional existing Python with PyTorch. With a password,

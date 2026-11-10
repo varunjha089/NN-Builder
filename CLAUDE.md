@@ -351,6 +351,8 @@ doc/nn_builder_manual.tex  the user manual (LaTeX, plain thebibliography, no bib
                            doc/figures/*.jpg: screenshots (1440×900 window, JPEG). Take them from a copy started with a neutral
                            NN_BUILDER_HOME (e.g. /Users/Shared/nnb-screens with projects_dir "~/NN_Builder_Projects", auto_update false) so
                            no user name, path or real project shows; never the Connection tab (it shows Keychain account names).
+                           Exception: doc/figures/connection_add_machine.png (sec:add-machine, "Adding a machine, step by step") is only
+                           the empty "Add a machine" form (placeholders, no saved machine or account), cropped by the owner.
                            Kinds of data (sec:data-kinds): doc/figures/kind_*.png = GENERATED example data drawn by
                            doc/screens/data_pictures.py (numpy + matplotlib; no download), data_*.png = the Dataset tab drawn by the real UI
                            (web/dist) in headless Chrome with doc/screens/stub.js answering app_state / project_load from
