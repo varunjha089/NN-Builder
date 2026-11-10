@@ -3,6 +3,10 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 10_11_26_19_39_07
+
+**Manual: TEST 24, one CIFAR-10 network with every classifier block once** (`eb895e3`)
+
 ## 10_11_26_19_16_32
 
 **Manual: adding a machine, step by step, with a screenshot of the form** (`d512f47`)
