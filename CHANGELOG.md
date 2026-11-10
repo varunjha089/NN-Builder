@@ -3,6 +3,16 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 10_11_26_07_34_19
+
+**Mixture of experts: GShard capacity and random second expert; MoE Transformer (GShard) demo** (`e2c5974`)
+
+The Mixture of experts block gets two options from GShard: a capacity factor (each expert takes at most
+capacity x its fair share of a batch's tokens, first choices first; text: cap 1.25) and a random second
+expert while training (text: random). New demo: GShard's post-norm encoder with a mixture of experts in
+every other layer (2,198,306 parameters, counted by hand in the test). CI checks the capacity and the
+random routing in PyTorch. Manual, CLAUDE.md, README; expert parallelism noted in FUTURE_PLAN.
+
 ## 08_11_26_20_02_35
 
 **Tests: lab pool machines get their own work folder (CI on Linux counted the earlier runs' locks)** (`0ec9568`)
