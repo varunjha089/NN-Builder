@@ -3,6 +3,18 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 10_11_26_12_21_43
+
+**Several GPUs: workers leave the process group together on a spot interruption** (`d3e1010`)
+
+CI's parallel check failed once with exit 250 (SIGABRT) instead of 75 after
+SIGUSR1: on an interruption every worker called sys.exit(75) while the gloo
+group was still open, the same abort fixed earlier for the normal end of a
+run. After the synced interrupt flag the workers now meet at a barrier and
+destroy the group before exiting. The path where rank 0 alone is interrupted
+during evaluation is left as it was (a barrier there could wait for workers
+that are in another collective call).
+
 ## 10_11_26_11_34_48
 
 **Text tab: no old text carried into another design; first edit of a demo keeps blocks** (`9ca4454`)
