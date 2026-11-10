@@ -3,6 +3,18 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 10_11_26_11_34_48
+
+**Text tab: no old text carried into another design; first edit of a demo keeps blocks** (`9ca4454`)
+
+Found while testing auto numbering in the window. Opening another design
+with the Text tab open saved the old text as an unapplied draft of the new
+design (the state still held it at unmount), and it was applied when the tab
+was shown again; the shown text is now tracked in a ref. design_from_text
+matched against the stored design, which for a demo draft has no labels, so
+the first edit gave every block a new id and rearranged the canvas; it now
+matches against dsl::sync of it, labelled as the window shows it.
+
 ## 10_11_26_11_10_18
 
 **Text tab: auto numbering and Renumber** (`1cdad1c`)
