@@ -104,6 +104,8 @@ export function TextTab({ graph, analysis, persist, applyText, format, showBlock
   // the text this tab last saw on the design: a different one (canvas change, undo, Format) replaces what is shown, unless typing is pending
   const seen = useRef(graph.text ?? "");
   const typing = useRef(false);
+  // the text shown, kept in step at once (the state follows a render later)
+  const shown = useRef(text);
   // labels moved by auto numbering / Renumber since the text was last applied: the blocks follow them (dsl::apply_renamed)
   const renames = useRef<Rule[][]>([]);
 
@@ -111,18 +113,17 @@ export function TextTab({ graph, analysis, persist, applyText, format, showBlock
   useEffect(() => { if (!graph.text) persist(graph).catch((e) => toast(errText(e))); }, [graph, persist, toast]);
   useEffect(() => {
     const t = graph.text ?? "";
-    if (t !== seen.current && !typing.current) { setText(t); setErrors([]); renames.current = []; }
+    if (t !== seen.current && !typing.current) { setText(t); shown.current = t; setErrors([]); renames.current = []; }
     seen.current = t;
   }, [graph.text]);
-  // the latest text, for keeping a draft when the tab is left
-  const latest = useRef({ text, base: graph.text ?? "" });
-  latest.current = { text, base: graph.text ?? "" };
   useEffect(() => {
     // a draft brought back: show its problems again
-    if (draft && draft.text === latest.current.text && draft.text !== latest.current.base) apply(draft.text);
+    if (draft && draft.text === shown.current && draft.text !== seen.current) apply(draft.text);
     return () => {
       window.clearTimeout(timer.current);
-      draft = latest.current.text !== latest.current.base ? { base: latest.current.base, text: latest.current.text } : null;
+      // the text shown now (a ref, not the state: when another design was just loaded, the state still holds the old design's text,
+      // which must not become a draft of the new one) against the design's text
+      draft = shown.current !== seen.current ? { base: seen.current, text: shown.current } : null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -142,6 +143,7 @@ export function TextTab({ graph, analysis, persist, applyText, format, showBlock
 
   const change = (t: string) => {
     setText(t);
+    shown.current = t;
     typing.current = true;
     window.clearTimeout(timer.current);
     // the canvas follows the text a quarter of a second after typing stops (when the text is valid)

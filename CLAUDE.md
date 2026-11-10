@@ -86,7 +86,7 @@ crates/core/src/
                            removed or rewired on plain lines (a group's outside input may change); TextTab colours words (highlight())
                            and ⌘-click selects a block; the text applies 0.25 s after typing; auto numbering (web/src/numbering.ts: Enter types the next
                            label and shifts the labels below with their references; Renumber button; the renames go to design_from_text ->
-                           dsl::apply_renamed so moved blocks keep ids and positions; tests/text.rs renumbered_lines_keep_their_blocks); canvas and text stay separate tabs; Design.tsx groupByText groups the layer table by text line;
+                           dsl::apply_renamed so moved blocks keep ids and positions; design_from_text matches against dsl::sync of the stored design, whose labels a demo draft may lack; tests/text.rs renumbered_lines_keep_their_blocks); canvas and text stay separate tabs; Design.tsx groupByText groups the layer table by text line;
                            wrap_rows lays long text designs out in rows of 24; File → Import/Export Design… reads/writes .nnb too;
                            doc/language.tex = the manual's language chapter (\input by the manual;
                            its examples are doc/examples/*.nnb via \VerbatimInput; tests/text.rs builds every example and every

@@ -282,7 +282,9 @@ async fn save_graph(st: State<'_, App>, graph: Graph) -> R<Value> {
 #[tauri::command]
 async fn design_from_text(st: State<'_, App>, text: String, renames: Option<Vec<Vec<(String, String)>>>) -> R<Value> {
     let p = project(&st)?;
-    match nnb_core::dsl::apply_renamed(&text, &p.graph(), &renames.unwrap_or_default()) {
+    // labelled as the window shows it (project_load syncs; a demo's design on disk may have no labels yet), so blocks keep their ids
+    let old = nnb_core::dsl::sync(&p.graph());
+    match nnb_core::dsl::apply_renamed(&text, &old, &renames.unwrap_or_default()) {
         Ok(g) => {
             p.save_graph(&g).map_err(e)?;
             let d = p.dataset();
