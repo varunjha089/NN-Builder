@@ -11,6 +11,8 @@ block with its output shape and parameter count. The counts are the application'
 Most of these networks are deliberately tiny: they test that a feature works end to end (data, shapes, training, results), not how good
 a network can be. Projects 2--10, 14 and 15 use \emph{generated} data (patterns drawn by a script, so the right answer is known);
 1, 11, 12, 13, 16, 17 and 19 use real data (EuroSAT, CIFAR-10, and Sentinel-1/2 exported from Google Earth Engine).
+TEST 24 (10 November) came later: one CIFAR-10 network that uses every block a classifier can use, each exactly once, built in the
+application window (Section~\ref{sec:test24}).
 
 \paragraph{How the parameters are counted.} The counts follow from a few rules (Section~\ref{sec:blocks} has every block):
 \begin{itemize}[nosep]
@@ -51,6 +53,7 @@ The screenshots were taken from copies of the projects in a neutral settings fol
 16 & Small CNN (CIFAR-10) demo on an EC2 g4dn.xlarge & $3\times32\times32$ & 29 & 551\,018 & 40.5\,\% (2 epochs), 79.5\,\% (10 epochs), Stop: 75.7\,\%\\
 17 & 40 real S2 L1C + S1 exports, fused & $15\times64\times64$ & 7 & 23\,562 & data check passed (no training)\\
 19 & the app's own GEE script: S2 + WorldCover, from a Drive link & $4\times64\times64$ & 5 & 10\,859 & 79.8\,\% pixels (built-up IoU 0.71, trees 0.67)\\
+24 & every classifier block once (36 kinds), set by hand, CIFAR-10 & $3\times32\times32$ & 36 & 94\,777 & built and checked in the window (not trained)\\
 \bottomrule
 \end{longtable}}
 
@@ -631,5 +634,101 @@ t4 & Conv2D & 32 filters, $3\times3$, same, relu & $32\times64\times64$ & 9\,248
 t5 & Segmentation output &  & $11\times64\times64$ & 363\\
 \midrule
  & \textbf{Total} & & & \textbf{10\,859}\\
+\bottomrule
+\end{longtable}}
+
+\subsection{TEST 24: every classifier block once}
+\label{sec:test24}
+
+TEST 24 is one small CIFAR-10 network that uses each of the 36 blocks a classifier can use exactly once, with every block's settings
+chosen by hand. It was written in the Text tab, pasted into the application window, and checked there: the Design screen reports
+\emph{The design is complete: every shape fits}. TEST 13 does the same for the text language, with many blocks repeated; here each
+kind appears once, so the design can be read block by block. It shows the blocks working together; it is not meant to reach a high
+accuracy.
+
+\screenshot{figures/tests/test24.jpg}{TEST 24 on the Design screen: 94\,777 parameters (90\,553 trained, 4\,224 frozen), input
+$3\times32\times32$, 10 classes, 42.8\,M MACs per image.}{fig:test24}
+
+\begin{figure}[htbp]\centering\includegraphics[width=\linewidth,height=0.55\textheight,keepaspectratio]{figures/tests/test24_arch.png}\caption{TEST 24 as a picture: \ui{Save as PNG} on the Design screen (or \ui{File} $\rightarrow$ \ui{Export Design as PNG}) draws the whole design at full size; long designs are split into rows here to fit the page.}\label{fig:test24arch}\end{figure}
+
+\paragraph{The four parts.}
+\begin{itemize}[nosep]
+  \item \emph{CNN stem} (t1--t10). Conv2D, BatchNorm and ReLU, then a max pool and a depthwise convolution take the image to
+        $32\times8\times8$; a $4\times4$ kernel with padding 1 halves 16 to exactly 8 (with $3\times3$ the application warns that the
+        last row and column are dropped). GroupNorm (8 groups of 4 channels) follows. Two kinds of up-sampling bring the map back to
+        $16\times16$: a learned ConvTranspose2D and a fixed bilinear Upsample, multiplied pixel by pixel.
+  \item \emph{Time path} (t11--t18). A Custom block, the class \texttt{Views} in the design's own PyTorch code, stacks the map as
+        it is, mirrored left--right, upside down and both, as four ``dates''. Its line \texttt{\# out: c, 4, h, w} declares the shape
+        $32\times4\times16\times16$. Conv3D looks at three neighbouring views at once ($3\cdot3\cdot3\cdot32\cdot32+32=27\,680$).
+        Temporal pool (attention, $32+1$ weights) merges the views into one map for the transformer; To sequence turns them into a
+        4-step sequence for Conv1D, LSTM ($4(32\cdot32+32^2+2\cdot32)=8\,448$) and a two-way GRU ($2\cdot3(32\cdot32+32^2+2\cdot32)=12\,672$),
+        flattened to 256 numbers.
+  \item \emph{Transformer path} (t19--t28). The $16\times16$ map becomes 256 tokens of 32 features; a class token and learned
+        positions make 257 ($32+257\cdot32=8\,256$). Self-attention has LoRA rank 4: its $4\cdot32^2+4\cdot32=4\,224$ weights are
+        frozen and only the $4\,992-4\,224=768$ weights of the rank-4 adapters train. Then come a residual Add, RMSNorm, a SwiGLU MLP ($3\cdot32\cdot64=6\,144$),
+        a mixture of 4 experts with 2 per token, and cross-attention in which the processed tokens (queries) look at the raw patch
+        tokens t19 (keys and values). Token pool keeps the class token.
+  \item \emph{Head} (t29--t35). Global pool gives the CNN path's vector, which also feeds an early exit (share of the loss 0.3). Dense
+        t30 maps it to 32 numbers, and the Shared-weights block t31 applies the same Dense to the transformer vector (the Siamese idea:
+        both in one space). Subtract gives $|a-b|$; Concat joins $32+32+32+256=352$ numbers; Dropout 0.2 and the Output
+        ($352\cdot10+10=3\,530$) end the network.
+\end{itemize}
+Two blocks of the palette are not used: \emph{Segmentation output} and \emph{Detection output} need a dataset with masks or boxes, and a
+network has one kind of output (TEST 15 and TEST 9 use them).
+
+\screenshot{figures/tests/test24_text.jpg}{TEST 24 on the Text tab: the design's PyTorch code (the \texttt{Views} class) and the CNN
+stem. Each line is a block; \texttt{<-} names other inputs.}{fig:test24text}
+
+\paragraph{Training settings.} CIFAR-10 photos are objects that may face either way, so the run uses a horizontal flip and a random
+crop with 4 pixels of padding. The recipe is \ui{Use recommended} (AdamW, weight decay 0.05, cosine decay, label smoothing 0.1,
+gradient clipping at 1) with the warm-up cut to 2 of 20 epochs, batch 128, learning rate 0.001, and a 10\,\% validation part with
+early stopping after 5 epochs without improvement. The application estimates 0.75\,GB of GPU memory at batch 128.
+
+\screenshot{figures/tests/test24_train.jpg}{TEST 24 on the Train tab: augmentation, the recommended recipe with a 2-epoch warm-up, and
+the validation part.}{fig:test24train}
+
+{\small
+\begin{longtable}{@{}lp{3.2cm}p{5.4cm}lr@{}}
+\toprule
+\textbf{Id} & \textbf{Block} & \textbf{Settings} & \textbf{Output} & \textbf{Parameters}\\
+\midrule\endhead
+t1 & Input & CIFAR-10 & $3\times32\times32$ & 0\\
+t2 & Conv2D & 32 filters, $3\times3$, same, none, no bias & $32\times32\times32$ & 864\\
+t3 & BatchNorm &  & $32\times32\times32$ & 64\\
+t4 & Activation & relu & $32\times32\times32$ & 0\\
+t5 & Pool & max 2$\times$2 & $32\times16\times16$ & 0\\
+t6 & Depthwise Conv2D & $\times1$, $4\times4$, stride 2, pad 1, none, no bias & $32\times8\times8$ & 512\\
+t7 & GroupNorm & 8 groups & $32\times8\times8$ & 64\\
+t8 & ConvTranspose2D & 32 filters, $2\times2$, stride 2, none & $32\times16\times16$ & 4\,128\\
+t9 & Upsample & $\times2$ bilinear, from t7 & $32\times16\times16$ & 0\\
+t10 & Multiply & t8 $\times$ t9 & $32\times16\times16$ & 0\\
+t11 & Custom (PyTorch) & class \texttt{Views}, \texttt{\# out: c, 4, h, w} & $32\times4\times16\times16$ & 0\\
+t12 & Conv3D & 32 filters, $3\times3$ $\times$ 3 dates, same, relu & $32\times4\times16\times16$ & 27\,680\\
+t13 & Temporal pool & attention & $32\times16\times16$ & 33\\
+t14 & To sequence & from t12 & $4\times32$ & 0\\
+t15 & Conv1D & 32 filters, kernel 3, same, relu & $4\times32$ & 3\,104\\
+t16 & LSTM & 32 units & $4\times32$ & 8\,448\\
+t17 & GRU & 32 units, both directions & $4\times64$ & 12\,672\\
+t18 & Flatten &  & $256$ & 0\\
+t19 & To tokens & patches, from t13 & $256\times32$ & 0\\
+t20 & Class token + position & class token, learned positions & $257\times32$ & 8\,256\\
+t21 & LayerNorm &  & $257\times32$ & 64\\
+t22 & Self-attention & 4 heads, dropout 0.1, LoRA rank 4 & $257\times32$ & 4\,992\\
+t23 & Add & t20 + t22 & $257\times32$ & 0\\
+t24 & RMSNorm &  & $257\times32$ & 32\\
+t25 & SwiGLU & 64 hidden units & $257\times32$ & 6\,144\\
+t26 & Mixture of experts & 4 experts, top 2, 32 hidden & $257\times32$ & 8\,580\\
+t27 & Cross-attention & 4 heads; queries t26, keys/values t19 & $257\times32$ & 4\,224\\
+t28 & Token pool & class token & $32$ & 0\\
+t29 & Global pool & avg, from t10 & $32$ & 0\\
+tex & Early exit & share of the loss 0.3 & $10$ & 330\\
+t30 & Dense & 32 units, gelu & $32$ & 1\,056\\
+t31 & Shared weights & weights of t30, on t28 & $32$ & 0\\
+t32 & Subtract & $|t30 - t31|$ & $32$ & 0\\
+t33 & Concat & t30, t31, t32, t18 & $352$ & 0\\
+t34 & Dropout & rate 0.2 & $352$ & 0\\
+t35 & Output & main output & $10$ & 3\,530\\
+\midrule
+ & \textbf{Total} & (4\,224 of them frozen) & & \textbf{94\,777}\\
 \bottomrule
 \end{longtable}}

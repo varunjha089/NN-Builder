@@ -358,7 +358,7 @@ doc/nn_builder_manual.tex  the user manual (LaTeX, plain thebibliography, no bib
                            (web/dist) in headless Chrome with doc/screens/stub.js answering app_state / project_load from
                            examples/doc_screens.rs (no app window needed; PYTHON=<python with Pillow> trims the empty page):
                            (cd web && npm run build) && doc/screens/render.sh. Re-run both after Dataset-tab changes.
-                           doc/test_architectures.tex (sec:tests, \input after the demos): the 18 TEST projects of 2026-11-07 (TEST_APP.md),
+                           doc/test_architectures.tex (sec:tests, \input after the demos): the 18 TEST projects of 2026-11-07 (TEST_APP.md) plus TEST 24 (2026-11-10, every classifier block once, CIFAR-10; its testNN.jpg / _text / _train screenshots come from the owner's app window and show only that project),
                            each with doc/figures/tests/testNN.jpg (Design screen, night, taken from copies in a neutral NN_BUILDER_HOME,
                            1500 px JPEG) and testNN_arch.png (Save as PNG, split into rows of ~3,000 px at empty gaps), what it tests, the parameter arithmetic of its main blocks and a per-block table (per kind for
                            > 40 blocks). The tables were generated once from nnb_core::shapes::analyze of those projects (the projects
