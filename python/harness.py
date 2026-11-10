@@ -2678,10 +2678,19 @@ def main():
             dirty["v"] = False
             emit("checkpoint", epoch=pos["epoch"] + (1 if pos["step"] else 0), step=pos["step"], steps=steps, reason=reason)
 
-    def interrupted():
+    def interrupted(together=False):
         if dirty["v"]:
             checkpoint("spot interruption")
         emit("interrupted", epoch=pos["epoch"] + 1, step=pos["step"], steps=steps)
+        if together and WORLD > 1 and torch.distributed.is_initialized():
+            # every worker got here (the flag is synced after each step), so they leave the group together, as at the end of a run:
+            # a worker leaving while another still used it sometimes aborted it on exit (exit 250 = SIGABRT instead of 75 in CI,
+            # 2026-11-10), and the run was not resumed
+            try:
+                torch.distributed.barrier()
+                torch.distributed.destroy_process_group()
+            except Exception:
+                pass
         sys.exit(RESUME_EXIT)
 
     gpu = torch.cuda.get_device_name(device) if device.type == "cuda" else "cpu"
@@ -2875,7 +2884,7 @@ def main():
             if stopped or INTERRUPT:
                 break
         if INTERRUPT:
-            interrupted()
+            interrupted(together=True)
         if RANK:
             # the other workers are done: rank 0 tests the model and writes the results. They wait for that at a barrier and then all
             # leave the group together (one leaving while rank 0 still used it sometimes aborted it on exit: "terminate called ...")
