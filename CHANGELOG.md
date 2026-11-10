@@ -3,6 +3,18 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 10_11_26_11_10_18
+
+**Text tab: auto numbering and Renumber** (`1cdad1c`)
+
+Enter at the end of a numbered line types the next label (a number at the
+top level, a letter inside braces) and moves the labels below on by one when
+it is taken, together with their <- and shared references. Shift-Enter is a
+plain new line; Enter on a label-only line removes it and closes the gap.
+Renumber puts top-level numbers and group letters back in order. The renames
+go with the text to design_from_text (dsl::apply_renamed), so moved blocks
+keep their ids and canvas positions.
+
 ## 10_11_26_09_29_21
 
 **TEST_APP: TEST 22 (custom blocks) and TEST 23 (GShard MoE) on a Kaggle T4** (`756dbe7`)
