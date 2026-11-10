@@ -340,7 +340,7 @@ LABEL attention [heads] HEADS [drop RATE] [causal] [rotary]
 LABEL cross_attention [heads] HEADS [drop RATE] <- ASKING, LOOKED_AT       (also xattn)
 LABEL rmsnorm                                                           (also rms)
 LABEL swiglu HIDDEN
-LABEL moe EXPERTS [top K] [hidden UNITS]
+LABEL moe EXPERTS [top K] [hidden UNITS] [cap FACTOR] [random]
 LABEL exit [WEIGHT]                  an early exit (classification): needs a vector
 ... frozen                           any block with weights: not trained;  dense / attention ... lora RANK: a LoRA adapter
 LABEL token_pool [cls | mean | last]

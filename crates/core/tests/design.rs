@@ -252,6 +252,9 @@ fn every_template_is_valid_and_compiles() {
     // MSG-Former, counted by hand: stem 928, gated blocks 38,288 + 152,352, class token + positions 8,448, 2 encoders 264,960,
     // final LayerNorm 256, head 1,290
     assert_eq!(p("msg_former"), 466_522);
+    // GShard MoE encoder, counted by hand (d = 128, 65 tokens): patch convolution 6,272, class token + positions 8,448, 6 attentions
+    // 396,288, 12 LayerNorms 3,072, 3 MoE layers × (router 1,032 + 8 experts × 65,920) 1,585,176, 3 dense FFNs 197,760, head 1,290
+    assert_eq!(p("moe_transformer"), 2_198_306);
     // ViT-g/14, counted by hand: 40 blocks × 25,250,176 (attention 4d²+4d, MLP 2·d·6144 + 6144 + d, two LayerNorms) + patch convolution
     // 829,312 + class token and 257 positions 363,264 + final LayerNorm 2,816 + head 14,090
     assert_eq!(p("vit_g14"), 1_011_216_522);
@@ -921,6 +924,13 @@ fn adapters_experts_and_exits() {
     assert!(msg("1 input\n2 conv 8 2x2 stride 2\n3 to_tokens\n4 moe 2 top 3\n5 token_pool mean\n6 output\n", &ds).contains("only 2"));
     let seg = Dataset { task: "segment".into(), ..ds.clone() };
     assert!(msg("1 input\n2 conv 8 3x3\n3 global_pool\n4 exit\n5 seg_output <- 2\n", &seg).contains("classification"));
+    // GShard options in the code (only when set), and the warnings where they do nothing or drop tokens anyway
+    let gs = |t: &str| { let g = nnb_core::dsl::apply(t, &Graph::default()).unwrap(); let a = analyze(&g, &ds); (train_script(&g, &ds, &a, &TrainSettings::default(), "gs").unwrap(), a) };
+    let (code, a) = gs("1 input\n2 conv 8 2x2 stride 2\n3 to_tokens\n4 moe 4 top 2 hidden 16 cap 1.25 random\n5 token_pool mean\n6 output\n");
+    assert!(a.ok && code.contains("MoE(8, 4, 2, 16, capacity=1.25, random_second=True)"), "{code}");
+    assert!(msg("1 input\n2 conv 8 2x2 stride 2\n3 to_tokens\n4 moe 4 top 1 random\n5 token_pool mean\n6 output\n", &ds).contains("does nothing with top 1"));
+    assert!(msg("1 input\n2 conv 8 2x2 stride 2\n3 to_tokens\n4 moe 4 top 2 cap 0.5\n5 token_pool mean\n6 output\n", &ds).contains("below the fair share"));
+    assert!(msg("1 input\n2 conv 8 2x2 stride 2\n3 to_tokens\n4 moe 4 top 2 cap 20\n5 token_pool mean\n6 output\n", &ds).contains("capacity is 20"));
 }
 
 /// a venv whose PyTorch needs its activate script (the AWS Deep Learning AMI keeps CUDA inside /opt/pytorch): Prepare and run.sh source it

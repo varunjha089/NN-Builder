@@ -413,23 +413,44 @@ const ADAPT_MODULES: &str = r#"class LoRALinear(nn.Module):
 class MoE(nn.Module):
     """a mixture of experts (Shazeer et al.; Switch, Mixtral): a router scores the experts for every token, the top_k experts (two-layer
     MLPs) process it and their outputs are mixed by the router's weights; a load-balancing loss (Switch Transformer) is kept in
-    self.nnb_aux for training"""
-    def __init__(self, dim, experts, top_k, units):
+    self.nnb_aux for training. GShard (Lepikhin et al. 2020) options: capacity > 0 lets each expert take at most capacity x its fair
+    share of the batch's tokens (first choices are served first; a token over the limit skips that expert, and one that gets no expert
+    passes through the block's residual), and random_second sends a token to its second expert only with probability 2 x that
+    expert's weight while training"""
+    def __init__(self, dim, experts, top_k, units, capacity=0.0, random_second=False):
         super().__init__()
         self.top_k = top_k
+        self.capacity = capacity
+        self.random_second = random_second
         self.router = nn.Linear(dim, experts)
         self.experts = nn.ModuleList(nn.Sequential(nn.Linear(dim, units), nn.GELU(), nn.Linear(units, dim)) for _ in range(experts))
         self.nnb_aux = None
+        self.nnb_dropped = 0.0
 
     def forward(self, x):
         shape = x.shape
         t = x.reshape(-1, shape[-1])
         probs = torch.softmax(self.router(t).float(), -1)
         w, idx = probs.topk(self.top_k, -1)
-        w = (w / w.sum(-1, keepdim=True)).to(x.dtype)
+        w = w / w.sum(-1, keepdim=True)
+        keep = torch.ones_like(w, dtype=torch.bool)
+        if self.random_second and self.training and self.top_k > 1:
+            keep[:, 1:] = torch.rand_like(w[:, 1:]) < 2 * w[:, 1:]
+        if self.capacity > 0:
+            n_exp = len(self.experts)
+            cap = max(1, int(-(-self.capacity * t.shape[0] * self.top_k // n_exp)))  # rounded up
+            used = torch.zeros(n_exp, dtype=torch.long, device=t.device)
+            for j in range(self.top_k):
+                hot = nn.functional.one_hot(idx[:, j], n_exp) * keep[:, j:j + 1]
+                # each token's place in its expert's queue, after the tokens already given to it
+                place = ((used + hot.cumsum(0) - 1) * hot).sum(-1)
+                keep[:, j] &= place < cap
+                used += (hot * keep[:, j:j + 1]).sum(0)
+        self.nnb_dropped = float((~keep.any(-1)).float().mean())
+        w = (w * keep).to(x.dtype)
         y = torch.zeros_like(t)
         for e, expert in enumerate(self.experts):
-            hit = (idx == e)
+            hit = (idx == e) & keep
             rows = hit.any(-1).nonzero().flatten()
             if len(rows):
                 y[rows] += expert(t[rows]) * (w * hit)[rows].sum(-1, keepdim=True)
@@ -606,7 +627,17 @@ fn modules(n: &Node, a: &Analysis, classes: usize) -> Vec<String> {
         "seg_output" => m.push(format!("nn.Conv2d(in_channels={}, out_channels={classes}, kernel_size=1)", inp[0])),
         "detect_output" => m.push(format!("DetectHead({}, {})", inp[0], r.out.as_ref().map(|o| o[0] - 4).unwrap_or(classes))),
         "exit_output" => m.push(format!("nn.Linear(in_features={}, out_features={classes})", inp[0])),
-        "moe" => m.push(format!("MoE({}, {}, {}, {})", inp.last().unwrap(), int(p, "experts", 4, 1, 256), int(p, "top_k", 2, 1, 256), int(p, "units", 128, 1, 1 << 20))),
+        "moe" => {
+            let mut a = format!("MoE({}, {}, {}, {}", inp.last().unwrap(), int(p, "experts", 4, 1, 256), int(p, "top_k", 2, 1, 256), int(p, "units", 128, 1, 1 << 20));
+            let cap = shapes::moe_capacity(p);
+            if cap > 0.0 {
+                a += &format!(", capacity={cap}");
+            }
+            if p.get("random_second").and_then(Value::as_bool).unwrap_or(false) {
+                a += ", random_second=True";
+            }
+            m.push(a + ")");
+        }
         _ => {}
     }
     m

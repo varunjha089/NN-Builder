@@ -54,7 +54,7 @@ function summary(kind: string, p: Params): string {
     case "attention": return `${p.heads} heads${Number(p.dropout) > 0 ? ` · dropout ${p.dropout}` : ""}${p.causal ? " · causal" : ""}${p.rotary ? " · rotary" : ""}${Number(p.lora) > 0 ? ` · LoRA ${p.lora}` : ""}`;
     case "cross_attention": return `${p.heads} heads · queries from the first arrow`;
     case "swiglu": return `${p.units} hidden units`;
-    case "moe": return `${p.experts} experts · top ${p.top_k} · ${p.units} hidden`;
+    case "moe": return `${p.experts} experts · top ${p.top_k} · ${p.units} hidden${Number(p.capacity) > 0 ? ` · cap ${p.capacity}` : ""}${p.random_second ? " · random 2nd" : ""}`;
     case "exit_output": return `early exit · loss × ${p.weight}`;
     case "token_pool": return p.mode === "mean" ? "mean of tokens" : p.mode === "last" ? "last step" : "class token";
     case "custom": return p.class ? `class ${p.class}` : "choose a class";
@@ -862,8 +862,13 @@ function Inspector({ node, result, analysis, graph, st, setParam, setParams, can
           <Num label="Experts" value={p.experts} min={1} max={256} onChange={(v) => setParam("experts", v)} />
           <Num label="Experts per token (top k)" value={p.top_k} min={1} max={256} onChange={(v) => setParam("top_k", v)} />
           <Num label="Hidden units per expert" value={p.units} max={1 << 20} onChange={(v) => setParam("units", v)} />
+          <Num label="Capacity (× fair share, 0 = no limit)" value={p.capacity ?? 0} min={0} max={16} step={0.05} onChange={(v) => setParam("capacity", v)} />
+          <label className="chk"><input type="checkbox" checked={!!p.random_second} onChange={(e) => setParam("random_second", e.target.checked)} />random second expert (GShard)</label>
           <p className="muted">A router scores the experts for every token; its top k experts (two-layer MLPs) process it, mixed by the router's
-            weights (Switch, Mixtral). More weights at about the cost of k experts per token; a small load-balancing loss keeps all experts in use.</p></>}
+            weights (Switch, Mixtral). More weights at about the cost of k experts per token; a small load-balancing loss keeps all experts in use.
+            GShard options: a capacity (e.g. 1.25) caps the tokens each expert takes per batch, first choices served first; a token over the limit
+            skips the experts and goes on through the residual Add. Random second expert: while training, the second choice is used only with
+            probability 2 × its weight.</p></>}
         {node.kind === "exit_output" && <>
           <Num label="Share of the loss" value={p.weight} min={0} max={10} step={0.1} onChange={(v) => setParam("weight", v)} />
           <p className="muted">An extra classifier part way through the network (from a vector: after Global pool): trained with the same labels,

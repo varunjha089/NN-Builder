@@ -787,6 +787,11 @@ fn adapters_experts_exits_in_text() {
     for l in ["conv 8 3x3 frozen", "exit 0.4", "dense 16 lora 4", "moe 8 top 1 hidden 32", "attention heads 2 lora 2 frozen"] {
         assert!(printed.contains(l), "{l} in\n{printed}");
     }
+    // GShard options: a capacity factor and the random second expert, printed back only when set
+    let gs = build("1 input\n2 conv 8 2x2 stride 2\n3 to_tokens\n4 moe 8 top 2 hidden 32 cap 1.25 random\n5 token_pool mean\n6 output\n");
+    assert_eq!((by_label(&gs, "4").params["capacity"].clone(), by_label(&gs, "4").params["random_second"].clone()), (json!(1.25), json!(true)));
+    assert!(print(&gs).0.contains("moe 8 top 2 hidden 32 cap 1.25 random"), "{}", print(&gs).0);
+    assert!(!print(&t).0.contains("cap") && !print(&t).0.contains("random"));
     // frozen only where there are weights
     assert!(err("1 input\n2 maxpool 2x2 frozen\n").message.contains("frozen"));
 }

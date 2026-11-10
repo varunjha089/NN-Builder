@@ -23,11 +23,12 @@ crates/core/src/
   model.rs                 Graph {nodes, edges}, KINDS (incl. multiply, seg_output, and for transformers to_tokens, cls_pos, attention,
                            token_pool: shapes of rank 2 = (tokens, dimension)), defaults(kind), arity, starter()
   templates.rs             famous architectures (LeNet-5, small CIFAR CNN, AlexNet, VGG-16, GoogLeNet, ResNet-18, MobileNet v1, small DenseNet,
-                           Transformer encoder on image rows, ViT-Base/16, ViT-Tiny, U-Net, Attention U-Net): TEMPLATES (key, title, year, task,
+                           Transformer encoder on image rows, ViT-Base/16, ViT-Tiny, MoE Transformer (GShard), U-Net, Attention U-Net): TEMPLATES (key, title, year, task,
                            input, about), build(key) with a left-to-right layout (a column per depth); plus one original design,
                            MSG-Former (msg_former: multi-scale dilated convolutions + squeeze-and-excitation gate + residual, then
                            Transformer encoders; 466,522 params, counted by hand in the test) and ViT-g/14 (vit_g14, 1,011,216,522 params,
-                           counted by hand; too big to train on a 16 GB T4, said in its description; CI builds it in PyTorch, ~4 GB RAM)
+                           counted by hand; too big to train on a 16 GB T4, said in its description; CI builds it in PyTorch, ~4 GB RAM); moe_transformer: GShard's
+                           post-norm encoder, MoE (8 experts, top 2, cap 1.25, random) in layers 1/3/5, 2,198,306 params counted by hand
                            Demos with a built-in dataset switch it to the one that fits their input (CIFAR-10 for 3×32×32, MNIST for
                            1×28×28) instead of resizing another (apply_template in main.rs).
                            Dataset → Read info (Hugging Face) keeps the chosen image/label columns when the dataset has them; else the
@@ -190,11 +191,13 @@ crates/core/src/
                            Step 9: param "frozen" on any SHAREABLE block (effective keeps it only when true; DSL word frozen; shapes
                            NodeResult.frozen + Analysis.frozen_params; codegen FROZEN list, harness requires_grad_(False)); "lora" rank on
                            dense / attention (LoRALinear: base frozen, B·A; SelfAttention explicit projections; params count base + rank·(in+out));
-                           kind moe (MoE: router + experts, top_k, nnb_aux balancing loss × AUX_WEIGHT); kind exit_output (classify only,
+                           kind moe (MoE: router + experts, top_k, nnb_aux balancing loss × AUX_WEIGHT; GShard options capacity (float 0–16, 0 = no limit, shapes::moe_capacity,
+                           first choices served first, nnb_dropped) and random_second (2nd choice kept with p = 2·weight, training only),
+                           passed to MoE(...) only when set; warnings for random with top 1 and capacity < 1); kind exit_output (classify only,
                            from a vector; forward collects exits -> self.nnb_exits, EXIT_WEIGHTS; extra_losses; exit_scores: per-exit accuracy
                            + stopping at 90 % confidence) -> "exits" in epoch / results; ResultsTab table. DSL: frozen, lora N, moe E top K
-                           hidden U, exit W (kind_word exit / detect). CI: ci_multiband_check adapters (frozen and LoRA base weights unchanged,
-                           adapters learnt, trainable count = app's).
+                           hidden U, exit W, moe … cap F random (kind_word exit / detect). CI: ci_multiband_check adapters (frozen and LoRA base weights unchanged,
+                           adapters learnt, trainable count = app's; MoE capacity: no expert over its cap, a large cap = no cap, random 2nd only while training).
                            Sentinel step finished: scene_split ("" random | strip = eastern tenth, one tile column gap | files =
                            scene_test_image/_label) in harness scene_split(); BigEarthNet layout: read_patch_folder (one GeoTIFF per band,
                            <patch>_<band>.tif, bands resized to the largest), label tables via read_table (CSV/TSV/Parquet, pyarrow on
@@ -339,7 +342,7 @@ web/src/                   Design.tsx: Save as PNG (PngExporter inside <ReactFlo
                            setPanels/usePanels); the Settings tab also has the theme and the automatic-update switch.
 .github/workflows/ci.yml   core tests + PyTorch comparison on GitHub's machines
 doc/nn_builder_manual.tex  the user manual (LaTeX, plain thebibliography, no biber): app tour, step-by-step design, arithmetic, block
-                           reference, dataset/code/connection/train/results, spot handling, the 15 demos (numbers from the app),
+                           reference, dataset/code/connection/train/results, spot handling, the 16 demos (numbers from the app),
                            troubleshooting; nn_builder_manual.pdf is committed next to it. Build: cd doc && latexmk -pdf
                            nn_builder_manual.tex. Keep it in step with features (new blocks, demos, settings, menus) and recompile.
                            doc/figures/*.jpg: screenshots (1440×900 window, JPEG). Take them from a copy started with a neutral

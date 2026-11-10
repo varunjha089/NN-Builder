@@ -100,6 +100,7 @@ pub fn float_limits(kind: &str) -> &'static [(&'static str, f64, f64)] {
     match kind {
         "dropout" => &[("rate", 0.0, 0.95)],
         "attention" | "cross_attention" => &[("dropout", 0.0, 0.9)],
+        "moe" => &[("capacity", 0.0, 16.0)],
         _ => &[],
     }
 }
@@ -125,6 +126,11 @@ fn out_of_range(node: &Node) -> Option<String> {
     }
     None
 }
+/// a mixture of experts' capacity factor (GShard): each expert takes at most this × its fair share of the tokens; 0 = no limit
+pub fn moe_capacity(p: &Map<String, Value>) -> f64 {
+    p.get("capacity").and_then(|v| v.as_f64()).unwrap_or(0.0).clamp(0.0, 16.0)
+}
+
 pub fn int(p: &Map<String, Value>, key: &str, default: i64, lo: i64, hi: i64) -> usize {
     // (a pair where one number is meant: its first value, never the default in silence)
     let v = p.get(key).and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
@@ -962,6 +968,13 @@ fn step<'a>(node: &'a Node, r: &mut NodeResult, classes: usize, rf_in: ([usize; 
             if kk > e {
                 err(r, &format!("Each token goes to its top {kk} experts, but there are only {e}."));
                 return None;
+            }
+            if p.get("random_second").and_then(Value::as_bool).unwrap_or(false) && kk < 2 {
+                warn(r, "Random second expert does nothing with top 1: each token has only one expert.");
+            }
+            let cap = moe_capacity(p);
+            if cap > 0.0 && cap < 1.0 {
+                warn(r, &format!("Capacity {cap} is below the fair share: tokens skip the experts even when the router is perfectly balanced."));
             }
             let d = *x.last().unwrap();
             // the router (d → experts) and every expert's two layers (d → units → d, with biases)

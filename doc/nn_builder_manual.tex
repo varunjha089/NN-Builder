@@ -226,7 +226,7 @@ Every change is saved as it is made; there is no ``save'' step for a normal proj
 \screenshot{01_projects}{The Projects page (night theme): New project and Open side by side, then the demo architectures as tiles.}{fig:projects}
 
 \subsection{Demo architectures are unsaved until you save them}
-Below the two cards, \ui{Start from a demo architecture} shows the fifteen demos as tiles (the section folds with its arrow). Clicking a
+Below the two cards, \ui{Start from a demo architecture} shows the sixteen demos as tiles (the section folds with its arrow). Clicking a
 tile opens that network on the canvas as an \emph{unsaved} project: nothing is written to the projects folder. The top bar then shows
 \ui{not saved} and \ui{Save\ldots}. Saving (\ui{Save\ldots} or \kbd{Cmd+S}) asks for a name and moves it into the projects folder as a
 normal project. An unsaved demo is discarded, without asking, when another demo or project is opened or created, and when the application
@@ -567,6 +567,16 @@ them; a token embedding for text is not part of NN Builder (it trains on images)
         goes to its top $k$ experts, whose outputs are mixed by the router's weights (Switch, Mixtral). Many more weights at the cost of $k$
         experts per token; a load-balancing loss (Switch Transformer, $\times 0.01$) keeps every expert in use. Text: \texttt{moe 8 top 2
         hidden 256}.
+
+        Two options from GShard~\cite{lepikhin2020gshard}. \ui{Capacity} (0 = no limit) caps the tokens each expert takes in a batch
+        at capacity $\times$ its fair share, $\lceil \text{capacity} \cdot N k / E \rceil$ for $N$ tokens; first choices are served
+        before second choices, and a token over the limit skips that expert. A token that gets no expert at all leaves the block as
+        zeros, so put the block inside a residual \ui{Add} (as in a Transformer layer) and the token goes on unchanged. Values from 1 to 2 are
+        usual (GShard used 2); below 1 drops tokens even when the router is balanced, and the block says so. \ui{Random second expert}:
+        while training, a token goes to its second expert only with probability $2\times$ that expert's weight, which spreads the load and
+        saves work; evaluation always uses both. Text: \texttt{moe 8 top 2 hidden 256 cap 1.25 random}. GShard also places the experts
+        on different GPUs (expert parallelism, all-to-all exchange of tokens); NN Builder's several-GPU training instead gives every GPU
+        all the experts, which gives the same results while the experts fit in one GPU's memory.
   \item[Early exits.] An \ui{Early exit} after a Global pool part way through a classifier is an extra Output trained with the same labels
         (its loss times its \ui{share}). Results list each exit's accuracy and what stopping every image at the first exit that is at
         least 90\,\% sure would give: the accuracy and the share of images leaving at each exit, i.e.\ how much computation could be
@@ -1359,6 +1369,7 @@ ViT-Tiny (CIFAR-10) & 2020 & classify & 3$\times$32$\times$32 & a small ViT & 1\
 ViT-g/14 & 2022 & classify & 3$\times$224$\times$224 & scaling a ViT to 1 B parameters & 1\,011\,216\,522\\
 U-Net & 2015 & segment & 3$\times$128$\times$128 & encoder--decoder with skips & 7\,760\,130\\
 Attention U-Net & 2018 & segment & 3$\times$128$\times$128 & attention gates on the skips & 7\,847\,894\\
+MoE Transformer (GShard) & 2020 & classify & 3$\times$32$\times$32 & mixture of experts in every other layer & 2\,198\,306\\
 MSG-Former & 2026 & classify & 3$\times$32$\times$32 & NN Builder original (hybrid) & 466\,522\\
 \bottomrule
 \end{longtable}}
@@ -1576,6 +1587,22 @@ has 12 blocks and an MLP of 768.)
 \textbf{Training it.} CIFAR-10 with flips and crops (augmentation matters a lot for ViTs), Adam 0.001 or a little lower, 50+ epochs. It
 usually stays below the Small CNN on CIFAR-10 when trained from scratch for a short time: a useful experiment on the data hunger of
 transformers.
+
+%-------------------------------------------------------------------------------------------------------------------------------------
+\subsection{MoE Transformer encoder (GShard, 2020)}
+\textbf{Background.} Lepikhin et al.\ scaled a translation Transformer to 600 billion parameters by replacing the feed-forward network of
+every other layer with a mixture of experts~\cite{lepikhin2020gshard}: a gating router sends each token to its top 2 of $E$ experts, so
+the weights grow with $E$ while the work per token stays that of about two feed-forward networks.
+
+\textbf{As built.} Conv2D 128 4$\times$4 stride 4 (64 patches), To tokens, Class token + position (65 tokens), then 6 layers in the
+paper's post-norm order: Self-attention (4 heads, dropout 0.1) $\rightarrow$ Add $\rightarrow$ LayerNorm, then the feed-forward part
+$\rightarrow$ Dropout $\rightarrow$ Add $\rightarrow$ LayerNorm. Layers 1, 3 and 5 use a \ui{Mixture of experts} (8 experts, top 2,
+256 hidden, capacity 1.25, random second expert), layers 2, 4 and 6 a dense feed-forward network (256 GELU, 128). The Text tab shows it as
+\texttt{repeat 3} of a pair of layers. 2\,198\,306 parameters, 72\,\% of them in the experts.
+
+\textbf{What differs from the paper.} The paper's third panel places each expert on its own device and exchanges tokens all-to-all; here
+every GPU holds all experts (see the Mixture of experts block above). Images instead of text, and 6 layers of width 128 instead of 36 of
+1024.
 
 %-------------------------------------------------------------------------------------------------------------------------------------
 \subsection{ViT-g/14, one billion parameters (2022)}
@@ -1956,6 +1983,7 @@ not: no training results exist yet. Treat it as a starting point for experiments
   from data. 2018. \href{https://arxiv.org/abs/1805.09501}{arXiv:1805.09501}.
 \bibitem{dai2021coatnet} Z.~Dai, H.~Liu, Q.~V. Le and M.~Tan. CoAtNet: marrying convolution and attention for all data sizes. 2021.
   \href{https://arxiv.org/abs/2106.04803}{arXiv:2106.04803}.
+\bibitem{lepikhin2020gshard} D.~Lepikhin et al. GShard: Scaling giant models with conditional computation and automatic sharding. 2020.
 \bibitem{dosovitskiy2020vit} A.~Dosovitskiy et al. An image is worth 16x16 words: Transformers for image recognition at scale. 2020.
   \href{https://arxiv.org/abs/2010.11929}{arXiv:2010.11929}.
 \bibitem{dumoulin2016guide} V.~Dumoulin and F.~Visin. A guide to convolution arithmetic for deep learning. 2016.

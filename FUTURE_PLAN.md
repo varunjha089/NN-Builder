@@ -224,6 +224,13 @@ runs on each free machine overnight, and the trials are ranked in the overnight 
 
 On a shared multi-GPU server with GPU = `free`, a run starts on 1 GPU and adds more after a checkpoint, using the existing resume.
 
+### 2.6b Experts across GPUs (expert parallelism)
+
+GShard's third panel: each GPU holds only some of a Mixture of experts block's experts, and tokens travel to their experts and back with
+`torch.distributed.all_to_all` (dispatch, then combine). Today several GPUs means data parallel: every GPU holds all experts, which gives
+the same results while they fit in one GPU's memory. Worth it only for MoE layers too big for one GPU. Needs an SSH machine with ≥ 2 GPUs
+to test (the college server); the capacity option (done 2026-11-10) already gives the fixed per-expert buffers all-to-all needs.
+
 ### 2.7 Ablation runs
 
 The user ticks blocks to remove or swap. The app trains each version on the same seeds and builds the comparison table.

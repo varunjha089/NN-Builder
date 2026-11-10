@@ -766,6 +766,18 @@ fn block_params(kind: &str, preset: &str, args: &[(Option<String>, Val)]) -> Res
                     i += 1;
                     continue;
                 }
+                // GShard: a capacity factor per expert, and the second expert taken at random by its weight
+                ("moe", "cap") => {
+                    let t = next_val(&mut i, w)?;
+                    p.insert("capacity".into(), to_json("capacity", &t));
+                    i += 1;
+                    continue;
+                }
+                ("moe", "random") => {
+                    p.insert("random_second".into(), json!(true));
+                    i += 1;
+                    continue;
+                }
                 ("conv3d", "time") => {
                     let t = next_val(&mut i, "time")?;
                     p.insert("tkernel".into(), to_json("tkernel", &t));
@@ -1137,6 +1149,8 @@ fn block_text(kind: &str, params: &Map<String, Value>) -> String {
             take("experts", fmt_value(&get("experts")), &mut words);
             take("top_k", format!("top {}", fmt_value(&get("top_k"))), &mut words);
             take("units", format!("hidden {}", fmt_value(&get("units"))), &mut words);
+            take("capacity", if differs("capacity") { format!("cap {}", fmt_value(&get("capacity"))) } else { String::new() }, &mut words);
+            take("random_second", if get("random_second") == json!(true) { "random".into() } else { String::new() }, &mut words);
         }
         "exit_output" => take("weight", fmt_value(&get("weight")), &mut words),
         "cross_attention" => {

@@ -612,6 +612,26 @@ def adapters(root):
     moe = m.MoE(8, 4, 2, 16).train()
     moe(torch.randn(64, 8))
     assert moe.nnb_aux is not None and 0.5 < float(moe.nnb_aux) < 4.0, "balancing loss about 1 for an untrained router"
+    # GShard capacity: 64 tokens x top 2 over 4 experts at capacity 0.5 -> at most ceil(0.5 * 64 * 2 / 4) = 16 tokens per expert;
+    # a large capacity changes nothing; the random second expert drops some second choices while training only
+    torch.manual_seed(0)
+    capped = m.MoE(8, 4, 2, 16, capacity=0.5).eval()
+    loads = []
+    for ex in capped.experts:
+        ex.register_forward_hook(lambda mod, inp, out: loads.append(inp[0].shape[0]))
+    x = torch.randn(64, 8)
+    y_capped = capped(x)
+    assert loads and max(loads) <= 16 and sum(loads) <= 64, loads
+    roomy = m.MoE(8, 4, 2, 16, capacity=16.0).eval()
+    roomy.load_state_dict(capped.state_dict())
+    plain = m.MoE(8, 4, 2, 16).eval()
+    plain.load_state_dict(capped.state_dict())
+    assert torch.allclose(roomy(x), plain(x)) and roomy.nnb_dropped == 0.0, "capacity 16 drops nothing"
+    assert not torch.allclose(y_capped, plain(x)), "capacity 0.5 drops some choices"
+    rnd = m.MoE(8, 4, 2, 16, random_second=True)
+    rnd.load_state_dict(capped.state_dict())
+    assert torch.allclose(rnd.eval()(x), plain(x)), "no random routing when evaluating"
+    assert not torch.allclose(rnd.train()(x), plain.train()(x)), "random second expert while training"
     print(f"adapters: {frozen} of {total} weights frozen and unchanged, LoRA adapters learnt; early exit accuracy {ex['exits'][0]['accuracy']:.3f}, "
           f"{ex['early']['share'][0] * 100:.0f}% of the images could leave there (accuracy then {ex['early']['accuracy']:.3f}); test accuracy {done['test_acc']}")
 

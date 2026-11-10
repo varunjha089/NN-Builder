@@ -105,8 +105,9 @@ pub fn defaults(kind: &str) -> Value {
         "cls_pos" => json!({"cls": true, "pos": "learned"}),
         // causal: each token sees only itself and the tokens before it; rotary: positions rotate the queries and keys (RoPE)
         "attention" => json!({"heads": 4, "dropout": 0.0, "causal": false, "rotary": false, "lora": 0}),
-        // experts: small MLPs (units hidden); a router sends every token to its top_k experts (Switch / Mixtral)
-        "moe" => json!({"experts": 4, "top_k": 2, "units": 128}),
+        // experts: small MLPs (units hidden); a router sends every token to its top_k experts (Switch / Mixtral). GShard: capacity = the
+        // most tokens an expert takes, × its fair share (0 = no limit); random_second = the second expert only by chance (2 × its weight)
+        "moe" => json!({"experts": 4, "top_k": 2, "units": 128, "capacity": 0, "random_second": false}),
         // an extra classifier part way through the network, trained with the main task's labels (its loss × weight)
         "exit_output" => json!({"weight": 0.3}),
         // the first input's tokens ask (queries), the second input's tokens answer (keys and values)

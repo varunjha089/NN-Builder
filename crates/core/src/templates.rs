@@ -42,6 +42,8 @@ pub const TEMPLATES: &[Template] = &[
         about: "A small Vision Transformer for 32×32 images: 4×4 patches (64 tokens of 192 values), 6 encoder blocks with 3 heads and MLP 384, dropout 0.1. Trains in minutes on a GPU; needs augmentation to do well on small datasets." },
     Template { key: "vit_g14", title: "ViT-g/14 (1 billion parameters)", year: 2022, task: "classify", input: [3, 224, 224],
         about: "Zhai et al., Scaling Vision Transformers. A giant ViT: 14×14 patches (256 tokens of 1408 values), 40 encoder blocks with 16 heads and MLP 6144; 1,011,216,522 parameters with a 10-class head. Too big to train on a T4 (Kaggle, g4dn.xlarge: 16 GB): the weights and Adam's moments alone need about 16 GB, so it needs a 40–80 GB GPU (A100/H100) or model sharding. Here it shows how a transformer scales: the same block as ViT-Base, only wider and deeper." },
+    Template { key: "moe_transformer", title: "MoE Transformer encoder (GShard, CIFAR-10)", year: 2020, task: "classify", input: [3, 32, 32],
+        about: "Lepikhin et al., GShard. A Transformer encoder in which every other feed-forward layer is a mixture of 8 experts: a gating router sends each token to its top 2 experts, each expert takes at most 1.25 × its fair share of the tokens (the rest skip it through the residual), and the second expert is used only by chance (2 × its weight). Post-norm Add & Norm as in the paper's figure; 4×4 patches of a 32×32 image as tokens, 6 layers of width 128. The paper also spreads the experts over devices; here every GPU holds all experts." },
     Template { key: "unet", title: "U-Net", year: 2015, task: "segment", input: [3, 128, 128],
         about: "Ronneberger et al. An encoder (two 3×3 convolutions + max pooling, 32→256 filters) and a decoder (2×2 transposed convolution, Concat with the encoder's skip connection, two 3×3 convolutions), ending with a 1×1 convolution giving a class for every pixel. Padding 'same' keeps sizes equal (the paper crops instead)." },
     Template { key: "attention_unet", title: "Attention U-Net", year: 2018, task: "segment", input: [3, 128, 128],
@@ -291,6 +293,29 @@ pub fn build(key: &str) -> Option<Graph> {
             }
             let n = b.add("layernorm", json!({}), &[&h]);
             let p = b.add("token_pool", json!({"mode": "cls"}), &[&n]);
+            b.add("output", json!({}), &[&p]);
+        }
+        "moe_transformer" => {
+            // GShard's encoder: post-norm layers (x = LN(x + Attention(x)), x = LN(x + FFN(x))), the FFN of every other layer a mixture of experts
+            let d = 128;
+            let c = b.add("conv2d", json!({"filters": d, "kernel": [4, 4], "stride": [4, 4], "padding": "valid", "activation": "none"}), &[&x]);
+            let t = b.add("to_tokens", json!({"mode": "patches"}), &[&c]);
+            let mut h = b.add("cls_pos", json!({"cls": true}), &[&t]);
+            for layer in 0..6 {
+                let a = b.add("attention", json!({"heads": 4, "dropout": 0.1}), &[&h]);
+                let s1 = b.add("add", json!({}), &[&h, &a]);
+                let n1 = b.add("layernorm", json!({}), &[&s1]);
+                let f = if layer % 2 == 0 {
+                    b.add("moe", json!({"experts": 8, "top_k": 2, "units": 2 * d, "capacity": 1.25, "random_second": true}), &[&n1])
+                } else {
+                    let m = b.add("dense", json!({"units": 2 * d, "activation": "gelu"}), &[&n1]);
+                    b.add("dense", json!({"units": d, "activation": "none"}), &[&m])
+                };
+                let f = b.add("dropout", json!({"rate": 0.1}), &[&f]);
+                let s2 = b.add("add", json!({}), &[&n1, &f]);
+                h = b.add("layernorm", json!({}), &[&s2]);
+            }
+            let p = b.add("token_pool", json!({"mode": "cls"}), &[&h]);
             b.add("output", json!({}), &[&p]);
         }
         "msg_former" => {
