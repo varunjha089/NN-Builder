@@ -280,9 +280,9 @@ async fn save_graph(st: State<'_, App>, graph: Graph) -> R<Value> {
 
 /// the design from its text (Text tab): saved and returned with its analysis, or the problems in the text (nothing saved)
 #[tauri::command]
-async fn design_from_text(st: State<'_, App>, text: String) -> R<Value> {
+async fn design_from_text(st: State<'_, App>, text: String, renames: Option<Vec<Vec<(String, String)>>>) -> R<Value> {
     let p = project(&st)?;
-    match nnb_core::dsl::apply(&text, &p.graph()) {
+    match nnb_core::dsl::apply_renamed(&text, &p.graph(), &renames.unwrap_or_default()) {
         Ok(g) => {
             p.save_graph(&g).map_err(e)?;
             let d = p.dataset();

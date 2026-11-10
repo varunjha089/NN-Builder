@@ -67,6 +67,7 @@ warning text.
 | 3.2 | Time series text | Paste `doc/examples/timeseries.nnb` with a time-series dataset (4 bands, 6 dates, 32×32) | No error; Conv3D, Temporal pool, LSTM … on the canvas | ✅ Window |
 | 3.3 | New words | Type `5 shared 2`, `subtract abs`, `lstm 32 bi`, `moe 4 top 2 hidden 64`, `exit 0.3`, `dense 64 lora 4`, `conv 8 3x3 frozen`, `detect` | Each builds the right block; ⌘-click selects it | ✅ Window: TEST 1's text shows python section, frozen, custom, exit, rotary, lora, moe |
 | 3.4 | Canvas → text | Change a setting on the canvas | Only that line changes; hand-written functions stay | ✅ Window |
+| 3.5 | Auto numbering | Text tab: Enter after `2 conv …` in a design with lines 1–7; Enter after `a …` inside a repeat; Enter on the new label-only line; delete a line, Renumber | `3 ` typed and 3–7 become 4–8 (references too) and the blocks stay in place on the canvas; `b ` inside the group; the label goes and the numbers close up; Renumber fills the gap | Never |
 
 ## 4. Dataset tab, one kind of data at a time
 

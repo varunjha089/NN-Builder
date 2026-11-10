@@ -258,6 +258,13 @@ How the two views stay in step: the graph is the truth and carries the text (`Gr
 tab calls `design_from_text` (`dsl::apply`: blocks keep ids and positions by label; new blocks go next to their first input; a text into
 an empty design is arranged). `design_format` prints the text again. The window applies the text 0.5 s after typing stops.
 
+Auto numbering (2026-11-10, web/src/numbering.ts): Enter at the end of a numbered line types the next label (a number at the top
+level, a letter inside braces, `a` after a line ending in `{`, the number after the group's line after `}`) and moves the following run of
+labels on by one when it is taken, with their `<-` / `shared` references; Shift-Enter is a plain new line; Enter on a line holding only
+a label removes it and closes the gap; the Renumber button numbers the top-level lines 1.. and each repeat / for group's letters a.. in
+order. The renames go with the text to `design_from_text` (`dsl::apply_renamed`: old labels renamed first, `5.*.c` = every pass), so
+the moved blocks keep their ids and canvas positions.
+
 Done since (2026-11-05, later):
 
 - **Settings changed on the canvas keep the hand-written text:** when only settings of blocks that have their own top-level line

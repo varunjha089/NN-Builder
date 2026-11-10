@@ -795,3 +795,24 @@ fn adapters_experts_exits_in_text() {
     // frozen only where there are weights
     assert!(err("1 input\n2 maxpool 2x2 frozen\n").message.contains("frozen"));
 }
+
+#[test]
+fn renumbered_lines_keep_their_blocks() {
+    // the Text tab inserted a line after 2 and moved 3.. on by one (auto numbering); the blocks keep their ids and places
+    let old = build("1 input\n2 conv 8 3x3\n3 repeat 2 {\n  a conv 8 3x3\n  b add <- in, a\n}\n4 global_pool\n5 output\n");
+    let new_text = "1 input\n2 conv 8 3x3\n3 bn\n4 repeat 2 {\n  a conv 8 3x3\n  b add <- in, a\n}\n5 global_pool\n6 output\n";
+    let steps = vec![vec![("3".into(), "4".into()), ("4".into(), "5".into()), ("5".into(), "6".into())]];
+    let g = dsl::apply_renamed(new_text, &old, &steps).unwrap();
+    for (was, now) in [("2", "2"), ("3.2.a", "4.2.a"), ("3.1.b", "4.1.b"), ("4", "5"), ("5", "6")] {
+        let (o, n) = (by_label(&old, was), by_label(&g, now));
+        assert_eq!((&o.id, o.x, o.y), (&n.id, n.x, n.y), "{was} -> {now}");
+    }
+    // letters inside a group: 3.*.a -> 3.*.b ("*" = every pass)
+    let g2 = dsl::apply_renamed("1 input\n2 conv 8 3x3\n3 repeat 2 {\n  a bn\n  b conv 8 3x3\n  c add <- in, b\n}\n4 global_pool\n5 output\n", &old,
+        &[vec![("3.*.a".into(), "3.*.b".into()), ("3.*.b".into(), "3.*.c".into())]]).unwrap();
+    assert_eq!(by_label(&g2, "3.2.b").id, by_label(&old, "3.2.a").id);
+    assert_eq!(by_label(&g2, "3.1.c").id, by_label(&old, "3.1.b").id);
+    // without the renames the moved blocks would be new ones
+    let plain = dsl::apply(new_text, &old).unwrap();
+    assert_ne!(by_label(&plain, "6").id, by_label(&old, "5").id);
+}

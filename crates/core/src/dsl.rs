@@ -2188,3 +2188,27 @@ fn patch_structure(text: &str, e: &Expanded, g: &Graph) -> Option<(String, HashM
 pub fn apply(text: &str, old: &Graph) -> Result<Graph, Vec<Diagnostic>> {
     Ok(expand(text, old)?.graph)
 }
+
+/// `apply` after the Text tab renumbered lines (auto numbering): the old blocks are relabelled first, so a block whose label moved keeps
+/// its id and place. Each step is a list of renames applied together (`5.*.c` -> `5.*.d`: segments from the start, `*` = any pass).
+pub fn apply_renamed(text: &str, old: &Graph, steps: &[Vec<(String, String)>]) -> Result<Graph, Vec<Diagnostic>> {
+    let mut g = old.clone();
+    for step in steps {
+        for n in &mut g.nodes {
+            if let Some(l) = step.iter().find_map(|(from, to)| rename_label(&n.label, from, to)) {
+                n.label = l;
+            }
+        }
+    }
+    apply(text, &g)
+}
+
+fn rename_label(label: &str, from: &str, to: &str) -> Option<String> {
+    let (segs, f, t): (Vec<&str>, Vec<&str>, Vec<&str>) = (label.split('.').collect(), from.split('.').collect(), to.split('.').collect());
+    if f.len() > segs.len() || f.len() != t.len() || !f.iter().zip(&segs).all(|(a, b)| *a == "*" || a == b) {
+        return None;
+    }
+    let mut out: Vec<&str> = t.iter().zip(&segs).map(|(n, s)| if *n == "*" { *s } else { *n }).collect();
+    out.extend(&segs[f.len()..]);
+    Some(out.join("."))
+}

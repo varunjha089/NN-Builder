@@ -2,6 +2,7 @@
 // applies the text after a short pause when it is valid (one undo step); a text with problems is kept here and the canvas stays as it was.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { errText, type Analysis, type Graph } from "./api";
+import { enter, renumber, type Rule } from "./numbering";
 
 type TextError = { line: number; col: number; message: string };
 
@@ -87,8 +88,8 @@ function highlight(text: string): string {
 export function TextTab({ graph, analysis, persist, applyText, format, showBlock, toast }: {
   graph: Graph; analysis: Analysis | null; toast: (m: string) => void;
   persist: (g: Graph) => Promise<void>;
-  /** build the design from a text: [] when applied, else the problems */
-  applyText: (text: string) => Promise<TextError[]>;
+  /** build the design from a text: [] when applied, else the problems (renames: labels auto numbering moved since the last apply) */
+  applyText: (text: string, renames?: Rule[][]) => Promise<TextError[]>;
   format: () => Promise<void>;
   showBlock: (id: string) => void;
 }) {
@@ -103,12 +104,14 @@ export function TextTab({ graph, analysis, persist, applyText, format, showBlock
   // the text this tab last saw on the design: a different one (canvas change, undo, Format) replaces what is shown, unless typing is pending
   const seen = useRef(graph.text ?? "");
   const typing = useRef(false);
+  // labels moved by auto numbering / Renumber since the text was last applied: the blocks follow them (dsl::apply_renamed)
+  const renames = useRef<Rule[][]>([]);
 
   // an older design without its text: let the Rust side print it
   useEffect(() => { if (!graph.text) persist(graph).catch((e) => toast(errText(e))); }, [graph, persist, toast]);
   useEffect(() => {
     const t = graph.text ?? "";
-    if (t !== seen.current && !typing.current) { setText(t); setErrors([]); }
+    if (t !== seen.current && !typing.current) { setText(t); setErrors([]); renames.current = []; }
     seen.current = t;
   }, [graph.text]);
   // the latest text, for keeping a draft when the tab is left
@@ -126,9 +129,14 @@ export function TextTab({ graph, analysis, persist, applyText, format, showBlock
 
   const apply = useCallback((t: string) => {
     setBusy(true);
-    applyText(t).then((errs) => {
+    const steps = renames.current;
+    applyText(t, steps).then((errs) => {
       setErrors(errs);
-      if (!errs.length) seen.current = t;
+      if (!errs.length) {
+        seen.current = t;
+        // renames made while this apply was on its way stay for the next one
+        renames.current = renames.current.slice(steps.length);
+      }
     }).catch((e) => toast(errText(e))).finally(() => { setBusy(false); typing.current = false; });
   }, [applyText, toast]);
 
@@ -166,11 +174,27 @@ export function TextTab({ graph, analysis, persist, applyText, format, showBlock
     a.scrollTop = Math.max(0, (line - 5) * 19);
   };
   const keys = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const a = e.currentTarget, s = a.selectionStart;
+    if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.altKey && !e.ctrlKey && s === a.selectionEnd && !e.nativeEvent.isComposing) {
+      // auto numbering: the next label on the new line (Shift-Enter: a plain new line)
+      const r = enter(text, s);
+      if (!r) return;
+      e.preventDefault();
+      renames.current = [...renames.current, ...r.steps];
+      change(r.text);
+      requestAnimationFrame(() => a.setSelectionRange(r.cursor, r.cursor));
+      return;
+    }
     if (e.key !== "Tab") return;
     e.preventDefault();
-    const a = e.currentTarget, s = a.selectionStart;
     change(text.slice(0, s) + "  " + text.slice(a.selectionEnd));
     requestAnimationFrame(() => a.setSelectionRange(s + 2, s + 2));
+  };
+  const tidy = () => {
+    const r = renumber(text);
+    if (r.text === text) { toast("The labels are already in order"); return; }
+    renames.current = [...renames.current, ...r.steps];
+    change(r.text);
   };
 
   // ⌘-click on a label (or a path like 5.2.b): select that block on the canvas
@@ -226,13 +250,17 @@ export function TextTab({ graph, analysis, persist, applyText, format, showBlock
         <span className="muted small">{graph.nodes.length} blocks{analysis ? ` · ${analysis.total_params.toLocaleString()} params` : ""}</span>
         <span className="grow" />
         <button onClick={() => setHelp(!help)}>{help ? "Hide help" : "Help"}</button>
+        <button title="Number the lines 1, 2, 3, … and the blocks inside each repeat / for a, b, c, … in order, with the references to them (named labels and functions stay)"
+          onClick={tidy}>Renumber</button>
         <button title="Print the text again from the blocks (hand-written functions and loops become lines and repeats)"
           onClick={() => format().then(() => setErrors([])).catch((e) => toast(errText(e)))}>Format</button>
         <button onClick={() => navigator.clipboard.writeText(text).then(() => toast("Copied the design text"))}>Copy</button>
       </div>
       <p className="muted small">The design as numbered lines, in step with the canvas both ways: typing changes the canvas a moment after the text
         is valid, and a change on the canvas edits only the lines it concerns (functions, loops, names and comments stay); only a change to a block
-        made by a function or loop prints the text again. ⌘-click a number to select its block on the canvas. Undo (⌘Z) works for both. File → Export Design… saves it as a .nnb file.</p>
+        made by a function or loop prints the text again. Enter after a numbered line types the next number (a letter inside braces) and moves the lines below on by one
+        when it is taken; Shift-Enter is a plain new line, Enter on a line holding only its number takes the number away, and Renumber puts all
+        numbers back in order. ⌘-click a number to select its block on the canvas. Undo (⌘Z) works for both. File → Export Design… saves it as a .nnb file.</p>
       {help && <table className="text-help"><tbody>{HELP.map(([code, what]) => <tr key={code}><td><code>{code}</code></td><td className="small">{what}</td></tr>)}</tbody></table>}
       {editor}
       {problemList}

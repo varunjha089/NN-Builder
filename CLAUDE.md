@@ -84,7 +84,9 @@ crates/core/src/
                            headers; manual sec:text; dsl::patch_settings rewrites only the lines of
                            blocks whose settings changed on the canvas; dsl::patch_structure edits only the lines of blocks added,
                            removed or rewired on plain lines (a group's outside input may change); TextTab colours words (highlight())
-                           and ⌘-click selects a block; the text applies 0.25 s after typing; canvas and text stay separate tabs; Design.tsx groupByText groups the layer table by text line;
+                           and ⌘-click selects a block; the text applies 0.25 s after typing; auto numbering (web/src/numbering.ts: Enter types the next
+                           label and shifts the labels below with their references; Renumber button; the renames go to design_from_text ->
+                           dsl::apply_renamed so moved blocks keep ids and positions; tests/text.rs renumbered_lines_keep_their_blocks); canvas and text stay separate tabs; Design.tsx groupByText groups the layer table by text line;
                            wrap_rows lays long text designs out in rows of 24; File → Import/Export Design… reads/writes .nnb too;
                            doc/language.tex = the manual's language chapter (\input by the manual;
                            its examples are doc/examples/*.nnb via \VerbatimInput; tests/text.rs builds every example and every

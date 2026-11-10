@@ -525,6 +525,12 @@ also selects its block.
   \item \textbf{Changing a block that a function or loop made} would change every call, so the text is printed again from the blocks:
         identical consecutive groups become \texttt{repeat}, the rest plain lines. \kbd{Cmd+Z} brings the hand-written text back.
   \item \ui{Format} prints the text again from the blocks on purpose; \ui{Copy} copies it.
+  \item \textbf{Auto numbering:} \kbd{Enter} at the end of a numbered line types the next number on the new line (inside braces the
+        next letter; after a line ending in \texttt{\{} the letter \texttt{a}, after \texttt{\}} the number after the group's line). When
+        that number is taken, the lines below move on by one, and every \texttt{<-} and \texttt{shared} that names them changes with
+        them; the blocks keep their places on the canvas. \kbd{Shift+Enter} is a plain new line; \kbd{Enter} on a line holding only its
+        number takes the number away again (and closes the gap). \ui{Renumber} numbers the lines 1, 2, 3, \dots{} and the blocks inside
+        each \texttt{repeat} / \texttt{for} a, b, c, \dots{} in order, references included; named labels and function bodies stay.
 \end{itemize}
 In the layer table, the blocks of one \texttt{repeat}, \texttt{for} or call line form one group named after the line.
 

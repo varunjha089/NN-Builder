@@ -58,8 +58,8 @@ export default function App() {
   // Format: the text printed again from the blocks (one undo step)
   const formatText = useCallback(() => api.designFormat().then((r) => { if (graphRef.current) remember(graphRef.current); setGraph(r.graph); setAnalysis(r.analysis); }), [remember]);
   // the Text tab: the design built from its text (one undo step), or the problems in the text
-  const applyText = useCallback(async (text: string) => {
-    const r = await api.designFromText(text);
+  const applyText = useCallback(async (text: string, renames: [string, string][][] = []) => {
+    const r = await api.designFromText(text, renames);
     if (r.ok && r.graph && r.analysis) {
       if (graphRef.current) remember(graphRef.current);
       setGraph(r.graph);

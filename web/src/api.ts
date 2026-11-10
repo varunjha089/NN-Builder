@@ -106,7 +106,7 @@ export const api = {
   runsReportSeen: () => invoke<void>("runs_report_seen"),
   load: () => invoke<ProjectData>("project_load"),
   saveGraph: (graph: Graph) => invoke<{ analysis: Analysis; graph: Graph }>("save_graph", { graph }),
-  designFromText: (text: string) => invoke<{ ok: boolean; graph?: Graph; analysis?: Analysis; errors?: { line: number; col: number; message: string }[] }>("design_from_text", { text }),
+  designFromText: (text: string, renames: [string, string][][] = []) => invoke<{ ok: boolean; graph?: Graph; analysis?: Analysis; errors?: { line: number; col: number; message: string }[] }>("design_from_text", { text, renames }),
   designFormat: () => invoke<{ graph: Graph; analysis: Analysis }>("design_format"),
   saveDataset: (dataset: Dataset) => invoke<{ analysis: Analysis; problems: string[] }>("save_dataset", { dataset }),
   saveTrain: (train: TrainSettings) => invoke<TrainSettings>("save_train", { train }),
