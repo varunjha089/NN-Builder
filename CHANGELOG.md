@@ -3,6 +3,10 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 10_11_26_19_16_32
+
+**Manual: adding a machine, step by step, with a screenshot of the form** (`d512f47`)
+
 ## 10_11_26_12_21_43
 
 **Several GPUs: workers leave the process group together on a spot interruption** (`d3e1010`)
