@@ -617,8 +617,8 @@ def adapters(root):
     torch.manual_seed(0)
     capped = m.MoE(8, 4, 2, 16, capacity=0.5).eval()
     loads = []
-    for ex in capped.experts:
-        ex.register_forward_hook(lambda mod, inp, out: loads.append(inp[0].shape[0]))
+    for expert in capped.experts:
+        expert.register_forward_hook(lambda mod, inp, out: loads.append(inp[0].shape[0]))
     x = torch.randn(64, 8)
     y_capped = capped(x)
     assert loads and max(loads) <= 16 and sum(loads) <= 64, loads
