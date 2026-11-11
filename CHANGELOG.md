@@ -3,6 +3,20 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 11_11_26_07_24_13
+
+**Manual: how to build a network (ideas, motifs, four worked examples)** (`7c5c8af`)
+
+New chapter doc/building.tex after the step-by-step design: the four parts of every
+network, the four kinds of data between blocks and the blocks that convert them, seven
+questions before the first block, seven motifs written as functions, a table from goals
+to designs, and four worked examples with their reasoning, motif diagrams, parameter
+breakdowns, training advice and variations: a EuroSAT classifier (residual blocks +
+channel gates), a CNN stem + Transformer for CIFAR-10 (TEST 25 grown up), a Sentinel-2
+water U-Net and a two-date Siamese change classifier. The examples are files in
+doc/examples whose parameter counts the tests pin; the motif snippets are analysed by
+a new test. render.sh designs draws the Design canvas alone for the Siamese figure.
+
 ## 10_11_26_19_39_07
 
 **Manual: TEST 24, one CIFAR-10 network with every classifier block once** (`eb895e3`)
