@@ -1,0 +1,38 @@
+net "Satellite photo classifier"
+# EuroSAT RGB: 3×64×64 photos, 10 land-cover classes.
+# Three motifs: a unit, a gate, a residual block.
+let w = 32
+
+def unit(c, s = 1) {        # convolution -> BatchNorm -> ReLU; s = 2 halves the size
+  a conv c kernel=s+2 stride s pad 1 none nobias
+  b bn
+  r relu
+}
+
+def gate(c) {               # squeeze-and-excitation: weigh each channel by the image
+  g global_pool
+  d dense c // 4
+  e dense c sigmoid
+  m mul <- in, e
+}
+
+def res(c, s = 1) {         # residual block: two convolutions, the gate, a shortcut
+  u unit(c, s)
+  v conv c 3x3 none nobias
+  n bn
+  q gate(c)
+  p avgpool s <- in                # the shortcut starts from the block's input
+  k conv c 1x1 none nobias
+  kn bn
+  j add <- q, kn
+  o relu
+}
+
+1 input
+2 unit(w, 2)                       # stem: (32, 32, 32)
+3 for c, s in (w, 1), (w * 2, 2), (w * 4, 2) {   # stages at 32×32, 16×16, 8×8
+    x res(c, s)
+  }
+4 global_pool                      # (128)
+5 dropout 0.2
+6 output

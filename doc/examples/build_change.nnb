@@ -1,0 +1,19 @@
+net "What changed between two dates"
+# Two Sentinel-2 images of one place (4 bands, 64×64): band group 1 before,
+# band group 2 after. Classes: changed / unchanged.
+1 input 1                          # before: (4, 64, 64)
+2 conv 32 3x3
+3 maxpool 2x2                      # (32, 32, 32)
+4 conv 64 3x3
+5 maxpool 2x2                      # (64, 16, 16)
+6 conv 128 3x3                     # (128, 16, 16)
+7 input 2                          # after: the same bands
+8 shared 2                         # block 2's convolution with block 2's weights
+9 maxpool 2x2
+10 shared 4
+11 maxpool 2x2
+12 shared 6
+13 subtract abs <- 6, 12           # |before - after|: large where something changed
+14 conv 128 3x3
+15 global_pool                     # (128)
+16 output                          # changed / unchanged

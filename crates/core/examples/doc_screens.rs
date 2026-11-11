@@ -1,10 +1,17 @@
 //! For the manual's Dataset-tab pictures (sec:data-kinds): prints, as JSON, what the window's app_state and project_load would return for
 //! a project set up for one kind of data (the real dataset, design and shape analysis). doc/screens/render.sh shows the real UI with
 //! these answers in headless Chrome, so no app window has to come to the front.
-//!     cargo run -p nnb-core --example doc_screens -- <builtin | huggingface | folders | s2 | fusion | scene | multilabel | segfiles>
+//!     cargo run -p nnb-core --example doc_screens -- <builtin | huggingface | folders | s2 | fusion | scene | multilabel | segfiles
+//!         | build_classifier | build_hybrid | build_segment | build_change>
 use nnb_core::dataset::{Dataset, BUILTINS, SENTINEL2_GEE};
 use nnb_core::{codegen::TrainSettings, model, shapes};
 use serde_json::json;
+
+/// a design text from doc/examples (the manual's worked examples)
+fn example(name: &str) -> &'static str {
+    let path = format!("{}/../../doc/examples/{name}.nnb", env!("CARGO_MANIFEST_DIR"));
+    Box::leak(std::fs::read_to_string(path).expect("example").into_boxed_str())
+}
 
 fn main() {
     let case = std::env::args().nth(1).expect("case");
@@ -36,6 +43,16 @@ fn main() {
             kaggle_train_dir: "s2".into(), sensor2: "s1".into(), band_order2: s(&["VV", "VH"]), bands2: s(&["VV", "VH"]), fuse_dir: "s1".into(),
             classes: s(&["arable land", "coniferous forest", "inland waters", "pastures", "urban fabric"]), image_size: [120, 120], ..s2.clone() },
             "1 input\n2 conv 32 3x3\n3 maxpool 2x2\n4 conv 64 3x3\n5 global_pool\n6 output\n"),
+        // the worked examples of sec:build, drawn on the Design tab (doc/screens/render.sh designs)
+        "build_classifier" => (Dataset { source: "huggingface".into(), hf_repo: "timm/eurosat-rgb".into(), hf_test_split: "test".into(),
+            classes: s(&["AnnualCrop", "Forest", "HerbaceousVegetation", "Highway", "Industrial", "Pasture", "PermanentCrop", "Residential", "River", "SeaLake"]),
+            ..base.clone() }, example(&case)),
+        "build_hybrid" => (Dataset { source: "builtin".into(), builtin: "cifar10".into(), ..Default::default() }, example(&case)),
+        "build_segment" => (Dataset { task: "segment".into(), local_dir: format!("{data}/water_masks"), kaggle_train_dir: "images".into(),
+            kaggle_mask_dir: "masks".into(), classes: s(&["not water", "water"]), image_size: [128, 128], ..s2.clone() }, example(&case)),
+        "build_change" => (Dataset { local_dir: format!("{data}/two_dates"), kaggle_train_dir: "before".into(), bands: s(&["B2", "B3", "B4", "B8"]),
+            sensor2: "s2".into(), band_order2: s(SENTINEL2_GEE), bands2: s(&["B2", "B3", "B4", "B8"]), fuse_dir: "after".into(),
+            classes: s(&["changed", "unchanged"]), ..s2.clone() }, example(&case)),
         other => panic!("unknown case {other}"),
     };
     assert!(ds.problems().is_empty(), "{case}: {:?}", ds.problems());

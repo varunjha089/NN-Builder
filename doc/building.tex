@@ -1,0 +1,475 @@
+% How to build a network: the ideas, the motifs and four worked examples. Included by nn_builder_manual.tex after "Designing a network,
+% step by step". Every example is a file in examples/ (build_*.nnb) that the tests build with these parameter counts
+% (crates/core/tests/text.rs, manual_examples_build), and every short text below builds too (manual_snippets_build).
+\section{How to build a network: the ideas, then four worked examples}
+\label{sec:build}
+
+The step-by-step section above builds one network click by click. This section is about \emph{deciding what to build}: the few ideas
+every design follows, the handful of small groups of blocks (``motifs'') that almost every network is made of, and four complete
+examples for different jobs, each built from those motifs with the reasoning written down. Each example is given as text (the NNB
+language, Section~\ref{sec:text}): paste it into the \ui{Text} tab, or open the file from \file{doc/examples/} with \ui{File}
+$\rightarrow$ \ui{Import Design}, and the canvas draws it. The shapes and parameter counts printed here are the application's own.
+
+\subsection{Every network has four parts}
+\label{sec:build-parts}
+Whatever its name, a network for images is four parts in a row:
+
+\begin{figure}[htbp]\centering
+\begin{tikzpicture}[node distance=7mm]
+  \node[blk, fill=nnin!15, text width=2.6cm, align=center] (in) {\textbf{Input}\\[1pt]the data's shape\\(set by the Dataset tab)};
+  \node[blk, fill=nnconv!15, text width=3.2cm, align=center, right=of in] (body) {\textbf{Body}\\[1pt]finds patterns: small ones first,\\larger ones from them};
+  \node[blk, fill=nnpool!15, text width=2.7cm, align=center, right=of body] (br) {\textbf{Bridge}\\[1pt]turns the body's result into\\what the head needs};
+  \node[blk, fill=nnout!15, text width=2.6cm, align=center, right=of br] (head) {\textbf{Head}\\[1pt]gives the answer\\(Output block)};
+  \foreach \a/\b in {in/body,body/br,br/head} \draw[arr] (\a) -- (\b);
+  \node[below=1mm of body, font=\scriptsize\sffamily, text width=3.4cm, align=center] {Conv2D, BatchNorm, Pool, residual blocks, attention, \dots};
+  \node[below=1mm of br, font=\scriptsize\sffamily, text width=2.9cm, align=center] {Global pool, Flatten, To tokens, Token pool, Upsample, \dots};
+  \node[below=1mm of head, font=\scriptsize\sffamily, text width=2.8cm, align=center] {Output, Segmentation output, Detection output};
+\end{tikzpicture}
+\caption{The four parts of every design. Most of the thinking (and most of the parameters) goes into the body; the bridge and the head
+follow from the task.}
+\label{fig:build-parts}
+\end{figure}
+
+\begin{description}[nosep]
+  \item[Input.] Fixed by the data: \shape{3, 32, 32} for CIFAR-10, \shape{6, 128, 128} for six Sentinel-2 bands in 128-pixel patches.
+        Choose the dataset first, so that every shape shown while building is the real one.
+  \item[Body.] Where the network learns. Its job is to turn pixels into \emph{features}: numbers that say ``there is an edge here'',
+        ``a texture like water here'', ``something shaped like a car here''. Early layers see a few pixels; every convolution and every
+        halving of the size lets the next layer see a larger part of the image (its \emph{receptive field}, Section~\ref{sec:math}).
+  \item[Bridge.] The body's output has the wrong shape for the answer, so one block changes it: Global pool or Flatten from an image to
+        one vector, To tokens from an image to a sequence, Token pool from a sequence to one vector, Upsample / ConvTranspose2D back to the
+        image's size for a mask.
+  \item[Head.] The answer, matched to the task of the Dataset tab: \ui{Output} for classes (also multi-label and numbers),
+        \ui{Segmentation output} for a class per pixel, \ui{Detection output} for boxes. A design has exactly one head (several only for
+        multi-task data).
+\end{description}
+
+\subsection{What travels along the arrows}
+\label{sec:build-kinds}
+Every arrow carries one of four kinds of data, and each block accepts some kinds and gives one kind. Knowing which kind you hold, and
+which block turns it into the next kind, is most of what building takes (Figure~\ref{fig:build-kinds}).
+
+\begin{figure}[htbp]\centering
+\begin{tikzpicture}[node distance=17mm, kind/.style={blk, minimum width=2.5cm, minimum height=11mm, align=center, font=\small\sffamily},
+    keep/.style={font=\scriptsize\sffamily, align=center, text=black!65, text width=2.9cm}, on/.style={font=\scriptsize\sffamily}]
+  \node[kind, fill=nnconv!12] (ts) {time series\\$(C, T, H, W)$};
+  \node[kind, fill=nnconv!25, right=of ts] (img) {image\\$(C, H, W)$};
+  \node[kind, fill=nnatt!15, right=of img] (tok) {tokens / sequence\\$(N, D)$};
+  \node[kind, fill=nndense!15, right=of tok] (vec) {vector\\$(n)$};
+  % what keeps each kind, under it
+  \node[keep, below=1.5mm of ts] (kts) {Conv3D};
+  \node[keep, below=1.5mm of img] (kimg) {Conv2D, Pool, BatchNorm, Add, Concat; ConvTranspose2D and Upsample grow it};
+  \node[keep, below=1.5mm of tok] (ktok) {Self-attention, Dense, LayerNorm, LSTM, GRU, Conv1D};
+  \node[keep, below=1.5mm of vec] (kvec) {Dense, Dropout, BatchNorm};
+  % what turns one kind into another
+  \draw[arr] (ts) -- node[above, on] {Temporal pool} (img);
+  \draw[arr] (img) -- node[above, on] {To tokens} (tok);
+  \draw[arr] (tok) -- node[above, on] {Token pool} (vec);
+  \draw[arr] (img.north) to[out=40, in=140] node[above, on] {Global pool, Flatten} (vec.north);
+  \draw[arr] (ts.north) .. controls +(0,22mm) and +(0,22mm) .. node[above, on] {To sequence (one vector per date)} (tok.north);
+  % the heads
+  \node[blk, fill=nnout!20, below=9mm of kvec, align=center] (out) {\textbf{Output}\\classes, labels, numbers};
+  \node[blk, fill=nnout!20, below=9mm of kimg, align=center] (seg) {\textbf{Segmentation / Detection output}\\a class per pixel, boxes per cell};
+  \draw[arr] (kvec) -- (out);
+  \draw[arr] (kimg) -- node[right, on] {at the mask's size} (seg);
+\end{tikzpicture}
+\caption{The four kinds of data inside a network, the blocks that keep each kind (written under it), and the blocks that turn one kind into
+another (on the arrows). There is no way back from a vector to an image or from tokens to an image: plan the order so you never need one.}
+\label{fig:build-kinds}
+\end{figure}
+
+Two consequences explain most red blocks. A block must receive the kind it works on: Dense and Output need a vector (``add Flatten or
+Global pool before it''), Conv2D needs an image, Self-attention needs tokens, and Output after To tokens needs a Token pool first. And
+the head must match the task: a segmentation dataset wants an image at the mask's size at the end, not a vector.
+
+\subsection{Seven questions to answer before the first block}
+\label{sec:build-questions}
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{What is the answer?} One class per image, several (multi-label), a few numbers, a class per pixel, or boxes. This fixes
+        the head, and with it the bridge (Figure~\ref{fig:build-kinds}).
+  \item \textbf{How large are the images, and how small must they get?} A classifier usually shrinks the image until it is about
+        4--8 pixels across before Global pool, halving it each time: 32 pixels need 2--3 halvings, 64 pixels 3--4, 224 pixels 5. Each
+        halving is a Pool or a convolution with stride 2. A segmentation network shrinks the same way and then grows back, one step for
+        each halving.
+  \item \textbf{How many channels?} Start with 16--64 and double the channels whenever the size halves, so every stage costs about
+        the same: \shape{32, 32, 32} $\rightarrow$ \shape{64, 16, 16} $\rightarrow$ \shape{128, 8, 8}. The variable \texttt{let w = 32}
+        in the text makes the width one number to change.
+  \item \textbf{How much data is there?} The number of parameters should grow with the number of training images. As a rough guide
+        from practice, not a law: a few thousand images suit up to a few hundred thousand parameters (or a large network started from
+        ImageNet weights, Section~\ref{sec:train}); tens of thousands of images suit 0.3--5 million; more needs more. A network much
+        larger than its data learns the training images by heart: training accuracy far above validation accuracy.
+  \item \textbf{Convolutions or a Transformer?} Convolutions assume that nearby pixels belong together, which is true of photos and
+        satellite images, and they learn well from little data. Self-attention relates every position to every other, which helps with
+        long-range context, but it needs much more data to learn what convolutions know from the start. On small data, use convolutions,
+        or convolutions first and a few attention blocks after them (Example~2).
+  \item \textbf{How deep?} More than about ten convolutions in a row train badly without help. The help is BatchNorm (or GroupNorm for
+        small batches) after each convolution, and residual connections: an \ui{Add} that adds a block's input to its output, so each
+        block only has to learn a correction.
+  \item \textbf{How will it be checked?} Plan a validation part (Train tab, 10--20\,\%) and early stopping from the first run. Compare a
+        small design with a larger one before making it larger still: if training accuracy is low, the network is too small or too
+        shallow (TEST~25 in Section~\ref{sec:tests}: 25\,\% on CIFAR-10 with 1\,898 parameters); if training accuracy is far above
+        validation accuracy, it is too large for the data or needs more augmentation and dropout.
+\end{enumerate}
+
+\subsection{The motifs: small groups that networks are made of}
+\label{sec:build-motifs}
+Famous networks look complicated, but they are a few small groups of blocks repeated with different numbers. Learn these and almost
+every design in this manual reads as a short sentence. Each motif below is a function (\texttt{def}, Section~\ref{sec:text}): written
+once, then used like a block, with its numbers as arguments.
+
+\paragraph{1. The convolution unit} (image $\rightarrow$ image). Convolution, BatchNorm, ReLU. The convolution has no bias and no activation
+of its own: BatchNorm's shift replaces the bias, and the activation comes after the normalisation. With \texttt{s = 2} it halves the size
+(a $4\times4$ kernel with stride 2 and padding 1 halves it exactly).
+\begin{verbatim}
+def unit(c, s = 1) {
+  a conv c kernel=s+2 stride s pad 1 none nobias
+  b bn
+  r relu
+}
+2 unit(32)            # (3, 32, 32) -> (32, 32, 32)
+3 unit(64, 2)         # -> (64, 16, 16)
+\end{verbatim}
+
+\paragraph{2. The stage} (image $\rightarrow$ smaller image). One halving and a few units at the new size. A classifier's body is two to
+five stages, each with twice the channels of the one before. The simplest stage is a Pool and two units:
+\begin{verbatim}
+def unit(c) {
+  a conv c 3x3 none nobias
+  b bn
+  r relu
+}
+def stage(c) {
+  p maxpool 2x2
+  x unit(c)
+  y unit(c)
+}
+2 unit(32)
+3 for c in 64, 128 { s stage(c) }     # (32, 32, 32) -> (64, 16, 16) -> (128, 8, 8)
+\end{verbatim}
+
+\paragraph{3. The residual block} (image $\rightarrow$ image). Two convolutions whose result is \emph{added} to the block's input, so the
+block learns a correction to what it receives. When the block changes the size or the channels, the input is first brought to the new
+shape by a \emph{shortcut} (here an average pool and a $1\times1$ convolution). On the canvas, \ui{Residual block after selected} inserts
+one; the skip-connection tool adds a shortcut to blocks you already have.
+\begin{figure}[htbp]\centering
+\begin{tikzpicture}[node distance=4mm]
+  \node[blk, fill=nnin!12] (x) {input};
+  \node[blk, fill=nnconv!15, right=of x] (c1) {Conv $s$};
+  \node[blk, fill=nnnorm!15, right=of c1] (b1) {BN};
+  \node[blk, fill=nnpool!12, right=of b1] (r1) {ReLU};
+  \node[blk, fill=nnconv!15, right=of r1] (c2) {Conv 3$\times$3};
+  \node[blk, fill=nnnorm!15, right=of c2] (b2) {BN};
+  \node[blk, fill=nnjoin!15, right=8mm of b2] (add) {Add};
+  \node[blk, fill=nnpool!12, right=of add] (r2) {ReLU};
+  \node[blk, fill=nnpool!12, below=6mm of c1] (p) {AvgPool $s$};
+  \node[blk, fill=nnconv!15, right=of p] (k) {Conv 1$\times$1};
+  \node[blk, fill=nnnorm!15, right=of k] (kn) {BN};
+  \foreach \a/\b in {x/c1,c1/b1,b1/r1,r1/c2,c2/b2,b2/add,add/r2,p/k,k/kn} \draw[arr] (\a) -- (\b);
+  \draw[arr] (x.south) |- (p.west);
+  \draw[arr] (kn.east) -| (add.south);
+  \node[font=\scriptsize\sffamily, below=0mm of kn.south east, anchor=north west, text=black!60] {shortcut: only needed when size or channels change};
+\end{tikzpicture}
+\caption{The residual block of Example~1 (without its gate). With $s=2$ the main path halves the size, and the shortcut does too.}
+\label{fig:build-res}
+\end{figure}
+
+\paragraph{4. The channel gate} (image $\rightarrow$ image, same shape). Squeeze-and-excitation~\cite{hu2017senet}: Global pool
+summarises each channel in one number, two small Dense layers decide how much each channel matters for this image (a sigmoid gives 0 to 1),
+and Multiply scales the channels by it. Cheap (a few thousand parameters) and often worth one to two points of accuracy.
+\begin{verbatim}
+def gate(c) {
+  g global_pool
+  d dense c // 4
+  e dense c sigmoid
+  m mul <- in, e          # (c, H, W) times (c): each channel scaled
+}
+2 conv 64 3x3
+3 gate(64)
+\end{verbatim}
+
+\paragraph{5. The Transformer encoder block} (tokens $\rightarrow$ tokens). LayerNorm, Self-attention, Add; LayerNorm, a two-layer MLP,
+Add (the figure in ``Transformers in NN Builder'', Section~\ref{sec:transformers}). Attention lets every token look at every other; the MLP works on each token alone. Before the
+first block, To tokens turns the image into tokens and Class token + position adds the class token and the positions; after the last,
+a LayerNorm and Token pool give the vector. The width $D$ must divide by the number of heads.
+\begin{verbatim}
+let d = 64
+2 conv d 4x4 stride 4 valid none   # patches
+3 to_tokens patches
+4 cls_pos
+5 repeat 2 {
+    a ln
+    b attention heads 4
+    c add <- in, b
+    e ln
+    f dense d * 2 gelu
+    g dense d none
+    h add <- c, g
+  }
+6 ln
+7 token_pool cls
+8 output
+\end{verbatim}
+
+\paragraph{6. The decoder step} (smaller image + skip $\rightarrow$ larger image). For segmentation: double the size (Upsample or
+ConvTranspose2D), join the encoder's map of that size with Concat (the \emph{skip connection}, which brings back the fine detail that
+shrinking lost), then units. U-Net~\cite{ronneberger2015unet} is an encoder of stages and a decoder of these steps. A function with two
+inputs calls the second one \texttt{in2}:
+\begin{verbatim}
+def up(c) {
+  u upsample x2 bilinear
+  j concat <- u, in2
+  k conv c 3x3
+}
+2 conv 16 3x3
+3 maxpool 2x2
+4 conv 32 3x3
+5 up(16) <- 4, 2       # (32, H/2, W/2) and (16, H, W) -> (16, H, W)
+6 seg_output
+\end{verbatim}
+
+\paragraph{7. Joining two inputs} (two images $\rightarrow$ one). Two band groups (Sentinel-2 and Sentinel-1, or the same place at two
+dates) start from two Input blocks. \emph{Different} data gets its own branch, joined by Concat (fusion, Section~\ref{sec:fusion}).
+\emph{The same} data at two dates should be described in the same terms: the second branch reuses the first branch's layers with
+\ui{Shared weights}, and \ui{Subtract} (absolute) compares them (Example~4).
+
+\subsection{From the questions to a design}
+\label{sec:build-table}
+\begin{longtable}{@{}p{5.2cm}p{9.8cm}@{}}
+\toprule
+\textbf{If you want \dots} & \textbf{build \dots}\\
+\midrule\endhead
+one class per photo, little data & 3--4 stages of units, Global pool, Dropout, Output; or a demo started from ImageNet weights\\
+one class per photo, more accuracy & the same with residual blocks (Example~1); add channel gates; widen with \texttt{let w}\\
+to use attention on images & a convolution stem down to 8--16 positions across, then To tokens and 2--6 encoder blocks (Example~2)\\
+a class for every pixel & an encoder of stages and a decoder of steps with skips, ending at the mask's size (Example~3)\\
+to compare two dates & a twin branch with shared weights and Subtract (Example~4)\\
+two sensors together & one Input per band group, a branch each, Concat (Section~\ref{sec:fusion})\\
+several labels per image, or numbers & the same body as for one class; only the Dataset tab's task changes (the Output adapts)\\
+images over time & Conv3D or Temporal pool first (Section~\ref{sec:timeseries}), then any image body\\
+a layer that is not in the list & a Custom block in PyTorch (Section~\ref{sec:custom})\\
+\bottomrule
+\end{longtable}
+
+%-------------------------------------------------------------------------------------------------------------------------------------
+\subsection{Example 1: a classifier for satellite photos}
+\label{sec:build-ex1}
+\paragraph{The job.} EuroSAT RGB~\cite{helber2019eurosat} (Hugging Face \texttt{timm/eurosat-rgb}): 27\,000 Sentinel-2 photos of
+$64\times64$ pixels in 10 land-cover classes (forest, river, highway, \dots). One class per photo.
+
+\paragraph{The decisions.}
+\begin{itemize}[nosep]
+  \item Head and bridge: one class per image $\rightarrow$ Output, after Global pool.
+  \item Size: 64 pixels to 8 needs three halvings. The first is done at once by the stem (a unit with stride 2): the finest details of a
+        10-metre pixel matter less than the texture of a field or a town, and every later layer costs a quarter as much.
+  \item Body: three stages of one residual block each (32, 64, 128 channels at $32\times32$, $16\times16$, $8\times8$), each with a
+        channel gate, since land cover is very much about \emph{which} textures are present.
+  \item Size of the whole: 27\,000 images suit a few hundred thousand parameters: about 0.4 million here. Dropout 0.2 before the Output.
+\end{itemize}
+
+\begin{figure}[htbp]\centering
+\begin{tikzpicture}[node distance=3.2mm, every node/.style={font=\scriptsize\sffamily, align=center}]
+  \node[blk, fill=nnin!15] (a) {Input\\[-1pt]{\tiny\color{black!60}(3,64,64)}};
+  \node[blk, fill=nnconv!15, right=of a] (b) {unit 32, $s$2\\[-1pt]{\tiny\color{black!60}(32,32,32)}};
+  \node[blk, fill=nnjoin!12, right=of b] (c) {res 32\\[-1pt]{\tiny\color{black!60}(32,32,32)}};
+  \node[blk, fill=nnjoin!12, right=of c] (d) {res 64, $s$2\\[-1pt]{\tiny\color{black!60}(64,16,16)}};
+  \node[blk, fill=nnjoin!12, right=of d] (e) {res 128, $s$2\\[-1pt]{\tiny\color{black!60}(128,8,8)}};
+  \node[blk, fill=nnpool!15, right=of e] (f) {Global pool\\[-1pt]{\tiny\color{black!60}(128)}};
+  \node[blk, fill=nnpool!8, right=of f] (g) {Dropout\\[-1pt]{\tiny\color{black!60}(128)}};
+  \node[blk, fill=nnout!15, right=of g] (h) {Output\\[-1pt]{\tiny\color{black!60}(10)}};
+  \foreach \x/\y in {a/b,b/c,c/d,d/e,e/f,f/g,g/h} \draw[arr] (\x) -- (\y);
+\end{tikzpicture}
+\caption{Example 1 at the level of motifs (``res'' is the residual block of Figure~\ref{fig:build-res} with a channel gate); the
+shapes are what each part gives. On the canvas it is 49 blocks.}
+\end{figure}
+
+\VerbatimInput[fontsize=\small,frame=single,numbers=left,numbersep=6pt,label=\file{build\_classifier.nnb}]{examples/build_classifier.nnb}
+
+\paragraph{Reading it.} The three functions are the motifs 1, 4 and 3. The line labelled 3 is the body: a \texttt{for} over (channels, stride) that
+calls \texttt{res} three times, each pass taking the previous pass's output. A residual block with stride 1 and unchanged channels would
+not need its shortcut convolution; it is kept so that one function serves every stage (it costs 1\,088 parameters).
+
+\paragraph{The numbers.} 393\,122 parameters, 58 M multiply--accumulates per image. Where they are:
+\begin{center}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Part} & \textbf{Output} & \textbf{Parameters}\\
+\midrule
+stem: unit 32, stride 2 & \shape{32, 32, 32} & 1\,600\\
+stage 1: residual block 32 + gate & \shape{32, 32, 32} & 20\,200\\
+stage 2: residual block 64, stride 2 + gate & \shape{64, 16, 16} & 74\,192\\
+stage 3: residual block 128, stride 2 + gate & \shape{128, 8, 8} & 295\,840\\
+Global pool, Dropout, Output & \shape{10} & 1\,290\\
+\midrule
+total & & 393\,122\\
+\bottomrule
+\end{tabular}
+\end{center}
+Three quarters of the parameters sit in the last stage, as usual: its convolutions have the most channels. The first stage has few
+parameters but the most computation (it works on $32\times32$ positions).
+
+\paragraph{Training it.} \ui{Use recommended} (AdamW, cosine schedule with warm-up, label smoothing), 30--50 epochs, batch 128,
+validation 10\,\% with early stopping; augmentation: horizontal \emph{and} vertical flips (a satellite photo has no ``up''). Kaggle, one
+GPU: it is small.
+
+\paragraph{Changing it.} Wider: \texttt{let w = 48}. Deeper: a second call in the loop, \texttt{y res(c)} after \texttt{x res(c, s)}
+(this is the Small ResNet of Section~\ref{sec:text}). More bands (EuroSAT-MS, 13 bands): nothing changes in the text; only the Input's
+shape and the stem's parameters grow. Larger images (e.g.\ 128 pixels): one more stage, \texttt{(w * 8, 2)}.
+
+%-------------------------------------------------------------------------------------------------------------------------------------
+\subsection{Example 2: convolutions, then a Transformer}
+\label{sec:build-ex2}
+\paragraph{The job.} CIFAR-10: 50\,000 photos of $32\times32$ pixels, 10 classes. This example grows TEST~25 (Section~\ref{sec:tests}:
+one patch convolution, To tokens, Token pool, 25\,\% accuracy) into a network that uses its tokens.
+
+\paragraph{The decisions.}
+\begin{itemize}[nosep]
+  \item Why TEST~25 stayed at 25\,\%: To tokens only reshapes, and Token pool (mean) averages the 64 patch tokens straight away. Nothing
+        ever relates one patch to another, and a single $4\times4$ convolution sees only its own patch. The network is too \emph{simple},
+        not too small: its training accuracy was as low as its test accuracy.
+  \item The fix is two things. Convolutions first (a stem), so that each position already describes its neighbourhood: two units at
+        $32\times32$, a Pool, one more unit, then a $2\times2$ convolution with stride 2 that makes an $8\times8$ grid of 128-value
+        positions. Then encoder blocks, so that positions exchange information: four, width 128, 4 heads.
+  \item Bridge: To tokens (64 tokens), Class token + position (65 tokens: attention ignores order unless positions are added); at the
+        end LayerNorm and Token pool (class token).
+  \item Size: 0.72 million parameters for 50\,000 images.
+\end{itemize}
+
+\begin{figure}[htbp]\centering
+\begin{tikzpicture}[node distance=3.2mm, every node/.style={font=\scriptsize\sffamily, align=center}]
+  \node[blk, fill=nnin!15] (a) {Input\\[-1pt]{\tiny\color{black!60}(3,32,32)}};
+  \node[blk, fill=nnconv!15, right=of a] (b) {unit 64 $\times$2\\[-1pt]{\tiny\color{black!60}(64,32,32)}};
+  \node[blk, fill=nnpool!15, right=of b] (c) {Pool\\[-1pt]{\tiny\color{black!60}(64,16,16)}};
+  \node[blk, fill=nnconv!15, right=of c] (d) {unit 128\\[-1pt]{\tiny\color{black!60}(128,16,16)}};
+  \node[blk, fill=nnconv!25, right=of d] (e) {Conv 2$\times$2 $s$2\\[-1pt]{\tiny\color{black!60}(128,8,8)}};
+  \node[blk, fill=nntok!15, right=of e] (f) {To tokens\\[-1pt]{\tiny\color{black!60}(64,128)}};
+  \node[blk, fill=nntok!15, right=of f] (g) {cls + pos\\[-1pt]{\tiny\color{black!60}(65,128)}};
+  \node[blk, fill=nnatt!15, right=of g] (h) {encoder $\times$4\\[-1pt]{\tiny\color{black!60}(65,128)}};
+  \node[blk, fill=nntok!15, right=of h] (i) {LN, Token pool\\[-1pt]{\tiny\color{black!60}(128)}};
+  \node[blk, fill=nnout!15, right=of i] (j) {Output\\[-1pt]{\tiny\color{black!60}(10)}};
+  \foreach \x/\y in {a/b,b/c,c/d,d/e,e/f,f/g,g/h,h/i,i/j} \draw[arr] (\x) -- (\y);
+\end{tikzpicture}
+\caption{Example 2: image kind on the left, tokens in the middle, a vector at the end (Figure~\ref{fig:build-kinds}).}
+\end{figure}
+
+\VerbatimInput[fontsize=\small,frame=single,numbers=left,numbersep=6pt,label=\file{build\_hybrid.nnb}]{examples/build_hybrid.nnb}
+
+\paragraph{The numbers.} 718\,410 parameters, 101 M multiply--accumulates per image: the stem 178\,496 (with the $2\times2$
+convolution), Class token + position 8\,448, each encoder block 132\,480 (attention 66\,048, MLP 65\,920, two LayerNorms 512), the
+end 1\,546. Each line's shape can be checked against Figure~\ref{fig:build-kinds}: the block labelled 6 is the last of image kind, 7 the
+first of token kind, 11 the first vector. (The labels, not the listing's grey line numbers.)
+
+\paragraph{Training it.} \ui{Use recommended} (Transformers need the warm-up and weight decay more than CNNs do), 50--100 epochs,
+batch 128, horizontal flip and random crop, validation 10\,\%. On one T4 an epoch should take seconds, not minutes; one GPU is enough.
+
+\paragraph{Changing it.} To see what the stem is worth, delete the lines labelled 2--5 and make 6 \texttt{conv d 4x4 stride 4 valid none}: a
+pure small ViT, which on CIFAR-10 from scratch usually does clearly worse. More encoder blocks: \texttt{repeat 6}. Wider: \texttt{let d
+= 192} with \texttt{heads 6} or \texttt{heads 3} (192 must divide by the heads). A mean of all tokens instead of the class token:
+\texttt{token\_pool mean} (and \texttt{cls\_pos nocls}).
+
+%-------------------------------------------------------------------------------------------------------------------------------------
+\subsection{Example 3: a water map from Sentinel-2}
+\label{sec:build-ex3}
+\paragraph{The job.} Six Sentinel-2 bands (B2, B3, B4, B8, B11, B12) in $128\times128$ patches, each with a mask of the same size:
+water or not water for every pixel. Dataset tab: \ui{My own files}, task \ui{Segmentation}, images and masks folders
+(Section~\ref{sec:data-kinds}).
+
+\paragraph{The decisions.}
+\begin{itemize}[nosep]
+  \item Head: a class per pixel $\rightarrow$ Segmentation output, which must receive an image at the mask's size, $128\times128$.
+  \item Body: an encoder that halves three times ($128 \rightarrow 16$), so that one value at the narrowest level sees $68\times68$ input
+        pixels (a river's banks, a lake's shape; the inspector shows this receptive field), and a decoder that doubles three times back to 128. A skip connection at every size
+        brings back the sharp edges.
+  \item Motifs: \texttt{block} (two units) at every level, \texttt{down} (Pool + block) in the encoder, \texttt{up} (Upsample +
+        Concat with the skip + block) in the decoder: motifs 1, 2 and 6.
+  \item Bilinear Upsample instead of ConvTranspose2D: no parameters and no checkerboard patterns; the block after it learns what
+        is needed. Dropout 0.3 at the narrowest point, where the network holds the most channels.
+\end{itemize}
+
+\begin{figure}[htbp]\centering
+\begin{tikzpicture}[node distance=3mm, every node/.style={font=\scriptsize\sffamily, align=center}]
+  \node[blk, fill=nnin!15] (in) {Input};
+  \node[blk, fill=nnconv!15, right=of in] (e1) {block 16\\[-1pt]{\tiny\color{black!60}(16,128,128)}};
+  \node[blk, fill=nnconv!15, below right=5mm and 2mm of e1] (e2) {down 32\\[-1pt]{\tiny\color{black!60}(32,64,64)}};
+  \node[blk, fill=nnconv!15, below right=5mm and 2mm of e2] (e3) {down 64\\[-1pt]{\tiny\color{black!60}(64,32,32)}};
+  \node[blk, fill=nnconv!25, below right=5mm and 2mm of e3] (e4) {down 128, Dropout\\[-1pt]{\tiny\color{black!60}(128,16,16)}};
+  \node[blk, fill=nnjoin!12, above right=5mm and 2mm of e4] (d3) {up 64\\[-1pt]{\tiny\color{black!60}(64,32,32)}};
+  \node[blk, fill=nnjoin!12, above right=5mm and 2mm of d3] (d2) {up 32\\[-1pt]{\tiny\color{black!60}(32,64,64)}};
+  \node[blk, fill=nnjoin!12, above right=5mm and 2mm of d2] (d1) {up 16\\[-1pt]{\tiny\color{black!60}(16,128,128)}};
+  \node[blk, fill=nnout!15, right=of d1] (out) {Seg output\\[-1pt]{\tiny\color{black!60}(2,128,128)}};
+  \draw[arr] (in) -- (e1); \draw[arr] (e1) |- (e2); \draw[arr] (e2) |- (e3); \draw[arr] (e3) |- (e4);
+  \draw[arr] (e4) -| (d3); \draw[arr] (d3) -| (d2); \draw[arr] (d2) -| (d1); \draw[arr] (d1) -- (out);
+  \draw[arr, dashed] (e3) -- node[above] {skip} (d3);
+  \draw[arr, dashed] (e2) -- node[above] {skip} (d2);
+  \draw[arr, dashed] (e1) -- node[above] {skip} (d1);
+\end{tikzpicture}
+\caption{Example 3, a U-Net: down the left, up the right, a skip (Concat) across at every size.}
+\end{figure}
+
+\VerbatimInput[fontsize=\small,frame=single,numbers=left,numbersep=6pt,label=\file{build\_segment.nnb}]{examples/build_segment.nnb}
+
+\paragraph{Reading it.} \texttt{up(64) <- 6, 4} gives the call two inputs: the line above's output (\texttt{in}, the dropout's
+\shape{128, 16, 16}) and that of the line labelled 4 (\texttt{in2}, the encoder's \shape{64, 32, 32}). After Upsample the two have the same height and width,
+so Concat can join them: \shape{128 + 64, 32, 32} = \shape{192, 32, 32}, which the block brings down to 64 channels.
+
+\paragraph{The numbers.} 488\,450 parameters, 675 M multiply--accumulates per patch (the full-size levels are the expensive ones). The
+encoder holds 294\,432 parameters, the decoder 193\,984, the Segmentation output 34 (a $1\times1$ convolution from 16 channels to 2
+classes).
+
+\paragraph{Training it.} \ui{Use recommended}, batch 16--32, horizontal and vertical flips (applied to image and mask alike), validation
+10\,\% and early stopping on mIoU. Water is often a small part of each patch: look at \ui{Unbalanced classes}
+(Section~\ref{sec:imbalance}) and at the per-class IoU in Results, not only at pixel accuracy.
+
+\paragraph{Changing it.} Smaller objects or larger patches: one more level (\texttt{down(256)} and \texttt{up(128)}). Fewer
+parameters: start at 8 channels. More classes (a land-cover map): only the Dataset tab changes; Segmentation output follows the classes.
+Sentinel-1 radar as well: a second Input and a branch, joined at the bottleneck with Concat (Section~\ref{sec:fusion}).
+
+%-------------------------------------------------------------------------------------------------------------------------------------
+\subsection{Example 4: what changed between two dates}
+\label{sec:build-ex4}
+\paragraph{The job.} Pairs of Sentinel-2 patches of the same place (4 bands, $64\times64$) before and after: has the land changed
+(cleared, built on, flooded) or not? The Dataset tab gives the ``before'' folder as band group 1 and the ``after'' folder as band group 2
+with the same bands (Section~\ref{sec:siamese}).
+
+\paragraph{The decisions.}
+\begin{itemize}[nosep]
+  \item Two Inputs (one per band group). Both images should be described \emph{in the same terms}, otherwise their difference measures
+        the two branches, not the land. So the second branch uses the first branch's layers: \ui{Shared weights}. Build the ``before''
+        branch, select its last block, press \ui{Twin branch (shared weights)}, and the ``after'' branch appears.
+  \item The comparison: \ui{Subtract} with \emph{absolute difference}: large where the two descriptions differ, near zero where nothing
+        changed.
+  \item After it, one more convolution to judge the differences in context, then Global pool and Output (two classes).
+\end{itemize}
+
+\screenshot{build_change.png}{Example 4 on the canvas (drawn by the application; the right half is shown under the left). The upper branch's convolutions (2, 4, 6) are used
+again by the lower branch's Shared-weights blocks (8, 10, 12); Subtract (13) compares the two at $16\times16$.}{fig:build-change}
+
+\VerbatimInput[fontsize=\small,frame=single,numbers=left,numbersep=6pt,label=\file{build\_change.nnb}]{examples/build_change.nnb}
+
+\paragraph{The numbers.} 241\,378 parameters. The twin branch adds none: its three Shared-weights blocks show ``the weights of another
+block'' and 0 parameters, and the convolutions 2, 4 and 6 (93\,536 together) are trained by both images. Convolution 14 (147\,584) and the
+Output (258) are the rest.
+
+\paragraph{Training it.} \ui{Use recommended}, flips and turns (applied to both images alike), validation 10\,\%. Changed pairs are usually
+rare: see Section~\ref{sec:imbalance}.
+
+\paragraph{Changing it.} A change \emph{map} instead of one answer per pair: masks in the Dataset tab (segmentation), and after
+Subtract a decoder of \texttt{up} steps to the image's size and a Segmentation output, as in Example~3 (the skips can come from either
+branch). Keep both descriptions instead of their difference: \texttt{concat <- 6, 12} instead of the Subtract.
+
+\subsection{When a design does not learn}
+\label{sec:build-diagnose}
+\begin{longtable}{@{}p{5.2cm}p{9.8cm}@{}}
+\toprule
+\textbf{What the Results show} & \textbf{What to change}\\
+\midrule\endhead
+training and validation accuracy both low, and close & the network is too simple or too small: add stages or blocks, widen it,
+  bring attention or a stem (Example~2); check the receptive field covers the objects\\
+training accuracy high, validation much lower & too large for the data: more augmentation, Dropout, weight decay, fewer channels;
+  or ImageNet weights\\
+the loss does not fall at all & learning rate too high or too low (try 0.001 with AdamW), missing normalisation in a deep network,
+  or the data: run \ui{Check data} (Section~\ref{sec:train})\\
+the loss is NaN & lower the learning rate, switch on gradient clipping (part of \ui{Use recommended})\\
+``CUDA out of memory'' & smaller batch, \ui{Save memory}, fewer channels at the full-size levels\\
+segmentation edges blurred & skip connections missing or joined at the wrong size; fewer halvings\\
+\bottomrule
+\end{longtable}

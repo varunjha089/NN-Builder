@@ -64,7 +64,8 @@ mistakes are explained in plain words on the block itself. A finished design bec
 loads the data (a built-in dataset, Hugging Face or Kaggle), and the application runs it on a GPU somewhere else: a free Kaggle notebook,
 a college GPU server over SSH, or an Amazon EC2 instance (including spot instances, which may be interrupted). The computer the application
 runs on only designs: it never trains, never downloads datasets and needs no PyTorch.
-This manual explains the application screen by screen, walks through designing a network from scratch, gives the arithmetic behind every
+This manual explains the application screen by screen, walks through designing a network from scratch, explains how to decide what to build (the parts of every network, the
+kinds of data between blocks, the common motifs) with four worked examples, gives the arithmetic behind every
 number the application shows, explains the fifteen demo architectures (from LeNet-5 to a one-billion-parameter Vision Transformer, plus one
 original design), and ends with troubleshooting. References point to the original papers, on arXiv wherever they are published there.
 \end{abstract}
@@ -392,6 +393,9 @@ warning & a block whose result is not used; Flatten on an input that is already 
 \end{longtable}
 
 %=====================================================================================================================================
+\input{building}
+
+%=====================================================================================================================================
 \section{The arithmetic behind the numbers}
 \label{sec:math}
 
@@ -598,6 +602,7 @@ worker~0 has written the results the others are ended within a minute, so a run 
 memory (FSDP, splitting the weights over the GPUs) is not supported yet.
 
 \subsection{Transformers in NN Builder}
+\label{sec:transformers}
 A transformer works on a \emph{sequence of tokens}, shape $(N, D)$: $N$ tokens of $D$ values. To use one on images:
 \begin{enumerate}
   \item cut the image into patches with a convolution whose kernel equals its stride (ViT: 16$\times$16, stride 16, $D$ filters), giving
@@ -2046,6 +2051,9 @@ not: no training results exist yet. Treat it as a starting point for experiments
   \href{https://arxiv.org/abs/1512.03385}{arXiv:1512.03385}.
 \bibitem{he2016identity} K.~He, X.~Zhang, S.~Ren and J.~Sun. Identity mappings in deep residual networks. 2016.
   \href{https://arxiv.org/abs/1603.05027}{arXiv:1603.05027}.
+\bibitem{helber2019eurosat} P.~Helber, B.~Bischke, A.~Dengel and D.~Borth. EuroSAT: a novel dataset and deep learning benchmark for land
+  use and land cover classification. 2017. \href{https://arxiv.org/abs/1709.00029}{arXiv:1709.00029}.
+
 \bibitem{hendrycks2016gelu} D.~Hendrycks and K.~Gimpel. Gaussian error linear units (GELUs). 2016.
   \href{https://arxiv.org/abs/1606.08415}{arXiv:1606.08415}.
 \bibitem{hinton2012dropout} G.~E. Hinton, N.~Srivastava, A.~Krizhevsky, I.~Sutskever and R.~R. Salakhutdinov. Improving neural networks

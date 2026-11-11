@@ -1,0 +1,32 @@
+net "Water from Sentinel-2"
+# 6 Sentinel-2 bands, 128×128 patches with a mask each (water / not water).
+# An encoder that shrinks, a decoder that grows back.
+def unit(c) {
+  a conv c 3x3 none nobias
+  b bn
+  r relu
+}
+def block(c) {                     # two units: the step every level makes
+  a unit(c)
+  b unit(c)
+}
+def down(c) {                      # half the size, more channels
+  p maxpool 2x2
+  b block(c)
+}
+def up(c) {                  # twice the size, joined with the encoder's map (in2)
+  u upsample x2 bilinear
+  j concat <- u, in2
+  b block(c)
+}
+
+1 input                            # (6, 128, 128)
+2 block(16)                        # (16, 128, 128)
+3 down(32)                         # (32, 64, 64)
+4 down(64)                         # (64, 32, 32)
+5 down(128)                        # (128, 16, 16): the bottleneck
+6 dropout 0.3
+7 up(64) <- 6, 4                   # (64, 32, 32)
+8 up(32) <- 7, 3                   # (32, 64, 64)
+9 up(16) <- 8, 2                   # (16, 128, 128)
+10 seg_output                      # (2, 128, 128): a score per class per pixel

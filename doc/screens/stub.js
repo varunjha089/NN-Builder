@@ -1,5 +1,5 @@
 // Stands in for the Mac side of NN Builder when its UI is drawn in a browser for the manual's pictures (doc/screens/render.sh): answers
-// app_state / project_load from answers.json (made by examples/doc_screens.rs), everything else with nothing; then shows the Dataset tab.
+// app_state / project_load from answers.json (made by examples/doc_screens.rs), everything else with nothing; then shows the tab render.sh names (Dataset, or Design for the worked examples).
 (function () {
   var req = new XMLHttpRequest();
   req.open("GET", "/answers.json", false);
@@ -20,11 +20,17 @@
     },
   };
   window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: function () {} };
+  // the Design tab's pictures show only the canvas (no top bar, panels, minimap or zoom buttons), so the window's width is the design's
+  if ("__TAB__" === "Design") {
+    var css = document.createElement("style");
+    css.textContent = "header, .palette, .inspector, .react-flow__minimap, .react-flow__controls, .react-flow__attribution { display: none !important; }";
+    document.head.appendChild(css);
+  }
   try { localStorage.setItem("nnb-theme", "day"); } catch (e) { /* day theme by default anyway */ }
-  // show the Dataset tab (and open a folded part) once the window is drawn
+  // show the tab (and open a folded part) once the window is drawn
   var tries = 0;
   var timer = setInterval(function () {
-    var tab = Array.prototype.find.call(document.querySelectorAll("button.tab"), function (b) { return b.textContent.trim() === "Dataset"; });
+    var tab = Array.prototype.find.call(document.querySelectorAll("button.tab"), function (b) { return b.textContent.trim() === "__TAB__"; });
     if (tab || ++tries > 100) {
       clearInterval(timer);
       if (tab) tab.click();

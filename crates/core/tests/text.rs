@@ -516,8 +516,21 @@ fn manual_examples_build() {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../doc/examples");
     let ds = |c: usize, s: usize, task: &str| Dataset { source: "huggingface".into(), task: task.into(), hf_repo: "x/y".into(), image_size: [s, s],
         channels: c, classes: if task == "segment" { vec!["a".into(), "b".into()] } else { (0..10).map(|i| i.to_string()).collect() }, ..Default::default() };
+    // two Sentinel-2 band groups with the same 4 bands (before / after) for the Siamese example
+    let s2 = |b: &[&str]| b.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    let two_dates = Dataset { source: "local".into(), local_dir: "/data/x".into(), image_size: [64, 64], sensor: "s2".into(),
+        band_order: s2(nnb_core::dataset::SENTINEL2_GEE), bands: s2(&["B2", "B3", "B4", "B8"]), sensor2: "s2".into(),
+        band_order2: s2(nnb_core::dataset::SENTINEL2_GEE), bands2: s2(&["B2", "B3", "B4", "B8"]), fuse_dir: "after".into(),
+        classes: s2(&["changed", "unchanged"]), ..Default::default() };
+    // six Sentinel-2 bands, 128×128 patches with masks
+    let water = Dataset { source: "local".into(), task: "segment".into(), local_dir: "/data/x".into(), kaggle_train_dir: "images".into(),
+        kaggle_mask_dir: "masks".into(), image_size: [128, 128], sensor: "s2".into(), band_order: s2(nnb_core::dataset::SENTINEL2_GEE),
+        bands: s2(&["B2", "B3", "B4", "B8", "B11", "B12"]), classes: s2(&["not water", "water"]), ..Default::default() };
     let cases = [("lenet5", ds(1, 28, "classify"), 61_706u64), ("resnet_small", ds(3, 32, "classify"), 0), ("vit_small", ds(3, 32, "classify"), 0),
-        ("unet_small", ds(3, 64, "segment"), 0), ("everything", ds(3, 32, "classify"), 0)];
+        ("unet_small", ds(3, 64, "segment"), 0), ("everything", ds(3, 32, "classify"), 0),
+        // the worked examples of doc/building.tex, with the parameter counts printed there
+        ("build_classifier", ds(3, 64, "classify"), 393_122), ("build_hybrid", ds(3, 32, "classify"), 718_410),
+        ("build_segment", water, 488_450), ("build_change", two_dates, 241_378)];
     for (name, d, params) in cases {
         let text = std::fs::read_to_string(format!("{dir}/{name}.nnb")).unwrap();
         let g = build(&text);
@@ -557,6 +570,25 @@ fn manual_snippets_build() {
     // claims in the text: named values in a call; repeat … as NAME
     build("def basic(c, s = 1) {\n  a conv c 3x3 stride s\n}\n1 input\n2 basic(c=64, s=2)\n3 basic(32)\n");
     build("1 input\n2 repeat 12 as enc {\n  a conv 8 3x3\n}\n");
+}
+
+/// the short texts of the manual's chapter on building (doc/building.tex: the motifs) build, and no block in them is wrong
+#[test]
+fn building_snippets_work() {
+    let tex = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../doc/building.tex")).unwrap().replace("\r\n", "\n");
+    let mut n = 0;
+    for part in tex.split("\\begin{verbatim}\n").skip(1) {
+        let snip = part.split("\\end{verbatim}").next().unwrap();
+        let g = build(&format!("1 input\n{snip}"));
+        let d = if snip.contains("seg_output") { Dataset { task: "segment".into(), classes: vec!["a".into(), "b".into()], ..cifar() } } else { cifar() };
+        let a = analyze(&g, &d);
+        // a motif without a head ends in a block whose result is not used: that warning only
+        let unused = |n: &nnb_core::shapes::NodeResult| n.status == "warn" && n.messages.iter().all(|m| m.contains("is not used"));
+        let bad: Vec<_> = a.nodes.iter().filter(|n| n.status != "ok" && !unused(n)).map(|n| (g.node(&n.id).unwrap().label.clone(), n.messages.clone())).collect();
+        assert!(bad.is_empty(), "{snip}\n{bad:?}");
+        n += 1;
+    }
+    assert_eq!(n, 5, "snippets in building.tex");
 }
 
 /// every way of writing a block's settings that the manual's block reference shows, and what it sets
