@@ -3,6 +3,10 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 18_11_26_18_40_50
+
+**TEST_APP: Kaggle run of a two-branch design with a custom loss; first lab machine findings** (`50dc896`)
+
 ## 18_11_26_18_30_59
 
 **SSH machines: use an existing venv, Find Python, Prepare that survives a dropped connection** (`56c22d2`)
