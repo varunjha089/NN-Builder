@@ -220,6 +220,16 @@ fn remote_and_kaggle_runs() {
     }
     assert_eq!(runs::listing(&pr).iter().find(|r| r["id"] == id.as_str()).unwrap()["check"], true);
 
+    // ---- a run cut off while launching (the app closed during a Kaggle push): "starting" with no notebook or job, and nobody launching
+    // it. Listed as failed with the reason, not "starting" for ever
+    let cut = pr.runs_dir().join("20200101-000000-check");
+    std::fs::create_dir_all(&cut).unwrap();
+    std::fs::write(cut.join("run.json"), r#"{"id": "20200101-000000-check", "target": "Kaggle", "kind": "kaggle", "created": "2020-01-01 00:00",
+        "status": "starting", "epochs": 0, "dataset": "mnist", "check": true}"#).unwrap();
+    assert_eq!(runs::listing(&pr).iter().find(|r| r["id"] == "20200101-000000-check").unwrap()["status"], "failed");
+    assert!(runs::info(&cut).error.contains("closed before this run was launched"));
+    assert_eq!(runs::status(&pr, "20200101-000000-check", 0, &Creds::default()).unwrap().state, "failed");
+
     // ---- the same machine launching with tmux (when tmux is installed here): the run path must be quoted right
     if std::process::Command::new("tmux").arg("-V").output().map(|o| o.status.success()).unwrap_or(false) {
         let mut m2 = m.clone();

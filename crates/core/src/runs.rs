@@ -350,6 +350,8 @@ fn start_seeded(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_token
     };
     let mut info = RunInfo { id: id.clone(), target: target.into(), created: chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(), status: "starting".into(),
         epochs: if check { 0 } else { t.epochs }, dataset: ds_label, seed: t.seed, group: group.into(), check, ..Default::default() };
+    // while this app launches it (from before the first save): a "starting" run nobody is launching was cut off (see status)
+    let busy = Busy::new(&d);
     if target == KAGGLE {
         info.kind = "kaggle".into();
         save(&d, &info)?;
@@ -393,7 +395,6 @@ fn start_seeded(pr: &Project, target: &str, gpu: &str, creds: &Creds, copy_token
     let mut m = remote::machine(target).ok_or_else(|| anyhow!("Unknown machine {target:?} (Connection tab)."))?;
     info.kind = m.kind.clone();
     save(&d, &info)?;
-    let busy = Busy::new(&d);
     let res = start_remote(pr, &d, &mut info, &mut m, &t, gpu, creds, copy_tokens, &ds, log);
     drop(busy);
     if let Err(e) = &res {
@@ -1114,12 +1115,27 @@ fn kaggle_attach_of(ds: &crate::dataset::Dataset) -> String {
 /// the start of the note a run gets while Kaggle cannot be asked about it (cleared when it answers again)
 const KAGGLE_DOWN: &str = "Kaggle could not be reached";
 
+/// a run never launched that nobody is launching: the app was closed (or stopped) during the launch, so nothing runs anywhere. Marked
+/// failed (and saved); before, such a run stayed "starting" for ever (a Kaggle data check closed during its push).
+fn cut_off(d: &Path, info: &mut RunInfo) -> bool {
+    if info.status != "starting" || !info.job.is_empty() || !info.kernel.is_empty() || !info.launch.is_empty() || busy(d) {
+        return false;
+    }
+    info.status = "failed".into();
+    info.error = "The app was closed before this run was launched, so it never started. Start it again.".into();
+    let _ = save(d, info);
+    true
+}
+
 pub fn status(pr: &Project, id: &str, since: usize, creds: &Creds) -> Result<Status> {
     let d = run_dir(pr, id)?;
     let mut info = info(&d);
     let mut state = info.status.clone();
     // a spot run continued elsewhere is still looked at (when opened): if its old instance came back, it is stopped there
     let watch_old = state == "continued" && info.spot;
+    if cut_off(&d, &mut info) {
+        state = "failed".into();
+    }
     if state == "queued" && info.kind == "kaggle" {
         if let Some(c) = creds.kaggle.as_ref().filter(|_| now() - info.last_poll >= KAGGLE_POLL) {
             info.last_poll = now();
@@ -1346,11 +1362,11 @@ pub fn resume_on(pr: &Project, from: &str, target: &str, gpu: &str, creds: &Cred
     let mut info = RunInfo { id: id.clone(), target: target.into(), kind: m.kind.clone(), created: chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(),
         status: "starting".into(), epochs: old.epochs, dataset: old.dataset.clone(), resumed_from: from.into(),
         offset: std::fs::metadata(d.join("metrics.jsonl")).map(|x| x.len()).unwrap_or(0), ..Default::default() };
+    let busy = Busy::new(&d);
     save(&d, &info)?;
     log(format!("Continuing run {from} on {target} from its checkpoint{} ...",
         if ck.is_null() { String::new() } else { format!(" (epoch {}, batch {}/{})", ck["epoch"], ck["step"], ck["steps"]) }));
     let ds = store::read_json::<crate::dataset::Dataset>(&d.join("dataset.json")).unwrap_or_default();
-    let busy = Busy::new(&d);
     let res = start_remote(pr, &d, &mut info, &mut m, &t, gpu, creds, copy_tokens, &ds, log);
     drop(busy);
     if let Err(e) = &res {
@@ -1382,7 +1398,8 @@ pub fn listing(pr: &Project) -> Vec<Value> {
     dirs.sort();
     dirs.reverse();
     for d in dirs {
-        let i = info(&d);
+        let mut i = info(&d);
+        cut_off(&d, &mut i);
         let ev = read_events(&d, 0);
         let acc = ev.iter().rev().find_map(|e| e["test_acc"].as_f64());
         // Check data: how many things looked wrong
@@ -1404,7 +1421,8 @@ pub fn active_everywhere() -> Vec<Value> {
         let pr = Project { dir: PathBuf::from(path) };
         let Ok(rd) = std::fs::read_dir(pr.runs_dir()) else { continue };
         for d in rd.filter_map(|e| e.ok()).map(|e| e.path()) {
-            let i = info(&d);
+            let mut i = info(&d);
+            cut_off(&d, &mut i);
             if !["starting", "running", "queued"].contains(&i.status.as_str()) {
                 continue;
             }

@@ -296,6 +296,9 @@ crates/core/src/
                            (ended runs of every listed project after a time; end = last event time), Tauri runs_follow_all (status() of
                            every active run in all projects at once, then the report since setting "report_seen", default 24 h) and
                            runs_report_seen; Projects page every 2 min + once at app start (toast).
+                           Busy (in-process) is held from before a run's first save until its launch ends (start and resume_on);
+                           cut_off: a "starting" run with no kernel/job/launch that nobody is launching was cut off (app closed during
+                           a Kaggle push) -> failed with the reason, applied by status, listing and active_everywhere.
                            start (Kaggle push | ssh/aws: aws_up, prepare if needed, optional token copy, run.sh with timeout + exit code +
                            shutdown on AWS, rsync, launch via slurm/systemd/tmux/nohup), status (rate-limited polls: Kaggle 30 s, ssh 3 s;
                            metrics appended by byte offset; fetch when ended), stop, fetch (AWS: start/copy/stop), listing, results
