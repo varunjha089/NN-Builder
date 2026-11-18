@@ -3,6 +3,18 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 18_11_26_18_30_59
+
+**SSH machines: use an existing venv, Find Python, Prepare that survives a dropped connection** (`56c22d2`)
+
+- The machine's Python may now be a venv / conda folder. A Python the owner names is only checked (torch + torchvision) and never
+  installed into, so Prepare takes seconds on a lab machine that already has an environment.
+- Connection tab: Find Python lists the Pythons on the machine (read-only) and which have PyTorch; Use this sets the field.
+- Prepare asks only for torch + torchvision; datasets and kaggle are installed by the run that needs them.
+- The app's own venv gets PyTorch from a detached pip (install.pid / install.log, retries), so an unsteady network no longer stops it;
+  the next Prepare follows the same install. An ssh exit 255 says the connection dropped instead of "see the log above".
+- Saving a machine with a changed place or Python forgets what Prepare found before.
+
 ## 11_11_26_07_24_13
 
 **Manual: how to build a network (ideas, motifs, four worked examples)** (`7c5c8af`)
