@@ -598,7 +598,7 @@ Nothing secret is ever written into `train.py`, `model.json`, `metrics.jsonl`, l
 
 ## Open questions for the owner (still open; the app handles every case: it detects SLURM etc.)
 
-1. Does the college server use SLURM (a job queue), or do you just ssh in and run?
+1. Does the college server use SLURM (a job queue), or do you just ssh in and run? (2026-11-18: one lab machine has no SLURM; tmux and systemd are there)
 2. Does your AWS account already have a quota for g4dn (G and VT instances)? On-demand only, or also spot?
 3. Is your Kaggle account phone-verified (needed for GPU and internet in notebooks)?
 4. Public GitHub repository like CourseShelf and The Data Application?
