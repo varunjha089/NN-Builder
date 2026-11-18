@@ -13,6 +13,9 @@ use serde_json::{Map, Value};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 pub const BIG_DENSE: u64 = 5_000_000;
+/// "one layer holds most of the parameters": its share, for networks of at least BIG_SHARE_MIN parameters
+pub const BIG_SHARE: f64 = 0.9;
+pub const BIG_SHARE_MIN: u64 = 1_000_000;
 
 fn is_zero(v: &u64) -> bool {
     *v == 0
@@ -58,6 +61,16 @@ pub struct Analysis {
     pub ok: bool,
     /// the dataset's extra outputs (multi-task), for the Output block's head choice: head k = head_names[k - 1]
     pub head_names: Vec<String>,
+    /// recommendations about the design as a whole (the Design tab's "Recommendations"): costly but legal choices, e.g. a huge layer
+    /// after Flatten, or small images enlarged. The block's own messages carry the same text as a warning.
+    pub advice: Vec<Advice>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Advice {
+    /// the block it is about ("" = the dataset)
+    pub id: String,
+    pub text: String,
 }
 
 impl Analysis {
@@ -442,8 +455,58 @@ pub fn analyze(g: &Graph, ds: &Dataset) -> Analysis {
     if classes < need {
         problems.push(if need == 1 { "The dataset has no target columns yet (Dataset tab).".into() } else { "The dataset has no classes yet (Dataset tab).".into() });
     }
+    let advice = advise(g, &mut nodes, &in_edges, &node_of, total, ds);
     Analysis { input: input_shape, classes, nodes, edges: edge_shapes, total_params: total, frozen_params: frozen_total, total_macs, problems, ok: ok && classes >= need,
-        head_names: ds.heads.iter().map(|h| h.name.clone()).collect() }
+        head_names: ds.heads.iter().map(|h| h.name.clone()).collect(), advice }
+}
+
+/// recommendations: choices that work but cost parameters, memory or accuracy. Each about a block is also a warning on that block.
+fn advise(g: &Graph, nodes: &mut [NodeResult], in_edges: &HashMap<&str, Vec<&str>>, node_of: &HashMap<&str, &Node>, total: u64, ds: &Dataset) -> Vec<Advice> {
+    let mut advice = vec![];
+    let n = |x: u64| x.to_string().as_bytes().rchunks(3).rev().map(|c| std::str::from_utf8(c).unwrap()).collect::<Vec<_>>().join(",");
+    // small built-in images enlarged (e.g. MNIST 1×28×28 -> 3×224×224): more pixels, no more information. Said only when the same design
+    // also works at the images' own size and needs far fewer parameters there (an ImageNet network such as AlexNet needs the size).
+    if let (true, Some(b)) = (ds.source == "builtin" && ds.resize, ds.builtin_info()) {
+        let (c, h, w) = (ds.channels, ds.image_size[0], ds.image_size[1]);
+        let own = analyze(g, &Dataset { resize: false, ..ds.clone() });
+        if own.ok && own.total_params * 2 <= total {
+            let more = (h * w) as f64 / (b.shape[1] * b.shape[2]) as f64;
+            let mut t = format!("The {} are {}×{}×{}; resized to {c}×{h}×{w}, the network sees {:.0}× as many pixels", b.label, b.shape[0], b.shape[1],
+                b.shape[2], more);
+            if c > b.shape[0] && b.shape[0] == 1 {
+                t += &format!(" and {c} copies of the grey channel");
+            }
+            t += &format!(", with no new information. At their own size this design has {} parameters instead of {}: turn off resizing on the \
+                Dataset tab, unless you start from ImageNet weights (Train tab).", n(own.total_params), n(total));
+            let id = nodes.iter().find(|r| r.kind == "input").map(|r| r.id.clone()).unwrap_or_default();
+            advice.push(Advice { id, text: t });
+        }
+    }
+    for r in nodes.iter_mut().filter(|r| r.out.is_some() && r.status != "error") {
+        let after_flatten = in_edges.get(r.id.as_str()).and_then(|s| s.first()).and_then(|s| node_of.get(s)).map(|s| s.kind == "flatten").unwrap_or(false);
+        let flat_in = r.inputs.first().map(|x| x.len() == 1).unwrap_or(false);
+        let head = if after_flatten { " Flatten gives it one number per channel and pixel: Global pool instead (one number per channel) needs far fewer." } else { "" };
+        let mut said = r.messages.iter().any(|m| m.contains("instead of Flatten"));
+        // the Output layer, like a Dense one (whose own check is in the step), after Flatten of a large map
+        if r.kind == "output" && flat_in && r.params > BIG_DENSE {
+            let inn = r.inputs[0][0] as u64;
+            warn(r, &format!("The output layer has {} parameters: its input has {} numbers and each class needs a weight for every one. \
+                Try Global pool instead of Flatten before it.", n(r.params), n(inn)));
+            said = true;
+        }
+        if total >= BIG_SHARE_MIN && r.params as f64 >= BIG_SHARE * total as f64 {
+            let share = 100.0 * r.params as f64 / total as f64;
+            let t = format!("This {} holds {share:.1} % of the network's {} parameters.{}", r.title, n(total),
+                if matches!(r.kind.as_str(), "dense" | "output") && flat_in { head } else { "" });
+            if !said {
+                warn(r, &t);
+            }
+            advice.push(Advice { id: r.id.clone(), text: if said { r.messages.iter().find(|m| m.contains("instead of Flatten")).cloned().unwrap_or(t) } else { t } });
+        } else if said {
+            advice.push(Advice { id: r.id.clone(), text: r.messages.iter().find(|m| m.contains("instead of Flatten")).cloned().unwrap() });
+        }
+    }
+    advice
 }
 
 /// multiply-accumulates of one layer for one image, from its weights and its input / output size

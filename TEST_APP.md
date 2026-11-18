@@ -58,6 +58,7 @@ warning text.
 | 2.10 | Large designs | Demo ViT-g/14 → Collapse repeated blocks | Fast; one ×40 node | ✅ Window |
 | 2.11 | Custom blocks everywhere | TEST 22: Custom blocks on an image (AddCoords `c + 2`, CBAM inside a function, SpaceToDepth `c * 4, h // 2, w // 2`), on tokens (TokenMix) and on a vector (GEGLU `n // 2`), custom loss, ONNX export | One-batch check passes; trains; model.onnx / model.ts written | ✅ GPU (real CIFAR-10): one-batch check passed, 65.3 % in 5 epochs, exit 53.9 %, ONNX + TorchScript written |
 | 2.12 | MoE GShard options + demo | Demo MoE Transformer (GShard); Mixture of experts: capacity 1.25, random second expert (`moe 8 top 2 hidden 256 cap 1.25 random`) | 2,198,306 parameters; text folds into `repeat 3`; trains | ✅ GPU (real CIFAR-10): PyTorch 2,198,306 = the app's, 75.95 % in 10 epochs; CI: no expert over its capacity, random only while training |
+| 2.13 | Recommendations | MNIST with resize on, 3×224×224; Input → conv 64 3×3 same → maxpool → Flatten → Output; nothing selected | Design panel: Recommendations: "64× as many pixels and 3 copies of the grey channel … 126,090 parameters instead of 8,029,962" and "The output layer has 8,028,170 parameters … Global pool instead of Flatten"; Show selects the block; Output ⚠. With Global pool and no resize: no Recommendations | ⏳ |
 
 ## 3. Text tab
 

@@ -480,7 +480,7 @@ export function Design({ st, graph, setGraph, analysis, persist, focus, toast, r
             { id, kind: "input", params: { group: 2 }, x: sel.x, y: sel.y + 180 }], edges: graph.edges });
           setSelected(id);
         }}
-        candidates={candidates} addSkip={addSkip} />
+        candidates={candidates} addSkip={addSkip} show={setSelected} />
     </div>
   );
 }
@@ -778,10 +778,10 @@ function LayerTable({ nodes, graph }: { nodes: NodeResult[]; graph: Graph }) {
   );
 }
 
-function Inspector({ node, result, analysis, graph, st, setParam, setParams, candidates, addSkip, addInput, setPython }: {
+function Inspector({ node, result, analysis, graph, st, setParam, setParams, candidates, addSkip, addInput, setPython, show }: {
   node: { id: string; kind: string; params: Params } | null; result?: NodeResult; analysis: Analysis | null; graph: Graph; st: AppState;
   setParam: (k: string, v: unknown) => void; setParams: (p: Params) => void; addInput: () => void; setPython: (code: string) => void;
-  candidates: { id: string; label: string }[]; addSkip: (src: string, mode: "add" | "concat") => void;
+  candidates: { id: string; label: string }[]; addSkip: (src: string, mode: "add" | "concat") => void; show: (id: string) => void;
 }) {
   const color = useKindColor();
   if (!node) {
@@ -793,6 +793,10 @@ function Inspector({ node, result, analysis, graph, st, setParam, setParams, can
             {analysis.total_macs >= 1e9 ? `${(analysis.total_macs / 1e9).toFixed(2)} G` : `${(analysis.total_macs / 1e6).toFixed(1)} M`} MACs per image</span></>}</p>}
         {analysis?.problems.map((p) => <div key={p} className="msg error">{p}</div>)}
         {analysis?.ok && <div className="msg ok">The design is complete: every shape fits. Next: Dataset, then Train.</div>}
+        {analysis && analysis.advice.length > 0 && <div className="advice"><strong>Recommendations</strong>
+          <span className="muted small"> (the design works, but these cost parameters, memory or accuracy)</span>
+          {analysis.advice.map((a) => <div key={a.id + a.text} className="msg warn row">
+            <span className="grow">{a.text}</span>{a.id && <button className="small" onClick={() => show(a.id)}>Show</button>}</div>)}</div>}
         {graph.nodes.some((n) => n.kind === "custom") && <p className="muted small">The parameters of Custom blocks (your PyTorch classes) are not
           in this count: the training machine counts them (shown in the run's log).</p>}
         <p className="muted">Click a block to set its filters, kernel, stride, padding or pooling, and to see how its output size is computed.</p>

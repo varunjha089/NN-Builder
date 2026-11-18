@@ -388,6 +388,7 @@ warning & the stride does not divide the input evenly: the last rows/columns are
 warning & stride larger than the window: pixels between windows are skipped\\
 warning & ``same'' padding with an even kernel cannot keep the size exactly\\
 warning & a very large Dense layer after Flatten (``try Global pool instead'')\\
+advice & listed under \ui{Recommendations} on the Design panel (nothing selected), with \ui{Show} to select the block: an Output layer with over 5~million parameters after Flatten; one layer holding 90\,\% or more of a network of a million parameters or more; a built-in dataset resized larger (MNIST at 224$\times$224) when the same design also works at the dataset's own size with at most half the parameters\\
 warning & a block whose result is not used; Flatten on an input that is already flat\\
 \bottomrule
 \end{longtable}

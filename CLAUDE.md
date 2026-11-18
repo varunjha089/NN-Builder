@@ -261,7 +261,10 @@ crates/core/src/
   dataset.rs               Dataset (builtin | huggingface | kaggle; task classify | segment; resize (built-in); hf_mask_col, kaggle_mask_dir;
                            image_size, channels, classes), BUILTINS, input_shape, problems()
   shapes.rs                analyze(graph, dataset) -> Analysis: computation order (Kahn), per-node in/out shapes, params, rf, padding/stride
-                           used, plain-words messages (status ok/warn/error/blocked/unconnected), edge shapes; parameter readers (int, pair, text)
+                           used, plain-words messages (status ok/warn/error/blocked/unconnected), edge shapes; parameter readers (int, pair, text);
+                           advise() -> Analysis.advice (the Design tab's "Recommendations", each also a warning on its block): Output after
+                           Flatten over BIG_DENSE, one layer >= 90 % of >= 1 M params, a built-in set resized when the design also works at
+                           the set's own size with at most half the params (analyze is run again at that size; AlexNet etc. stay quiet)
   codegen.rs               TrainSettings (incl. augmentation aug_*); model_code (Net with forward following the graph, LAYERS, EXPECTED); train_script = header (DATASET,
                            TRAIN, CLASSES as Python literals) + model + python/harness.py (include_str!)
   store.rs                 home() (NN_BUILDER_HOME), settings.json (projects, last_project, projects_dir, machines, prepared), Project (files);

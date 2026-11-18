@@ -15,6 +15,8 @@ export interface NodeResult {
 }
 export interface Analysis {
   input: number[]; classes: number; nodes: NodeResult[]; edges: Record<string, number[]>; total_params: number; total_macs: number; problems: string[]; ok: boolean;
+  /** costly but legal choices (a huge layer after Flatten, small images enlarged); id = the block ("" = the dataset) */
+  advice: { id: string; text: string }[];
   head_names?: string[]; frozen_params?: number;
 }
 

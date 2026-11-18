@@ -1144,3 +1144,33 @@ unsafe fn libc_kill(pid: i32, sig: i32) {
     extern "C" { fn kill(pid: i32, sig: i32) -> i32; }
     kill(pid, sig);
 }
+
+#[test]
+fn recommendations_for_costly_designs() {
+    // MNIST stretched to 3×224×224 and flattened into the output layer: 64×112×112 = 802,816 numbers × 10 classes
+    let ds = Dataset { resize: true, image_size: [224, 224], channels: 3, ..mnist() };
+    let g = chain(vec![("input", json!({})), ("conv2d", json!({"filters": 64, "kernel": 3, "padding": "same"})),
+        ("pool2d", json!({"size": 2, "stride": 2})), ("flatten", json!({})), ("output", json!({}))]);
+    let a = analyze(&g, &ds);
+    assert!(a.ok, "costly is not wrong: {:?}", a.problems);
+    let out = a.nodes.iter().find(|n| n.kind == "output").unwrap();
+    assert_eq!(out.params, 8_028_170);
+    assert_eq!(out.status, "warn");
+    assert!(out.messages.iter().any(|m| m.contains("instead of Flatten")), "{:?}", out.messages);
+    assert!(a.advice.iter().any(|x| x.id == "n0" && x.text.contains("64× as many pixels") && x.text.contains("3 copies of the grey")), "{:?}", a.advice);
+    assert!(a.advice.iter().any(|x| x.id == out.id), "{:?}", a.advice);
+    // the same layers at MNIST's own size with Global pool: nothing to recommend
+    let g = chain(vec![("input", json!({})), ("conv2d", json!({"filters": 64, "kernel": 3, "padding": "same"})),
+        ("pool2d", json!({"size": 2, "stride": 2})), ("global_pool", json!({})), ("output", json!({}))]);
+    let a = analyze(&g, &mnist());
+    assert!(a.advice.is_empty(), "{:?}", a.advice);
+    assert!(a.nodes.iter().all(|n| n.status == "ok"));
+    // one Dense layer under the 5 M mark that still holds almost every parameter
+    let g = chain(vec![("input", json!({})), ("conv2d", json!({"filters": 16, "kernel": 3, "padding": "same"})),
+        ("flatten", json!({})), ("dense", json!({"units": 128})), ("output", json!({}))]);
+    let a = analyze(&g, &mnist());
+    let d = a.nodes.iter().find(|n| n.kind == "dense").unwrap();
+    assert_eq!(d.params, 16 * 28 * 28 * 128 + 128);
+    assert!(d.messages.iter().any(|m| m.contains("% of the network's") && m.contains("Global pool")), "{:?}", d.messages);
+    assert_eq!(a.advice.len(), 1);
+}
