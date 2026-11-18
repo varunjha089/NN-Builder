@@ -3,6 +3,17 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 18_11_26_23_56_53
+
+**Harness: CIFAR-10 from Hugging Face's copy** (`cee3639`)
+
+CIFAR-10 runs on Kaggle began training 23-24 minutes after the push
+(MNIST: under a minute): torchvision downloads CIFAR-10 from the
+University of Toronto's server. The harness now reads Hugging Face's copy
+(uoft-cs/cifar10, the same images and class order) into cifar10.npz,
+unless torchvision's files are already there, and falls back to
+torchvision's download on any failure.
+
 ## 18_11_26_21_03_44
 
 **Runs: a run cut off while launching no longer stays "starting"** (`6e63e01`)
