@@ -3,6 +3,17 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 18_11_26_20_02_01
+
+**Design: recommendations for costly designs** (`b0c1544`)
+
+The shape checker now lists recommendations (Analysis.advice), shown on the
+Design panel with a Show button and as a warning on the block:
+- an Output layer over 5 M parameters after Flatten (only Dense was checked);
+- one layer holding 90 % or more of a network of 1 M+ parameters;
+- a built-in dataset resized larger when the same design works at the
+  set's own size with at most half the parameters (MNIST at 224x224).
+
 ## 18_11_26_18_42_36
 
 **CI: slow the interrupted two-worker run so the stop signal always arrives in time** (`4e8ad63`)
