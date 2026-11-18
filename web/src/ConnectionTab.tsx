@@ -1,7 +1,7 @@
 // Connection: everything needed to reach the GPUs. Tokens and keys go to the system keychain (never shown again, never in files);
 // machines store only how to reach them.
 import { useState } from "react";
-import { api, errText, type AppState, type Machine } from "./api";
+import { api, errText, type AppState, type Machine, type PythonFound } from "./api";
 
 const EMPTY: Machine = { name: "", kind: "ssh", host: "", user: "", port: "", key: "", jump: "", auth: "key", workdir: "", python: "", launch: "auto", region: "", instance_id: "", mirror: false, group: "", resume_reboot: true };
 
@@ -25,6 +25,14 @@ export function ConnectionTab({ st, reload, toast, startJob }: { st: AppState; r
   const [ak, setAk] = useState(""); const [as, setAs] = useState("");
   const [m, setM] = useState<Machine>(EMPTY);
   const [editing, setEditing] = useState(false);
+  // Find Python: what was found on which machine (null while looking)
+  const [found, setFound] = useState<{ name: string; list: PythonFound[] | null } | null>(null);
+  const findPython = (name: string) => {
+    setFound({ name, list: null });
+    api.machineFindPython(name).then((list) => setFound({ name, list })).catch((e) => { setFound(null); toast(errText(e)); });
+  };
+  const usePython = (x: Machine, path: string) => run(api.machineSave({ ...x, python: path }).then(() => setFound(null)),
+    `${x.name} now uses ${path}. Press Prepare (quick: nothing is installed).`);
   const run = (p: Promise<unknown>, ok?: string) => p.then((r) => { toast(typeof r === "string" ? r : ok ?? "Done."); reload(); }).catch((e) => toast(errText(e)));
   const up = (p: Partial<Machine>) => setM({ ...m, ...p });
 
@@ -89,16 +97,29 @@ export function ConnectionTab({ st, reload, toast, startJob }: { st: AppState; r
             <div><strong>{x.name}</strong> <span className="muted">{x.kind === "aws" ? `AWS ${x.instance_id} (${x.region}) · ${x.user}` : `${x.user ? x.user + "@" : ""}${x.host}${x.port ? ":" + x.port : ""}`}
               {" · "}{x.auth === "password" ? "password" : x.key ? `key ${x.key}` : "key from ssh config/agent"}{x.jump ? ` · via ${x.jump}` : ""} · launch: {x.launch}
               {x.group ? ` · group ${x.group}` : ""}{x.resume_reboot ? " · resumes after a reboot" : ""}</span></div>
-            <div className="muted small">{p ? `Prepared: PyTorch ${p.torch} (${p.cuda ? "CUDA" : "CPU only"}) · ${p.gpus.length ? p.gpus.join(" | ") : "no NVIDIA GPU"} · `
-              + `keeps running via: ${p.slurm ? "SLURM" : p.systemd && p.linger ? "systemd (lingering)" : p.tmux ? "tmux" : "nohup"}` : "Not prepared yet (Prepare installs PyTorch there; the first run does it too)."}</div>
+            <div className="muted small">{p ? `Prepared: ${p.python} · PyTorch ${p.torch} (${p.cuda ? "CUDA" : "CPU only"}) · ${p.gpus.length ? p.gpus.join(" | ") : "no NVIDIA GPU"} · `
+              + `keeps running via: ${p.slurm ? "SLURM" : p.systemd && p.linger ? "systemd (lingering)" : p.tmux ? "tmux" : "nohup"}` : `Not prepared yet (Prepare ${x.python ? `checks ${x.python}` : "installs PyTorch there"}; the first run does it too).`}</div>
             <p className="row">
               {x.auth === "password" && <button onClick={() => run(api.machineConnect(x.name))}>Connect (log in once)</button>}
               {x.kind === "ssh" && <button onClick={() => run(api.machineTest(x.name))}>Test</button>}
+              {x.kind === "ssh" && <button onClick={() => findPython(x.name)} title="Lists the Pythons (venvs, conda) on the machine and which already have PyTorch: nothing is installed or changed">Find Python</button>}
               {x.kind === "aws" && <button onClick={() => run(api.testAws(x.name))} disabled={!st.secrets.aws || !st.tools_ready}>Check instance</button>}
               <button onClick={() => api.machinePrepare(x.name).then(startJob).catch((e) => toast(errText(e)))}>Prepare{x.kind === "aws" ? " (starts and stops the instance)" : ""}</button>
               <button onClick={() => { setM({ ...EMPTY, ...x }); setEditing(true); }}>Edit</button>
               <button onClick={() => { if (confirm(`Remove "${x.name}" from this list? Nothing on the machine is touched.`)) run(api.machineDelete(x.name), "Removed."); }}>Delete</button>
             </p>
+            {found?.name === x.name && <div className="small">
+              {found.list === null ? <p className="muted">Looking for Python on {x.name} …</p>
+                : !found.list.length ? <p className="muted">No Python found there. Leave the Python field empty: Prepare makes the app's own venv.</p>
+                : <table className="small"><thead><tr><th>Python on {x.name}</th><th>version</th><th>PyTorch</th><th></th></tr></thead><tbody>
+                  {found.list.map((f) => <tr key={f.path}><td><code>{f.path}</code></td><td>{f.version}</td>
+                    <td>{f.torch && f.torchvision ? `${f.torch} · torchvision ${f.torchvision} · ${f.cuda ? "CUDA" : "CPU only"}` : <span className="muted">no PyTorch</span>}</td>
+                    <td>{f.torch && f.torchvision ? (x.python === f.path ? <span className="st-ok">in use</span>
+                      : <button onClick={() => usePython(x, f.path)}>Use this</button>) : null}</td></tr>)}
+                  </tbody></table>}
+              {found.list !== null && <p className="row"><button onClick={() => setFound(null)}>Close</button>
+                {x.python && <button onClick={() => usePython(x, "")}>Use the app's own venv instead</button>}</p>}
+            </div>}
           </div>
         ))}
         {!st.machines.length && <p className="muted">No machines yet.</p>}
@@ -130,7 +151,8 @@ export function ConnectionTab({ st, reload, toast, startJob }: { st: AppState; r
           {m.kind === "ssh" && <label className="chk wide"><input type="checkbox" checked={!!m.resume_reboot} onChange={(e) => up({ resume_reboot: e.target.checked })} />
             Resume runs after a reboot: a run cut off by a restart or a power cut starts again from its last checkpoint when the machine is back
             (train.py saves one every few minutes; adds an @reboot line to your crontab there), also while this Mac is off</label>}
-          <label className="wide">Python with PyTorch on the machine<input value={m.python} onChange={(e) => up({ python: e.target.value })} placeholder="optional; empty = the app makes ~/.nn_builder/venv (no sudo)" /></label>
+          <label className="wide">Existing Python or venv with PyTorch (optional: saves installing PyTorch)<input value={m.python} onChange={(e) => up({ python: e.target.value })}
+            placeholder="e.g. /DATA/me/venv or ~/miniconda3/envs/torch/bin/python; empty = the app makes <remote folder>/venv (no sudo). Find Python lists them" /></label>
         </div>
         <p className="row"><button className="primary" onClick={() => run(api.machineSave(m).then(() => { setM(EMPTY); setEditing(false); }),
           m.kind === "aws" ? "Saved. Next: Check instance, then Prepare." : m.auth === "password" ? "Saved. Next: Connect, then Test." : "Saved. Next: Test, then Prepare.")}>Save</button>

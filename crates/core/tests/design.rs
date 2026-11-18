@@ -960,6 +960,76 @@ fn prepare_and_run_activate_the_python_environment() {
     assert!(a < run, "{sh}");
 }
 
+/// the machine's Python may be a venv folder (its bin/python is used); a named Python without PyTorch is refused and nothing is installed
+/// into it (no pip call); Prepare asks only for torch + torchvision (datasets / kaggle come with the runs that need them)
+#[cfg(unix)]
+#[test]
+fn prepare_uses_an_existing_venv_and_never_installs_into_it() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let mk = |venv: &str, torch: bool| {
+        let bin = dir.path().join(venv).join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let log = dir.path().join(format!("{venv}.calls"));
+        // the stand-in Python logs every call; "import torch, torchvision" works only when it has torch; "-m pip" must never come
+        let body = format!("#!/bin/bash\necho \"$*\" >> '{}'\n[ \"$1\" = -m ] && exit 3\n\
+            if [ \"$1\" = -c ]; then case \"$2\" in *torch*) exit {};; esac; exit 0; fi\n\
+            [ \"$1\" = - ] && {{ cat >/dev/null; echo 'NNB_TORCH 2.5.1+cu121 cuda 3.11.5'; }}\nexit 0\n", log.display(), if torch { 0 } else { 1 });
+        let py = bin.join("python");
+        std::fs::write(&py, body).unwrap();
+        std::fs::set_permissions(&py, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (dir.path().join(venv), log)
+    };
+    let run = |python: &str| {
+        let m = Machine { name: "lab".into(), host: "h".into(), python: python.into(), workdir: dir.path().join("w").to_string_lossy().into(), ..Default::default() };
+        let out = std::process::Command::new("bash").arg("-c").arg(remote::prepare_script(&m)).output().unwrap();
+        let text = String::from_utf8_lossy(&out.stdout).to_string();
+        remote::parse_prepare(&text.lines().map(String::from).collect::<Vec<_>>())
+    };
+    // a venv folder with PyTorch: used as it is
+    let (venv, calls) = mk("venv", true);
+    let p = run(&format!("{}/", venv.display()));
+    assert!(p.fail.is_empty() && p.cuda && p.torch == "2.5.1+cu121", "{p:?}");
+    assert_eq!(p.python, venv.join("bin/python").to_string_lossy());
+    let c = std::fs::read_to_string(&calls).unwrap();
+    assert!(c.contains("import torch, torchvision") && !c.contains("datasets") && !c.contains("kaggle") && !c.contains("pip"), "{c}");
+    // a named Python without PyTorch: refused, never installed into
+    let (bare, calls) = mk("bare", false);
+    let p = run(&bare.join("bin/python").to_string_lossy());
+    assert!(p.fail.contains("has no PyTorch") && p.torch.is_empty(), "{p:?}");
+    assert!(!std::fs::read_to_string(&calls).unwrap().contains("pip"));
+    // a path with no Python there
+    let p = run(&dir.path().join("nothing").to_string_lossy());
+    assert!(p.fail.contains("no Python at"), "{p:?}");
+}
+
+/// Find Python: the venvs next to the remote folder are found (read-only); the ones with PyTorch come first
+#[cfg(unix)]
+#[test]
+fn find_python_lists_existing_environments() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    for (venv, answer) in [("plain", "3.10.12 - - False"), ("venv", "3.11.5 2.5.1+cu121 0.20.1+cu121 True")] {
+        let bin = dir.path().join(venv).join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let py = bin.join("python");
+        std::fs::write(&py, format!("#!/bin/bash\necho '{answer}'\n")).unwrap();
+        std::fs::set_permissions(&py, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let m = Machine { name: "lab".into(), host: "h".into(), workdir: dir.path().join("nn_builder").to_string_lossy().into(), ..Default::default() };
+    // HOME = the scratch folder, so the Pythons of this computer's own home folder are not looked at
+    let out = std::process::Command::new("bash").arg("-c").arg(remote::find_python_script(&m)).env("HOME", dir.path()).env_remove("CONDA_PREFIX")
+        .output().unwrap();
+    let lines: Vec<String> = String::from_utf8_lossy(&out.stdout).lines().map(String::from).collect();
+    assert!(lines.iter().any(|l| l == "NNB_PYDONE"), "{lines:?}");
+    let found = remote::parse_pythons(&lines);
+    let venv = dir.path().join("venv/bin/python").to_string_lossy().to_string();
+    assert_eq!(found[0].path, venv, "{found:?}");
+    assert!(found[0].cuda && found[0].torch == "2.5.1+cu121" && found[0].torchvision == "0.20.1+cu121");
+    let plain = found.iter().find(|f| f.path.ends_with("plain/bin/python")).expect("plain found");
+    assert!(plain.torch.is_empty() && plain.version == "3.10.12");
+}
+
 /// a 13-band 16-bit GeoTIFF (as Earth Engine exports Sentinel-2 L1C): BitsPerSample and SampleFormat hold 13 values each, stored at an
 /// offset because they do not fit in the IFD entry; the reader once took that offset for the bits ("432-bit")
 #[test]

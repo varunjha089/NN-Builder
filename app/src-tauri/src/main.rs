@@ -580,6 +580,24 @@ async fn machine_test(name: String) -> R<String> {
     }).await
 }
 
+/// read-only: the Pythons on an SSH machine and which already have PyTorch (machine settings: use one instead of installing PyTorch)
+#[tauri::command]
+async fn machine_find_python(name: String) -> R<Vec<remote::PythonFound>> {
+    blocking(move || {
+        let m = remote::machine(&name).ok_or("Unknown machine.")?;
+        if m.kind == "aws" {
+            return Err("Find Python is for SSH machines (an AWS instance is only started when a run needs it).".into());
+        }
+        let (code, out) = m.run_script(&remote::find_python_script(&m));
+        let lines: Vec<String> = out.lines().map(String::from).collect();
+        if !lines.iter().any(|l| l == "NNB_PYDONE") {
+            return Err(if code == 255 { "Could not reach the machine (or the connection dropped): Test it first, or Connect (password login).".into() }
+                       else { format!("Looking for Python failed (exit {code}).") });
+        }
+        Ok(remote::parse_pythons(&lines))
+    }).await
+}
+
 /// password machines: open a Terminal window that logs in once (the password is typed there, never into the app)
 #[tauri::command]
 async fn machine_connect(name: String) -> R<String> {
@@ -1149,7 +1167,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             app_state, templates_list, template_apply, project_from_template, project_save_as, project_new, project_open, set_projects_dir, project_describe, runs_active, runs_follow_all, runs_report_seen, project_delete, set_max_blocks, project_load, save_graph, design_from_text, design_format, save_dataset, save_train, code, export_code, design_png,
             set_kaggle, set_hf, set_aws, set_gcs, clear_secret, test_kaggle, test_hf, test_aws, tools_install,
-            machine_save, machine_delete, machine_test, machine_connect, machine_prepare, hf_info, hf_preview, kaggle_files, local_scan, local_csv, pick_folder,
+            machine_save, machine_delete, machine_test, machine_connect, machine_prepare, machine_find_python, hf_info, hf_preview, kaggle_files, local_scan, local_csv, pick_folder,
             update_settings, set_auto_update, update_check, update_install, update_restart, targets, run_start, run_start_seeds, runs_summary, runs_export, run_resume_on, runs_list, run_status, run_stop, run_fetch, run_results, run_reveal, job_status, open_url
         ])
         .build(tauri::generate_context!())

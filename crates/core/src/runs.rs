@@ -532,6 +532,10 @@ pub fn prepare(m: &Machine, log: &Log) -> Result<Prepared> {
             p.fail.clone()
         } else if m.auth == "password" && !m.connected() {
             "not logged in: press Connect first".into()
+        } else if code == 255 {
+            // ssh's own failure: the connection dropped (an unsteady network). An install started there goes on by itself.
+            "the connection to the machine dropped. Press Prepare again: an install that had started goes on there by itself, and \
+             Prepare follows it instead of starting again".into()
         } else {
             "see the log above".into()
         };

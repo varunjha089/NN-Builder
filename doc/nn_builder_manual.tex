@@ -1139,9 +1139,13 @@ only Name, Host and User need to be filled in.}{fig:add-machine}
         \ui{Any free machine of lab}.
   \item \textbf{Resume runs after a reboot.} Leave it on (the default for new machines) so a run cut off by a restart or power cut
         continues from its last checkpoint.
-  \item \textbf{Python with PyTorch on the machine} (optional). Leave it empty and the application makes its own environment with
-        PyTorch in the remote folder, without administrator rights. Fill it in only to use a Python that already has PyTorch (for
-        example \file{/opt/conda/bin/python}).
+  \item \textbf{Existing Python or venv with PyTorch} (optional). Leave it empty and the application makes its own environment with
+        PyTorch in the remote folder, without administrator rights (a few GB to download). If the machine already has an environment
+        with PyTorch and torchvision, give its folder (\file{/DATA/me/venv}) or its python (\file{/opt/conda/bin/python}) instead:
+        \ui{Prepare} then only checks it and installs nothing, which takes seconds. \ui{Find Python} in the machine's row lists the
+        Pythons there and which have PyTorch; \ui{Use this} fills the field in. The application never installs PyTorch into a Python
+        you named; packages a run needs on top (\texttt{datasets} for Hugging Face data, \texttt{kaggle} for a Kaggle dataset) are added
+        by that run.
   \item \ui{Save}. The machine appears in the list above the form, and a message says what to do next.
 \end{enumerate}
 
@@ -1150,8 +1154,9 @@ only Name, Host and User need to be filled in.}{fig:add-machine}
   \item With a password login: \ui{Connect (log in once)}, then type the password in the Terminal window that opens.
   \item \ui{Test} checks that the application can log in. For an AWS machine, \ui{Check instance} reports its state and shutdown
         behaviour instead.
-  \item \ui{Prepare} looks at Python, the GPUs (\texttt{nvidia-smi}) and the disk, and installs PyTorch if needed (a few minutes the
-        first time). The row then shows the PyTorch version, the GPUs and how runs are kept going. The first run prepares the machine by
+  \item \ui{Prepare} looks at Python, the GPUs (\texttt{nvidia-smi}) and the disk, and installs PyTorch and torchvision into its own
+        environment if needed (a few minutes the first time). The install runs on the machine by itself: if the connection drops (an
+        unsteady network), press \ui{Prepare} again and it follows the same install instead of starting another. The row then shows the PyTorch version, the GPUs and how runs are kept going. The first run prepares the machine by
         itself if you skip this.
   \item The machine is now offered in the Training tab under \ui{Train on}.
 \end{enumerate}

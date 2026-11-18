@@ -564,6 +564,10 @@ def kaggle_root():
     if not os.path.isdir(root) or not os.listdir(root):
         os.makedirs(root, exist_ok=True)
         exe = os.path.join(os.path.dirname(sys.executable), "kaggle")
+        if not os.path.exists(exe) and not shutil_which("kaggle"):
+            # Prepare installs only PyTorch: the kaggle command comes when a run needs it
+            emit("info", message="installing the kaggle package (needed for this dataset)")
+            pip_install("kaggle")
         emit("info", message=f"downloading {DATASET['kaggle_slug']} from Kaggle")
         try:
             r = subprocess.run([exe if os.path.exists(exe) else "kaggle", "datasets", "download", DATASET["kaggle_slug"], "-p", root, "--unzip"],
@@ -599,6 +603,24 @@ def local_root():
 
 def pip_install(*names):
     subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", *names], check=False)
+
+
+def shutil_which(name):
+    import shutil
+    return shutil.which(name)
+
+
+def hf_load_dataset():
+    """datasets.load_dataset; the package is installed the first time a run needs it (Prepare installs only PyTorch)"""
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        emit("info", message="installing the datasets package (needed for Hugging Face data)")
+        pip_install("datasets")
+        import importlib
+        importlib.invalidate_caches()
+        from datasets import load_dataset
+    return load_dataset
 
 
 def cloud_fetch(url, root):
@@ -1658,7 +1680,7 @@ def load_data(cfg):
             train, test = cls(root, train=True, download=True, transform=train_t), cls(root, train=False, download=True, transform=test_t)
         train_eval = cls(root, train=True, download=False, transform=test_t)
     elif src == "huggingface":
-        from datasets import load_dataset
+        load_dataset = hf_load_dataset()
         kw = {"cache_dir": os.path.join(DATA, "huggingface")}
         conf = DATASET["hf_config"] or None
         tr = load_dataset(DATASET["hf_repo"], conf, split=DATASET["hf_train_split"], **kw)

@@ -115,6 +115,8 @@ Each: set the Dataset tab as described, then **Check data on Kaggle** (a few min
 | 6.5 | AWS on demand | Connection → AWS instance → Train | The app starts the instance, the run stops it at the end | ✅ Real: EC2 g4dn.xlarge, Mumbai (2026-11-07) |
 | 6.6 | AWS spot | Persistent spot request, interruption behaviour stop | After an interruption the run resumes by itself at the same batch | ✅ Real: EC2 spot, Mumbai (2026-11-08); interruption -> checkpoint + exit 75 kept resumable (resume at boot not seen: no spot capacity to restart) |
 | 6.7 | Continue elsewhere | Spot instance terminated, Mac copy on → Continue on another machine | Resumes on the other machine from the checkpoint | ✅ Real: spot instance terminated -> Continue on gap-experiment from the Mac copy, finished 99.11 % (2026-11-08) |
+| 6.8 | Existing Python / venv | SSH machine → Find Python → Use this (a venv with PyTorch) → Prepare → Train | Prepare takes seconds, installs nothing; the row shows that Python; runs use it | Never (CI: stand-in venv) |
+| 6.9 | Unsteady network | App's own venv: Prepare, cut the network while PyTorch installs, Prepare again | "the connection dropped"; the second Prepare follows the same install (install.log) and finishes | Never |
 
 ## 7. Results tab, per task
 

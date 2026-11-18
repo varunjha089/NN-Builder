@@ -51,6 +51,7 @@ export interface Machine {
   name: string; kind: "ssh" | "aws"; host: string; user: string; port: string; key: string; jump: string; auth: "key" | "password";
   workdir: string; python: string; launch: string; region: string; instance_id: string; mirror: boolean; group: string; resume_reboot: boolean;
 }
+export interface PythonFound { path: string; version: string; torch: string; torchvision: string; cuda: boolean }
 export interface Prepared {
   host_info: string; gpus: string[]; python: string; torch: string; cuda: boolean; slurm: boolean; systemd: boolean; linger: boolean; tmux: boolean; timeout: boolean;
 }
@@ -127,6 +128,7 @@ export const api = {
   machineTest: (name: string) => invoke<string>("machine_test", { name }),
   machineConnect: (name: string) => invoke<string>("machine_connect", { name }),
   machinePrepare: (name: string) => invoke<void>("machine_prepare", { name }),
+  machineFindPython: (name: string) => invoke<PythonFound[]>("machine_find_python", { name }),
   hfPreview: (repo: string, config: string, split: string, labelCol: string, samples: boolean) =>
     invoke<{ frequencies: [string, number][]; samples: { src: string; label: unknown }[] }>("hf_preview", { repo, config, split, labelCol, samples }),
   hfInfo: (repo: string) => invoke<{ configs: { name: string; columns: { name: string; type: string; names: string[] | null }[]; splits: { name: string; n: number }[] }[] }>("hf_info", { repo }),

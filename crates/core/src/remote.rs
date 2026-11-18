@@ -346,6 +346,10 @@ pub fn control_path() -> String {
 }
 
 /// checks the machine, installs PyTorch (no sudo) and tests what can keep a job running after logout. NNB_ lines are read by parse_prepare.
+/// The machine's Python may be a python file or a venv / conda folder (its bin/python). A Python the owner named is only checked, never
+/// installed into: it needs torch and torchvision (the packages a run needs on top, e.g. datasets or kaggle, the harness installs when that
+/// run needs them). Only the app's own venv gets PyTorch, installed detached on the machine (install.pid / install.log in the remote
+/// folder), so a dropped connection does not stop it: the next Prepare follows the same install instead of starting another.
 pub fn prepare_script(m: &Machine) -> String {
     let py = if m.python.is_empty() { "PY=\"\"".to_string() } else { format!("PY={}", remote_path(&m.python)) };
     format!(
@@ -366,6 +370,10 @@ if command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >
   [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" = "yes" ] && echo "NNB_LINGER 1"
 fi
 {py}
+NAMED="$PY"
+# a venv or conda folder stands for its bin/python
+if [ -n "$PY" ] && [ -d "$PY" ]; then PY="${{PY%/}}/bin/python"; fi
+if [ -n "$PY" ] && [ ! -x "$PY" ]; then echo "NNB_FAIL no Python at $PY on this machine (machine settings: Python; Find Python lists the ones there)"; exit 1; fi
 if [ -z "$PY" ] && [ -x /opt/pytorch/bin/python ]; then
   PY=/opt/pytorch/bin/python
   echo "Using the PyTorch of the AWS Deep Learning AMI (/opt/pytorch)"
@@ -384,14 +392,30 @@ if [ -z "$PY" ]; then
 fi
 # a venv's activate script may set what its PyTorch needs (the Deep Learning AMI keeps CUDA inside /opt/pytorch); run.sh does the same
 if [ -f "$(dirname "$PY")/activate" ]; then set +u; . "$(dirname "$PY")/activate"; set -u; fi
-if ! "$PY" -c 'import torch, torchvision, datasets, kaggle' >/dev/null 2>&1; then
-  EXTRA=""
-  if [ -n "$DRIVER" ] && [ "$DRIVER" -lt 525 ] 2>/dev/null; then EXTRA="--index-url https://download.pytorch.org/whl/cu118 --extra-index-url https://pypi.org/simple"; echo "Older NVIDIA driver ($DRIVER): CUDA 11.8 build of PyTorch"; fi
-  echo "Installing PyTorch, torchvision, datasets, kaggle (a few minutes) ..."
-  # (an environment this user may not write to, e.g. the Deep Learning AMI's /opt/pytorch: with sudo when it needs no password)
-  "$PY" -m pip install --disable-pip-version-check -q $EXTRA torch torchvision datasets pillow kaggle \
-    || sudo -n "$PY" -m pip install --disable-pip-version-check -q $EXTRA torch torchvision datasets pillow kaggle \
-    || {{ echo "NNB_FAIL pip could not install the packages (no internet on this machine? a proxy? no right to write into $PY's environment?)"; exit 1; }}
+if ! "$PY" -c 'import torch, torchvision' >/dev/null 2>&1; then
+  if [ -n "$NAMED" ]; then
+    echo "NNB_FAIL $PY has no PyTorch / torchvision. The app does not install into a Python you named: install them there, choose another (Find Python), or leave the field empty for the app's own venv"
+    exit 1
+  fi
+  PIDF="$W/install.pid"; LOGF="$W/install.log"
+  if [ -f "$PIDF" ] && kill -0 "$(cat "$PIDF")" 2>/dev/null; then
+    echo "An install started by an earlier Prepare is still running there: following it ..."
+  else
+    EXTRA=""
+    if [ -n "$DRIVER" ] && [ "$DRIVER" -lt 525 ] 2>/dev/null; then EXTRA="--index-url https://download.pytorch.org/whl/cu118 --extra-index-url https://pypi.org/simple"; echo "Older NVIDIA driver ($DRIVER): CUDA 11.8 build of PyTorch"; fi
+    echo "Installing PyTorch and torchvision into $W/venv (a few GB; it goes on by itself on the machine if this connection drops: press Prepare again to follow it) ..."
+    setsid nohup "$PY" -m pip install --disable-pip-version-check --progress-bar off --retries 10 --timeout 60 $EXTRA torch torchvision pillow \
+      > "$LOGF" 2>&1 < /dev/null &
+    echo $! > "$PIDF"
+  fi
+  P=$(cat "$PIDF")
+  tail -n +1 --pid="$P" -f "$LOGF" 2>/dev/null || while kill -0 "$P" 2>/dev/null; do sleep 5; done
+  rm -f "$PIDF"
+  if ! "$PY" -c 'import torch, torchvision' >/dev/null 2>&1; then
+    tail -n 5 "$LOGF"
+    echo "NNB_FAIL pip could not install PyTorch (no internet on this machine? a proxy?): the end of $LOGF is above"
+    exit 1
+  fi
 fi
 echo "NNB_PYTHON $PY"
 "$PY" - <<'PYEOF'
@@ -405,6 +429,60 @@ PYEOF
         w = m.workdir_sh(),
         py = py
     )
+}
+
+/// a Python found on the machine by find_python_script: its path, version, and PyTorch / torchvision if it has them
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct PythonFound {
+    pub path: String,
+    pub version: String,
+    /// empty = no PyTorch (or torchvision) there
+    pub torch: String,
+    pub torchvision: String,
+    pub cuda: bool,
+}
+
+/// read-only: lists the Pythons (venvs, conda environments, the system one) near the remote folder and in the home folder, and which of
+/// them already have PyTorch, so a machine can use an existing environment instead of installing PyTorch. Nothing is written.
+pub fn find_python_script(m: &Machine) -> String {
+    format!(
+        r#"set -u
+W={w}
+P=$(dirname "$W")
+T=""; command -v timeout >/dev/null 2>&1 && T="timeout 60"
+n=0; seen=" "
+for p in "$W/venv/bin/python" "$P"/*/bin/python "$P"/*/*/bin/python "$HOME"/*/bin/python "$HOME"/.*/bin/python \
+         "$HOME"/*/envs/*/bin/python /opt/conda/bin/python /opt/conda/envs/*/bin/python /opt/pytorch/bin/python \
+         "${{CONDA_PREFIX:-/nonexistent}}/bin/python" "$(command -v python3 2>/dev/null || echo /nonexistent)"; do
+  [ -x "$p" ] && [ ! -d "$p" ] || continue
+  case "$seen" in *" $p "*) continue;; esac
+  seen="$seen$p "; n=$((n+1)); [ $n -gt 30 ] && break
+  out=$($T "$p" -c '
+import sys
+v = sys.version.split()[0]
+try:
+    import torch, torchvision
+    print(v, torch.__version__, torchvision.__version__, torch.cuda.is_available())
+except Exception:
+    print(v, "-", "-", False)' 2>/dev/null | tail -n 1)
+  [ -n "$out" ] && echo "NNB_PYFOUND $p $out"
+done
+echo "NNB_PYDONE"
+"#,
+        w = m.workdir_sh()
+    )
+}
+
+pub fn parse_pythons(lines: &[String]) -> Vec<PythonFound> {
+    let mut v: Vec<PythonFound> = lines.iter().filter_map(|l| {
+        let f: Vec<&str> = l.strip_prefix("NNB_PYFOUND ")?.split_whitespace().collect();
+        let [path, version, torch, tv, cuda] = f[..] else { return None };
+        let dash = |s: &str| if s == "-" { String::new() } else { s.to_string() };
+        Some(PythonFound { path: path.into(), version: version.into(), torch: dash(torch), torchvision: dash(tv), cuda: cuda == "True" })
+    }).collect();
+    // the ones with PyTorch first (CUDA before CPU), the rest after, each in the order found
+    v.sort_by_key(|p| (p.torch.is_empty() || p.torchvision.is_empty(), !p.cuda));
+    v
 }
 
 pub fn parse_prepare(lines: &[String]) -> Prepared {
@@ -470,20 +548,29 @@ pub fn machine(name: &str) -> Option<Machine> {
 
 pub fn save_machine(m: Machine) -> Result<Machine> {
     let m = m.clean()?;
+    // what Prepare found belongs to the old place / Python: a changed one is prepared again (else runs would use the old Python)
+    let changed = |o: &Machine| (&o.host, &o.user, &o.port, &o.jump, &o.workdir, &o.python, &o.instance_id) != (&m.host, &m.user, &m.port, &m.jump, &m.workdir, &m.python, &m.instance_id);
+    if machines().iter().any(|o| o.name == m.name && changed(o)) {
+        forget_prepared(&m.name)?;
+    }
     let mut all: Vec<Machine> = machines().into_iter().filter(|x| x.name != m.name).collect();
     all.push(m.clone());
     store::save_setting("machines", serde_json::to_value(&all)?)?;
     Ok(m)
 }
 
-pub fn delete_machine(name: &str) -> Result<()> {
-    let all: Vec<Machine> = machines().into_iter().filter(|x| x.name != name).collect();
-    store::save_setting("machines", serde_json::to_value(&all)?)?;
+fn forget_prepared(name: &str) -> Result<()> {
     let mut prep = store::settings()["prepared"].clone();
     if let Some(o) = prep.as_object_mut() {
         o.remove(name);
     }
     store::save_setting("prepared", prep)
+}
+
+pub fn delete_machine(name: &str) -> Result<()> {
+    let all: Vec<Machine> = machines().into_iter().filter(|x| x.name != name).collect();
+    store::save_setting("machines", serde_json::to_value(&all)?)?;
+    forget_prepared(name)
 }
 
 pub fn prepared(name: &str) -> Option<Prepared> {

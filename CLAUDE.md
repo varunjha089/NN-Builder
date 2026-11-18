@@ -270,7 +270,13 @@ crates/core/src/
   remote.rs                Machine (ssh | aws) + clean() validation, ssh/rsync commands (ControlMaster ~/.ssh/nnb-%C, BatchMode), connect_command
                            (one-time login), prepare_script (+ parse_prepare: GPUs, SLURM, systemd+linger, tmux, timeout, PyTorch; no Python set + /opt/pytorch/bin/python
                            = the AWS Deep Learning AMI's; the Python's venv activate is sourced there and in run.sh (that AMI keeps CUDA
-                           inside the venv); pip falls back to sudo -n), choose_launch,
+                           inside the venv); Prepare needs only torch + torchvision: a named Python (file, or a venv / conda folder = its bin/python) is
+                           checked and never installed into (NNB_FAIL without them); only the app's own <workdir>/venv gets PyTorch, by a
+                           detached pip (setsid nohup, install.pid / install.log, --retries 10) that a dropped ssh does not stop and the next
+                           Prepare follows; ssh exit 255 = "the connection dropped"; datasets / kaggle are pip-installed by the harness when a
+                           run needs them (hf_load_dataset, kaggle CLI); find_python_script + parse_pythons (Tauri machine_find_python,
+                           Connection tab Find Python → Use this: read-only, venvs next to the remote folder, home, conda, /opt);
+                           save_machine forgets the prepared facts when host / user / port / jump / workdir / python / instance change), choose_launch,
                            put_secret_script (file via stdin, chmod 600)
   cloud.rs                 tools venv (settings/tools: kaggle + boto3), kaggle_test/files/push/status/output (CLI with env credentials and a
                            private KAGGLE_CONFIG_DIR), class_folders, aws() (python/helpers/aws_ec2.py: describe/start/stop)
@@ -503,7 +509,9 @@ train. It could come back later as an optional "export to C++" for teaching.
   (default `~/.nn_builder`), optional existing Python. Never a password or key contents.
 - **Password login:** the app opens a Terminal window once (`ssh -M -f -N`, ControlMaster); the user types the password there; all later
   commands reuse that connection (`BatchMode`, never prompting). A key (`ssh-copy-id`) is recommended where allowed.
-- **Prepare (once):** check Python, GPUs (`nvidia-smi`), disk; make `~/.nn_builder/venv` and install PyTorch matching the driver (no sudo).
+- **Prepare (once):** check Python, GPUs (`nvidia-smi`), disk; use the existing Python / venv named in the machine settings (Find Python lists
+  them; nothing installed into it), else make `<remote folder>/venv` and install PyTorch + torchvision matching the driver (no sudo; detached,
+  so an unsteady network does not stop it).
 - **A run:** `rsync` the run folder to `~/.nn_builder/runs/<id>/`, then start it detached. **Independence from SSH**, in order of preference
   (the app detects what the server allows):
   1. **SLURM** (`sbatch`) if the cluster has a job queue: the proper way on shared clusters;
