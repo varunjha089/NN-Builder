@@ -496,7 +496,10 @@ train. It could come back later as an optional "export to C++" for teaching.
   `datasets.load_dataset(name, split=...)` + transforms. Gated/private datasets need a Hugging Face token on the target.
 - **Kaggle:** search and pick a dataset; the app reads its file list through the Kaggle API and recognises the common layouts (folder per class,
   CSV of file + label). On Kaggle it is attached to the notebook directly; on college/AWS it is downloaded with the Kaggle API on the machine.
-- **Built-in:** MNIST, Fashion-MNIST, CIFAR-10 (torchvision downloads them on the machine).
+- **Built-in:** MNIST, Fashion-MNIST, CIFAR-10 (torchvision downloads them on the machine). CIFAR-10 comes from Hugging Face's copy
+  (uoft-cs/cifar10 Parquet -> `<data>/torchvision/cifar10.npz`, harness cifar10_fast + ArrayImages) unless torchvision's
+  cifar-10-batches-py is already there: torchvision's Toronto server took 23 min on Kaggle before training began. Any failure falls
+  back to torchvision's download (an info event says so).
 - The app shows the size before a run; the data is cached on the machine (`~/.nn_builder/data`) and not downloaded again.
 
 ## 4. Where training runs
