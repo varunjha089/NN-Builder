@@ -3,6 +3,13 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 18_11_26_18_42_36
+
+**CI: slow the interrupted two-worker run so the stop signal always arrives in time** (`4e8ad63`)
+
+The parallel check sometimes saw the 8 short epochs end before the forwarded SIGUSR1 (exit 0 instead of 75), failing CI on
+2026-11-11 and 2026-11-18. NNB_TEST_STEP_SLEEP (CI only) pauses each training step of that run.
+
 ## 18_11_26_18_40_50
 
 **TEST_APP: Kaggle run of a two-branch design with a custom loss; first lab machine findings** (`50dc896`)
