@@ -3,6 +3,16 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 18_11_26_21_03_44
+
+**Runs: a run cut off while launching no longer stays "starting"** (`6e63e01`)
+
+A run whose launch was cut off (the app closed during a Kaggle push) had no
+notebook or job and was never looked at again, so it showed "starting" for
+ever. The launch marker is now held from before the run's first save, and a
+"starting" run with nothing launched and nobody launching it is marked
+failed with the reason (status, run list, active runs).
+
 ## 18_11_26_20_02_01
 
 **Design: recommendations for costly designs** (`b0c1544`)
