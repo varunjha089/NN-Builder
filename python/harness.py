@@ -188,6 +188,7 @@ class Interrupted(Exception):
 
 OOM = getattr(torch.cuda, "OutOfMemoryError", RuntimeError)
 TEST_OOM_ABOVE = int(os.environ.get("NNB_TEST_OOM_ABOVE") or 0)  # CI only: pretend that more than this many images do not fit
+TEST_STEP_SLEEP = float(os.environ.get("NNB_TEST_STEP_SLEEP") or 0)  # CI only: seconds of pause per training step (a run too quick to interrupt)
 
 
 def is_oom(e):
@@ -2815,6 +2816,8 @@ def main():
                 dirty["v"] = True
                 if step % every == 0 or step == steps:
                     emit("batch", epoch=epoch, step=step, steps=steps, loss=round(batch_loss, 5))
+                if TEST_STEP_SLEEP:
+                    time.sleep(TEST_STEP_SLEEP)
                 if RANK == 0 and device.type == "cuda" and step == max(steps // 2, 1):
                     gpu_use(epoch, step, steps)
                 due = step < steps and (CKPT_NOW or (ck_every and time.time() - last_ck >= ck_every))

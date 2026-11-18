@@ -190,7 +190,8 @@ crates/core/src/
                            one-batch check (rank 0), sync_flags (STOP / INTERRUPT / checkpoint due, MAX all-reduce) every step and at the
                            epoch end, sums all-reduced, rank 0 evaluates / checkpoints and broadcasts early stop + plateau lr; emit() and
                            checkpoint() silent on other ranks, which return after training. OOM with DDP: a message (no auto split).
-                           Train tab "GPUs". CI: ci_multiband_check parallel (2 gloo processes: one set of events; SIGUSR1 -> 75 -> resume).
+                           Train tab "GPUs". CI: ci_multiband_check parallel (2 gloo processes: one set of events; SIGUSR1 -> 75 -> resume; the interrupted run
+                           is slowed by NNB_TEST_STEP_SLEEP, CI only, else it sometimes finished before the signal arrived).
                            Step 9: param "frozen" on any SHAREABLE block (effective keeps it only when true; DSL word frozen; shapes
                            NodeResult.frozen + Analysis.frozen_params; codegen FROZEN list, harness requires_grad_(False)); "lora" rank on
                            dense / attention (LoRALinear: base frozen, B·A; SelfAttention explicit projections; params count base + rank·(in+out));

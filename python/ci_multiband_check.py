@@ -552,7 +552,8 @@ def parallel(root):
     # interrupted after its first epoch, then started again (as run.sh / resume.sh do)
     folder = os.path.join(root, "ddp_resume")
     log = open(os.path.join(folder, "log.txt"), "w")
-    p = subprocess.Popen([sys.executable, "train.py"], cwd=folder, env=env, stdout=log, stderr=subprocess.STDOUT)
+    # slowed down: without it the 8 short epochs sometimes ended before the forwarded signal arrived (exit 0, CI 2026-11-11 / 18)
+    p = subprocess.Popen([sys.executable, "train.py"], cwd=folder, env={**env, "NNB_TEST_STEP_SLEEP": "0.05"}, stdout=log, stderr=subprocess.STDOUT)
     metrics = os.path.join(folder, "metrics.jsonl")
     t0 = time.time()
     while time.time() - t0 < 600 and p.poll() is None:
