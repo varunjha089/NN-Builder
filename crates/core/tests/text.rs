@@ -278,6 +278,29 @@ fn editing_the_text_keeps_blocks_and_positions() {
 }
 
 #[test]
+fn rewriting_most_of_the_text_lays_the_design_out_afresh() {
+    // a two-branch design, then a rewrite that keeps a few labels and kinds (9 conv, 10 to_tokens, 11 lstm …) but changes the rest:
+    // the kept blocks must not hold the old places (an arrow from 8.r back to 9 on its left); every arrow points right
+    let old = build("1 input\n2 conv 32 3x3\n3 maxpool 2x2\n4 dwconv 3x3\n5 conv 32 3x3 <- 1\n6 avgpool 2x2\n7 dwconv 3x3\n8 concat <- 4, 7\n\
+        9 conv 64 1x1\n10 to_tokens rows\n11 lstm 128\n12 token_pool last\n13 output\n");
+    let text = "def unit(c) {\n  a conv c 3x3 none nobias\n  b bn\n  r relu\n}\n1 input\n2 unit(32)\n3 unit(32)\n4 maxpool 2x2\n\
+        5 avgpool 2x2 <- 3\n6 concat <- 4, 5\n7 unit(64)\n8 unit(64)\n9 conv 32 1x1\n10 dropout 0.2\n11 to_tokens rows\n12 lstm 128 bi\n\
+        13 token_pool mean\n14 dropout 0.3\n15 output\n";
+    let g = apply(text, &old).unwrap();
+    assert!(g.nodes.iter().any(|n| old.node(&n.id).is_some()), "some blocks keep their ids");
+    let at = |id: &str| g.node(id).unwrap();
+    for e in &g.edges {
+        assert!(at(&e.target).x > at(&e.source).x, "{} -> {} points left", at(&e.source).label, at(&e.target).label);
+    }
+    // a small edit of that design still keeps every place
+    let edited = apply(&text.replace("lstm 128 bi", "lstm 96 bi"), &g).unwrap();
+    for n in &g.nodes {
+        let m = edited.node(&n.id).unwrap();
+        assert_eq!((m.x, m.y), (n.x, n.y), "{} moved", n.label);
+    }
+}
+
+#[test]
 fn cycles_and_loose_blocks_still_print() {
     let mut g = Graph::default();
     for (id, kind) in [("a", "input"), ("b", "conv2d"), ("c", "relu"), ("d", "dense")] {

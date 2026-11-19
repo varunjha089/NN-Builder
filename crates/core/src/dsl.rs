@@ -1581,7 +1581,11 @@ pub fn expand(text: &str, old: &Graph) -> Result<Expanded, Vec<Diagnostic>> {
         Edge { id: format!("e{s}-{t}-{k}"), source: s, target: t }
     }).collect();
     let mut g = Graph { nodes: std::mem::take(&mut nodes), edges, text: text.to_string(), python };
-    if kept == 0 {
+    // a text that rewrote most of the design: the few blocks that kept their label and kind would hold the old design's places (an arrow
+    // from block 8 back to block 9 on its left): lay it all out afresh. Also when an arrow between two kept blocks would point back left.
+    let at: HashMap<&str, f64> = g.nodes.iter().filter(|n| !new_ids.contains(&n.id)).map(|n| (n.id.as_str(), n.x)).collect();
+    let backwards = g.edges.iter().any(|e| matches!((at.get(e.source.as_str()), at.get(e.target.as_str())), (Some(s), Some(t)) if t < s));
+    if kept == 0 || new_ids.len() * 2 > g.nodes.len() || backwards {
         model::layout(&mut g);
         wrap_rows(&mut g, 24);
     } else {
