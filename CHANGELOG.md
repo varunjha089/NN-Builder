@@ -3,6 +3,15 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 19_11_26_07_41_03
+
+**Pretrained encoders: ImageNet or SSL4EO-S12 weights in a U-Net's ResNet-18 encoder** (`781c055`)
+
+- Train tab weights gain SSL4EO-S12 ResNet-18 (Sentinel-2, 13 bands; multispectral data only).
+- load_pretrained also accepts a design whose encoder is the demo's layers in order: the decoder starts random.
+- A multiband first layer takes the reference's filters by band name, the others their mean.
+- doc/examples/unet_resnet18.nnb: U-Net with a ResNet-18 encoder and attention gates; core test and CI case with real PyTorch.
+
 ## 18_11_26_23_56_53
 
 **Harness: CIFAR-10 from Hugging Face's copy** (`cee3639`)
