@@ -3,6 +3,15 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 19_11_26_11_33_56
+
+**Built-in datasets from Hugging Face's copies, with resuming downloads** (`f8ed695`)
+
+- MNIST and Fashion-MNIST now come from Hugging Face's copies too (CIFAR-10 already did): an MNIST run failed on a machine with a poor connection.
+- Downloads retry six times and continue where they stopped; a dropped connection no longer counts as a finished file.
+- torchvision's files already on the machine are found and used; if every download fails, the run says what to do.
+- CI: the real copies are checked to be identical to torchvision's (MNIST, CIFAR-10).
+
 ## 19_11_26_08_01_08
 
 **Design: one box per function call, U layout by image size, routed arrows** (`7017b4b`)
