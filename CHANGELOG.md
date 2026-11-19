@@ -3,6 +3,13 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 19_11_26_16_25_16
+
+**Text: a rewritten design is laid out afresh** (`1828b5c`)
+
+When most blocks of an applied text are new, or an arrow between two kept blocks would point left, the whole design gets a fresh
+layout instead of the kept blocks holding the old design's places. Small edits keep every place, as before.
+
 ## 19_11_26_15_41_36
 
 **Design: arrows that go back to the left are routed, not stubs** (`df242fc`)
