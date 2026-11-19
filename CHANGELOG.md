@@ -3,6 +3,13 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 19_11_26_15_41_36
+
+**Design: arrows that go back to the left are routed, not stubs** (`df242fc`)
+
+Stubs only in designs wrapped into rows (20+ columns wide); elsewhere an arrow to a block on its left goes out, through the gap
+next to its row, and in, so a connection never looks missing.
+
 ## 19_11_26_11_33_56
 
 **Built-in datasets from Hugging Face's copies, with resuming downloads** (`f8ed695`)
