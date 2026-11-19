@@ -236,11 +236,14 @@ export function arrangeByLevel(g: Graph, lv: Map<string, number>): Graph {
 
 // ---------------------------------------------------------------- arrows
 /** how an arrow is drawn (offsets in canvas pixels, from its ends):
- *  - "stub": it goes back to the left (a design wrapped into rows): two short labelled stubs instead of a line across the canvas;
+ *  - "stub": in a design wrapped into rows (at least 20 columns wide), it goes far back to the left onto another row: two short
+ *    labelled stubs instead of a line across the canvas;
+ *  - "back": it goes back to the left nearby (blocks placed by hand): out to the right, through the gap next to the source's row
+ *    (`gap`), back to just before the target (`turn`) and in;
  *  - "step": flat, or it turns once, in the gap just before its target (`turn`: pixels left of the target), when nothing is in its way;
  *  - "detour": a block stands on its row between its ends: it leaves into the gap between rows (`gap`: from the source's height),
  *    runs there, and turns down / up just before its target. Arrows sharing a gap or a turning column get lanes of their own. */
-export type Route = { kind: "stub" | "step" | "detour"; gap: number; turn: number; from: string; to: string };
+export type Route = { kind: "stub" | "step" | "detour" | "back"; gap: number; turn: number; from: string; to: string };
 
 const LANE = 12;
 
@@ -251,6 +254,9 @@ export function lanes(g: Graph, name: (n: GNode) => string): Map<string, Route> 
   const rows = new Map<number, number[]>();
   for (const n of g.nodes) { const k = Math.round(n.y); if (!rows.has(k)) rows.set(k, []); rows.get(k)!.push(n.x); }
   const between = (y: number, x1: number, x2: number) => [...rows].some(([ry, xs]) => Math.abs(ry - y) < STEP_Y / 2 && xs.some((x) => x > x1 + 1 && x < x2 - 1));
+  // a design wrapped into rows (the text's layout wraps designs wider than ~30 columns into rows of 24)
+  const xs = g.nodes.map((n) => n.x);
+  const wrapped = xs.length > 0 && Math.max(...xs) - Math.min(...xs) >= 20 * STEP_X;
   const turning = new Map<number, { id: string; key: number }[]>();   // target column -> arrows turning there
   const gaps = new Map<number, { id: string; x1: number; x2: number }[]>();   // gap height -> arrows running in it
   for (const e of g.edges) {
@@ -258,7 +264,13 @@ export function lanes(g: Graph, name: (n: GNode) => string): Map<string, Route> 
     if (!s || !t) continue;
     const r: Route = { kind: "step", gap: 0, turn: 0, from: name(s), to: name(t) };
     out.set(e.id, r);
-    if (t.x < s.x - 20) { r.kind = "stub"; continue; }
+    if (t.x < s.x - 20) {
+      if (wrapped && t.x < s.x - 3 * STEP_X && Math.abs(t.y - s.y) > STEP_Y / 2) { r.kind = "stub"; continue; }
+      r.kind = "back";
+      r.gap = (t.y > s.y + 4 ? 1 : -1) * STEP_Y / 2;
+      r.turn = 14;
+      continue;
+    }
     if (between(s.y, s.x, t.x)) {
       r.kind = "detour";
       // the gap on the side of the target (flat arrows: above)

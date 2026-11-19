@@ -115,7 +115,8 @@ function poly(pts: [number, number][], r = 6): string {
 type LaneData = Route & { hot: boolean; dim: boolean };
 
 /** an arrow drawn as layout.ts routed it: straight or with one turn just before its target, through the gap between rows when a block is
- *  in the way, or as two labelled stubs when it goes back to the left (a design wrapped into rows) */
+ *  in the way, back round through the gap next to its row when it goes a little to the left, or as two labelled stubs when it goes far
+ *  back onto another row (a design wrapped into rows) */
 function LaneEdge({ sourceX: sx, sourceY: sy, targetX: tx, targetY: ty, markerEnd, label, labelStyle, labelBgStyle, data, style }: EdgeProps<Edge<LaneData>>) {
   const r = data ?? { kind: "step", gap: 0, turn: 14, from: "", to: "", hot: false, dim: false };
   const st = { ...style, ...(r.hot ? { strokeWidth: 2.5 } : {}), ...(r.dim ? { opacity: 0.18 } : {}) };
@@ -128,7 +129,10 @@ function LaneEdge({ sourceX: sx, sourceY: sy, targetX: tx, targetY: ty, markerEn
   }
   const cx = Math.max(sx + 10, tx - r.turn);
   let pts: [number, number][];
-  if (r.kind === "detour") {
+  if (r.kind === "back") {
+    const gy = sy + r.gap, x1 = sx + 12, x2 = tx - r.turn;
+    pts = [[sx, sy], [x1, sy], [x1, gy], [x2, gy], [x2, ty], [tx, ty]];
+  } else if (r.kind === "detour") {
     const gy = sy + r.gap, x1 = Math.min(sx + 12, cx);
     pts = [[sx, sy], [x1, sy], [x1, gy], [cx, gy], [cx, ty], [tx, ty]];
   } else pts = Math.abs(ty - sy) < 2 ? [[sx, sy], [tx, ty]] : [[sx, sy], [cx, sy], [cx, ty], [tx, ty]];

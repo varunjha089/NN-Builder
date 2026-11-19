@@ -346,7 +346,8 @@ web/src/                   Design.tsx: Save as PNG (PngExporter inside <ReactFlo
                            loops (their passes shown), double-click opens a box / closes the innermost box of a block, chips close;
                            levels() (log2 of input H / block H, vectors inherit) + arrangeByLevel (column = depth, row band = level: a U-Net
                            draws as a U, skips run flat; also the "Arrange by image size (U)" button); lanes(): every arrow is a "lane"
-                           edge (LaneEdge in Design.tsx): stub (goes back left: two labelled stubs), step (turns in the gap before its
+                           edge (LaneEdge in Design.tsx): stub (only in designs ≥ 20 columns wide, i.e. wrapped into rows: far back onto another row ->
+                           two labelled stubs), back (goes left nearby: out, through the gap next to its row, in), step (turns in the gap before its
                            target, a lane per arrow into that column) or detour (a block on its row in the way: through the gap between
                            rows, interval-coloured lanes); the selected block's arrows bold, the rest faint. Read-only views turn off
                            zoomOnDoubleClick (it swallowed the double-click on undraggable nodes, ×N included);
