@@ -512,10 +512,14 @@ train. It could come back later as an optional "export to C++" for teaching.
   `datasets.load_dataset(name, split=...)` + transforms. Gated/private datasets need a Hugging Face token on the target.
 - **Kaggle:** search and pick a dataset; the app reads its file list through the Kaggle API and recognises the common layouts (folder per class,
   CSV of file + label). On Kaggle it is attached to the notebook directly; on college/AWS it is downloaded with the Kaggle API on the machine.
-- **Built-in:** MNIST, Fashion-MNIST, CIFAR-10 (torchvision downloads them on the machine). CIFAR-10 comes from Hugging Face's copy
-  (uoft-cs/cifar10 Parquet -> `<data>/torchvision/cifar10.npz`, harness cifar10_fast + ArrayImages) unless torchvision's
-  cifar-10-batches-py is already there: torchvision's Toronto server took 23 min on Kaggle before training began. Any failure falls
-  back to torchvision's download (an info event says so).
+- **Built-in:** MNIST, Fashion-MNIST, CIFAR-10, all three from Hugging Face's copies (ylecun/mnist, zalando-datasets/fashion_mnist,
+  uoft-cs/cifar10 Parquet -> `<data>/torchvision/<name>.npz`; harness BUILTIN_HF, builtin_fast + ArrayImages; HF_ENDPOINT honoured)
+  unless torchvision's own files are already on the machine (tv_copy: our root, or below the data folder's parent / grandparent, home,
+  /kaggle/input, 4 levels, ≤ 20,000 folders; e.g. a datasets folder beside the data folder). fetch(): 60 s timeouts, 6 tries that resume (Range),
+  a transfer counts only at its announced length (a dropped connection ends reading quietly). Then torchvision's download; if that fails
+  too, "DATA: this machine could not download …" says to train on Kaggle or copy the folder. Why: torchvision's Toronto server took
+  23 min for CIFAR-10 on Kaggle; MNIST failed on the lab machine over a poor connection (2026-11-19). CI ci_builtin_check.py: the real
+  copies, identical to torchvision's (MNIST, CIFAR-10).
 - The app shows the size before a run; the data is cached on the machine (`~/.nn_builder/data`) and not downloaded again.
 
 ## 4. Where training runs

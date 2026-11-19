@@ -987,7 +987,7 @@ the class list.
   \item Choose the set. The Input becomes its own size ($1\times28\times28$ or $3\times32\times32$); tick \ui{Resize the images} for a
         network made for larger pictures and set the size and channels.
 \end{enumerate}
-Nothing else: torchvision downloads the set on the GPU machine (CIFAR-10 from Hugging Face's copy, which is much faster than torchvision's own source).
+Nothing else: the GPU machine downloads the set from Hugging Face's copy (much faster than torchvision's own servers; over a poor connection the download is retried and continues where it stopped), or uses torchvision's files when they are already on the machine (for example a \texttt{MNIST} folder next to the app's data folder).
 
 \subsection{Pictures from Hugging Face}
 \tabfig{data_huggingface}{Dataset tab: a Hugging Face dataset (\texttt{timm/eurosat-rgb}, RGB satellite pictures in ten classes) before

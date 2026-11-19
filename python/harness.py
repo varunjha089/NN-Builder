@@ -490,39 +490,103 @@ class ArrayImages(torch.utils.data.Dataset):
         return self.transform(Image.fromarray(self.data[i])), int(self.targets[i])
 
 
-CIFAR10_HF = "https://huggingface.co/datasets/uoft-cs/cifar10/resolve/main/plain_text/{}-00000-of-00001.parquet"
+# Hugging Face's copies of the built-in sets (same images, same class order as torchvision's): repository, folder, image column, sizes
+BUILTIN_HF = {
+    "mnist": ("ylecun/mnist", "mnist", "image", (60000, 10000)),
+    "fashion_mnist": ("zalando-datasets/fashion_mnist", "fashion_mnist", "image", (60000, 10000)),
+    "cifar10": ("uoft-cs/cifar10", "plain_text", "img", (50000, 10000)),
+}
+# torchvision's own files of each set (the folder below its root, and a file it must hold)
+TV_FILES = {"mnist": ("MNIST", "raw/train-images-idx3-ubyte"), "fashion_mnist": ("FashionMNIST", "raw/train-images-idx3-ubyte"),
+            "cifar10": ("cifar-10-batches-py", "data_batch_1")}
 
 
-def cifar10_fast(root):
-    """CIFAR-10 from Hugging Face's copy (uoft-cs/cifar10: the same 50,000 + 10,000 images, same class order), kept as cifar10.npz:
-    torchvision downloads it from the University of Toronto's server, which took 23 minutes on Kaggle before training could start
-    (2026-11-18). None (torchvision's own download) when torchvision's files are already there, or this copy cannot be had."""
-    import numpy as np
-    cache = os.path.join(root, "cifar10.npz")
-    if os.path.isdir(os.path.join(root, "cifar-10-batches-py")):
-        return None
-    if not os.path.exists(cache):
+def tv_copy(root, name):
+    """torchvision's files of `name` already on this machine: in our root, or below the data folder's parent and grandparent, the home
+    folder or Kaggle's inputs (at most 4 levels down, 20,000 folders in all; e.g. a copy from another project); returns the root to give
+    torchvision, or None"""
+    folder, probe = TV_FILES[name]
+    has = lambda r: os.path.exists(os.path.join(r, folder, probe)) or os.path.exists(os.path.join(r, folder, probe + ".gz"))
+    if has(root):
+        return root
+    skip = {".git", "node_modules", "__pycache__", "proc", "sys", "venv", ".venv", "site-packages"}
+    seen = 0
+    up = os.path.dirname(os.path.abspath(DATA))
+    for base in dict.fromkeys([up, os.path.dirname(up), os.path.expanduser("~"), "/kaggle/input"]):
+        if not os.path.isdir(base) or base == os.sep:
+            continue
+        depth0 = base.rstrip(os.sep).count(os.sep)
+        for d, dirs, _ in os.walk(base):
+            if os.path.basename(d) == folder and has(os.path.dirname(d)):
+                return os.path.dirname(d)
+            seen += 1
+            if seen > 20000:  # a large disk: stop looking rather than hold up the run
+                return None
+            dirs[:] = [x for x in dirs if x not in skip and not x.startswith(".")] if d.count(os.sep) - depth0 < 4 else []
+    return None
+
+
+def fetch(url, dest, tries=6):
+    """download url to dest over a poor connection: 60 s timeouts, up to `tries` attempts that continue where the last one stopped (HTTP
+    Range), waiting 5, 10, 20 … s between them"""
+    import urllib.request
+    part = dest + ".part"
+    for k in range(tries):
         try:
-            import io, shutil, urllib.request, pyarrow.parquet as pq
+            have = os.path.getsize(part) if os.path.exists(part) else 0
+            req = urllib.request.Request(url, headers={"Range": f"bytes={have}-"} if have else {})
+            with urllib.request.urlopen(req, timeout=60) as r, open(part, "ab" if have and r.status == 206 else "wb") as w:
+                size = (have if r.status == 206 else 0) + int(r.headers.get("Content-Length") or -1)
+                while True:
+                    chunk = r.read(1 << 20)
+                    if not chunk:
+                        break
+                    w.write(chunk)
+            # a connection that drops ends the reading quietly: only the announced length counts as complete
+            got = os.path.getsize(part)
+            if size >= 0 and got < size:
+                raise ConnectionError(f"the connection dropped after {got:,} of {size:,} bytes")
+            os.replace(part, dest)
+            return
+        except Exception as e:
+            if k == tries - 1:
+                raise
+            emit("info", message=f"download interrupted ({type(e).__name__}: {e}); trying again in {5 * 2 ** k} s")
+            time.sleep(5 * 2 ** k)
+
+
+def builtin_fast(root, name):
+    """a built-in set (mnist | fashion_mnist | cifar10) from Hugging Face's copy, kept as <name>.npz: torchvision downloads from its own
+    servers, which took 23 minutes for CIFAR-10 on Kaggle (2026-11-18) and failed for MNIST on a lab machine with a poor connection
+    (2026-11-19); this copy is fetched with retries that resume. None (torchvision's own files) when torchvision's files are already on the
+    machine, or this copy cannot be had."""
+    import numpy as np
+    cache = os.path.join(root, f"{name}.npz")
+    if not os.path.exists(cache):
+        if tv_copy(root, name):
+            return None
+        repo, folder, col, sizes = BUILTIN_HF[name]
+        try:
+            import io, pyarrow.parquet as pq
             from PIL import Image
             os.makedirs(root, exist_ok=True)
             t0, parts = time.time(), []
+            base = os.environ.get("HF_ENDPOINT", "https://huggingface.co").rstrip("/")
             for split in ("train", "test"):
-                f = os.path.join(root, f"cifar10_{split}.parquet")
-                with urllib.request.urlopen(CIFAR10_HF.format(split), timeout=60) as r, open(f + ".part", "wb") as w:
-                    shutil.copyfileobj(r, w)
-                os.replace(f + ".part", f)
-                tb = pq.read_table(f, columns=["img", "label"]).to_pydict()
-                parts.append((np.stack([np.asarray(Image.open(io.BytesIO(im["bytes"])).convert("RGB")) for im in tb["img"]]),
+                f = os.path.join(root, f"{name}_{split}.parquet")
+                fetch(f"{base}/datasets/{repo}/resolve/main/{folder}/{split}-00000-of-00001.parquet", f)
+                tb = pq.read_table(f, columns=[col, "label"]).to_pydict()
+                mode = "RGB" if name == "cifar10" else "L"
+                parts.append((np.stack([np.asarray(Image.open(io.BytesIO(im["bytes"])).convert(mode)) for im in tb[col]]),
                               np.asarray(tb["label"], dtype=np.int64)))
                 os.remove(f)
-            if [len(p[1]) for p in parts] != [50000, 10000]:
+            if tuple(len(p[1]) for p in parts) != sizes:
                 raise ValueError(f"unexpected sizes {[len(p[1]) for p in parts]}")
             np.savez(cache + ".part.npz", xs=parts[0][0], ys=parts[0][1], xt=parts[1][0], yt=parts[1][1])
             os.replace(cache + ".part.npz", cache)
-            emit("info", message=f"CIFAR-10 from Hugging Face's copy in {time.time() - t0:.0f} s")
+            emit("info", message=f"{name}: Hugging Face's copy in {time.time() - t0:.0f} s")
         except Exception as e:
-            emit("info", message=f"CIFAR-10: Hugging Face's copy failed ({type(e).__name__}: {e}); downloading from torchvision's source (can be slow)")
+            emit("info", message=f"{name}: Hugging Face's copy failed ({type(e).__name__}: {e}); downloading from torchvision's source")
             return None
     z = np.load(cache)
     return (z["xs"], z["ys"]), (z["xt"], z["yt"])
@@ -1790,14 +1854,26 @@ def load_data(cfg):
         root = os.path.join(DATA, "torchvision")
         # torchvision's download bar writes every update as a new line in a log (Kaggle's, log.txt): hundreds of lines
         import contextlib, io
-        fast = cifar10_fast(root) if DATASET["builtin"] == "cifar10" else None
+        fast = builtin_fast(root, DATASET["builtin"])
         if fast:
             (xs, ys), (xt, yt) = fast
             train, test, train_eval = ArrayImages(xs, ys, train_t), ArrayImages(xt, yt, test_t), ArrayImages(xs, ys, test_t)
         else:
-            with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
-                train, test = cls(root, train=True, download=True, transform=train_t), cls(root, train=False, download=True, transform=test_t)
-            train_eval = cls(root, train=True, download=False, transform=test_t)
+            found = tv_copy(root, DATASET["builtin"])
+            if found and found != root:
+                emit("info", message=f"{DATASET['builtin']}: using the copy already on this machine in {found}")
+            tv_root = found or root
+            try:
+                with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+                    # (with its files there torchvision downloads nothing; a copy still in .gz is unpacked)
+                    train = cls(tv_root, train=True, download=True, transform=train_t)
+                    test = cls(tv_root, train=False, download=True, transform=test_t)
+            except RuntimeError as e:
+                folder = TV_FILES[DATASET["builtin"]][0]
+                raise SystemExit(f"DATA: this machine could not download {DATASET['builtin']} (neither Hugging Face's copy nor torchvision's "
+                                 f"servers: {e}); its internet connection is too poor or blocked. Train on Kaggle, or copy torchvision's "
+                                 f"{folder} folder from another machine to {root}/{folder} (or anywhere below {os.path.expanduser('~')}) and start again.")
+            train_eval = cls(tv_root, train=True, download=False, transform=test_t)
     elif src == "huggingface":
         load_dataset = hf_load_dataset()
         kw = {"cache_dir": os.path.join(DATA, "huggingface")}

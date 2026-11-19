@@ -48,6 +48,8 @@ jobs:
           pip install tifffile pandas pyarrow datasets
           cargo run -q -p nnb-core --example multiband_case -- ci_multiband
           python python/ci_multiband_check.py ci_multiband
+      - name: Built-in datasets from Hugging Face's copies (identical to torchvision's)
+        run: python python/ci_builtin_check.py ci_builtin
       - name: Earth Engine GeoTIFFs (LZW) where imagecodecs is missing (Kaggle's case)
         run: |
           pip install tifffile imagecodecs
