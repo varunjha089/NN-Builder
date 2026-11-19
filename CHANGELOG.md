@@ -3,6 +3,20 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 19_11_26_08_01_08
+
+**Design: one box per function call, U layout by image size, routed arrows** (`7017b4b`)
+
+- Text designs (functions, loops) open with every call and loop pass as one box, named by the call with values filled in.
+- Boxes laid out by image size: a U-Net draws as a U and its skip connections run flat. Double-click opens / closes a box.
+- Arrows turn at right angles in lanes of their own, go round blocks through the gaps, and become labelled stubs across row ends.
+- "Arrange by image size (U)" for the full design; the selected block's arrows bold.
+- Read-only views no longer lose the double-click to the canvas zoom (the x N view too).
+
+## 19_11_26_07_47_40
+
+**TEST_APP: pretrained encoder passes CI** (`e903736`)
+
 ## 19_11_26_07_41_03
 
 **Pretrained encoders: ImageNet or SSL4EO-S12 weights in a U-Net's ResNet-18 encoder** (`781c055`)
