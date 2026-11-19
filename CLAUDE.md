@@ -340,6 +340,16 @@ web/src/                   Design.tsx: Save as PNG (PngExporter inside <ReactFlo
                            by groupLayers(): Input, image stages by resolution (pool + a following Dropout stay in their stage), Embedding
                            and Encoder block k for transformers, Classifier; collapsible, with parameter subtotals; every block name in
                            its kind's colour (COLORS, neon at night), status colour only for warnings/errors;
+                           layout.ts: "One box per function call" view (opens by itself for text designs ≥ 40 blocks with dotted labels):
+                           groupByCalls folds each closed label prefix (a call, a loop pass) into a read-only "group" node (title by
+                           describe(): the text's call with loop values and arguments filled in; out = its exit block's), defaultOpen =
+                           loops (their passes shown), double-click opens a box / closes the innermost box of a block, chips close;
+                           levels() (log2 of input H / block H, vectors inherit) + arrangeByLevel (column = depth, row band = level: a U-Net
+                           draws as a U, skips run flat; also the "Arrange by image size (U)" button); lanes(): every arrow is a "lane"
+                           edge (LaneEdge in Design.tsx): stub (goes back left: two labelled stubs), step (turns in the gap before its
+                           target, a lane per arrow into that column) or detour (a block on its row in the way: through the gap between
+                           rows, interval-coloured lanes); the selected block's arrows bold, the rest faint. Read-only views turn off
+                           zoomOnDoubleClick (it swallowed the double-click on undraggable nodes, ×N included);
                            App.tsx (Projects page: New project and Open side by side (Open: a path field (store::project_path cleans quotes, ~/, a file
                            inside the project) + Open folder + Choose… = pick_folder), under them "Running Task" (heading neon pink; runs_active =
                            runs::active_everywhere: starting/running/queued runs of every listed project from run.json, no network, re-read

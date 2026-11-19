@@ -1,19 +1,20 @@
 // The canvas: layer nodes joined by tensor edges (React Flow), a palette, and the inspector for the selected node.
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
-  ReactFlow, Background, Controls, MiniMap, Handle, Position, addEdge, applyEdgeChanges, applyNodeChanges,
-  useReactFlow, getNodesBounds, type Connection, type Edge, type EdgeChange, type Node, type NodeChange, type NodeProps, MarkerType,
+  ReactFlow, Background, Controls, MiniMap, Handle, Position, addEdge, applyEdgeChanges, applyNodeChanges, BaseEdge,
+  useReactFlow, getNodesBounds, type Connection, type Edge, type EdgeChange, type EdgeProps, type Node, type NodeChange, type NodeProps, MarkerType,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { api, fmt, errText, type Analysis, type AppState, type GNode, type Graph, type NodeResult, type Params, type Template } from "./api";
 import { SlidingPreview } from "./Preview";
 import { cssVar, neon, useTheme } from "./theme";
 import { toPng } from "html-to-image";
+import { arrangeByLevel, defaultOpen, groupable, groupByCalls, lanes, levels, type Route } from "./layout";
 
 export const COLORS: Record<string, string> = {
   input: "#3b6fd8", conv2d: "#d9822b", dwconv2d: "#c96d1a", convtranspose2d: "#b5651d", pool2d: "#2a9d8f", global_pool: "#21867a", upsample: "#3c8d7f",
   batchnorm: "#8e5bb5", layernorm: "#7d4fa3", groupnorm: "#a066c9", repeat: "#0e7490", dropout: "#9c6ac6", flatten: "#9a8c1c", dense: "#4b5bb5", activation: "#6c7a89", add: "#c0392b",
-  concat: "#a93226", multiply: "#b03a5b", output: "#2e8b57", seg_output: "#1f7a4d", detect_output: "#166534",
+  group: "#0f5e8c", concat: "#a93226", multiply: "#b03a5b", output: "#2e8b57", seg_output: "#1f7a4d", detect_output: "#166534",
   to_tokens: "#0f766e", cls_pos: "#0e7490", attention: "#7c3aed", token_pool: "#0369a1", custom: "#475569", subtract: "#9b2c2c", shared: "#64748b",
   exit_output: "#4d7c0f", moe: "#9d174d", cross_attention: "#6d28d9", rmsnorm: "#86198f", swiglu: "#3730a3", conv3d: "#b45309", temporal_pool: "#047857", to_sequence: "#0f766e", conv1d: "#c2410c", lstm: "#6d28d9", gru: "#7e22ce",
 };
@@ -44,6 +45,7 @@ function summary(kind: string, p: Params): string {
     case "dropout": return `rate ${Number(Number(p.rate).toFixed(6))}`;  // (a rate saved as 0.30000000000000004 shows 0.3)
     case "groupnorm": return `${p.groups} groups`;
     case "repeat": return `${p.count} identical blocks · double-click to expand`;
+    case "group": return `${p.count} blocks: ${String(p.contents).length > 60 ? `${String(p.contents).slice(0, 58)}…` : p.contents} · double-click to open`;
     case "dense": return `${p.units} units · ${p.activation}${Number(p.lora) > 0 ? ` · LoRA ${p.lora}` : ""}`;
     case "activation": return `${p.fn}`;
     case "to_tokens": return p.mode === "rows" ? "rows as tokens" : "pixels/patches as tokens";
@@ -96,6 +98,49 @@ function LayerNode({ data, selected }: NodeProps<Node<LayerData>>) {
 }
 // memo: a block is drawn again only when its own data or selection changes (dragging one block in a 290-block design stays smooth)
 const nodeTypes = { layer: memo(LayerNode) };
+
+/** a path through the points with rounded corners */
+function poly(pts: [number, number][], r = 6): string {
+  let d = `M ${pts[0][0]} ${pts[0][1]}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [px, py] = pts[i - 1], [x, y] = pts[i], [nx, ny] = pts[i + 1];
+    const a = Math.min(r, Math.hypot(x - px, y - py) / 2), b = Math.min(r, Math.hypot(nx - x, ny - y) / 2);
+    const ux = Math.sign(x - px), uy = Math.sign(y - py), vx = Math.sign(nx - x), vy = Math.sign(ny - y);
+    d += ` L ${x - ux * a} ${y - uy * a} Q ${x} ${y} ${x + vx * b} ${y + vy * b}`;
+  }
+  const [lx, ly] = pts[pts.length - 1];
+  return `${d} L ${lx} ${ly}`;
+}
+
+type LaneData = Route & { hot: boolean; dim: boolean };
+
+/** an arrow drawn as layout.ts routed it: straight or with one turn just before its target, through the gap between rows when a block is
+ *  in the way, or as two labelled stubs when it goes back to the left (a design wrapped into rows) */
+function LaneEdge({ sourceX: sx, sourceY: sy, targetX: tx, targetY: ty, markerEnd, label, labelStyle, labelBgStyle, data, style }: EdgeProps<Edge<LaneData>>) {
+  const r = data ?? { kind: "step", gap: 0, turn: 14, from: "", to: "", hot: false, dim: false };
+  const st = { ...style, ...(r.hot ? { strokeWidth: 2.5 } : {}), ...(r.dim ? { opacity: 0.18 } : {}) };
+  const text = { labelStyle, labelBgStyle, labelShowBg: true };
+  if (r.kind === "stub") {
+    return <>
+      <BaseEdge path={`M ${sx} ${sy} L ${sx + 36} ${sy}`} style={st} label={`→ ${r.to}`} labelX={sx + 62} labelY={sy} {...text} />
+      <BaseEdge path={`M ${tx - 36} ${ty} L ${tx} ${ty}`} style={st} markerEnd={markerEnd} label={`${r.from} →`} labelX={tx - 62} labelY={ty} {...text} />
+    </>;
+  }
+  const cx = Math.max(sx + 10, tx - r.turn);
+  let pts: [number, number][];
+  if (r.kind === "detour") {
+    const gy = sy + r.gap, x1 = Math.min(sx + 12, cx);
+    pts = [[sx, sy], [x1, sy], [x1, gy], [cx, gy], [cx, ty], [tx, ty]];
+  } else pts = Math.abs(ty - sy) < 2 ? [[sx, sy], [tx, ty]] : [[sx, sy], [cx, sy], [cx, ty], [tx, ty]];
+  // the label on the longest straight stretch
+  let best = 0, at: [number, number] = [(sx + tx) / 2, (sy + ty) / 2];
+  for (let i = 1; i < pts.length; i++) {
+    const len = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    if (len > best) { best = len; at = [(pts[i][0] + pts[i - 1][0]) / 2, (pts[i][1] + pts[i - 1][1]) / 2]; }
+  }
+  return <BaseEdge path={poly(pts)} style={st} markerEnd={markerEnd} label={label} labelX={at[0]} labelY={at[1]} {...text} />;
+}
+const edgeTypes = { lane: LaneEdge };
 
 const STEP_X = 300, STEP_Y = 150;
 
@@ -200,16 +245,33 @@ export function Design({ st, graph, setGraph, analysis, persist, focus, toast, r
   const foldable = useMemo(() => collapseRepeats(graph, analysis), [graph, analysis]);
   const folded = collapsed ? foldable : null;
   const canFold = !!foldable;
+  // "one box per call" view: every function call and loop pass of the text drawn as one box, laid out by image size (a U-Net as a U);
+  // the canvas opens in it for large text designs. Double-click a box to open it; a block inside an opened box closes it.
+  const canGroup = useMemo(() => groupable(graph), [graph]);
+  const [grouped, setGrouped] = useState(() => groupable(graph) && graph.nodes.length >= 40);
+  const [openSet, setOpenSet] = useState<Set<string> | null>(null);
+  const open = useMemo(() => openSet ?? defaultOpen(graph), [openSet, graph]);
+  const groupedView = useMemo(() => {
+    if (!grouped || !canGroup || collapsed) return null;
+    const g = groupByCalls(graph, analysis, open);
+    return arrangeByLevel(g, levels(g, analysis));
+  }, [grouped, canGroup, collapsed, graph, analysis, open]);
+  const view = folded ?? groupedView;
+  const readOnly = collapsed || !!groupedView;
   // another design without repeats (or an edit that removed them) ends the ×N view, so the canvas is editable again
   useEffect(() => { if (!canFold) setCollapsed(false); }, [canFold]);
   useEffect(() => {
-    if (folded) {
-      setRfNodes(folded.nodes.map((n) => ({
+    if (view) {
+      setRfNodes(view.nodes.map((n) => ({
         id: n.id, type: "layer", position: { x: n.x, y: n.y }, draggable: false, deletable: false, selectable: n.kind !== "repeat",
+        selected: n.id === selected,
         data: n.kind === "repeat"
           ? { kind: "repeat", title: `${n.params.name} ×${n.params.count}`, params: n.params, summary: summary("repeat", n.params),
               result: { status: "ok", out: n.params.out, params: n.params.total, messages: [] } as unknown as NodeResult }
-          : { kind: n.kind, title: titles[n.kind] ?? n.kind, params: n.params, result: results[n.id], summary: summary(n.kind, n.params) },
+          : n.kind === "group"
+          ? { kind: "group", title: String(n.params.title), label: n.label, params: n.params, summary: summary("group", n.params),
+              result: { status: n.params.status, out: n.params.out, params: n.params.total, messages: [] } as unknown as NodeResult }
+          : { kind: n.kind, title: titles[n.kind] ?? n.kind, params: n.params, result: results[n.id], summary: summary(n.kind, n.params), label: n.label },
       })));
       return;
     }
@@ -229,19 +291,24 @@ export function Design({ st, graph, setGraph, analysis, persist, focus, toast, r
         };
       });
     });
-  }, [graph, results, selected, titles, folded]);
-  const shownEdges = (folded ?? graph).edges, edgeShapes = analysis?.edges;
-  const edges: Edge[] = useMemo(() => shownEdges.map((e) => ({
-    id: e.id, source: e.source, target: e.target, label: edgeShapes?.[e.id] ? fmt(edgeShapes[e.id]) : undefined,
+  }, [graph, results, selected, titles, view]);
+  const shown = view ?? graph, edgeShapes = analysis?.edges;
+  // each arrow's route (layout.ts), from the blocks' positions on the canvas; the selected block's arrows are drawn bold, the rest faint
+  const routes = useMemo(() => lanes(shown, (n) => n.label || (titles[n.kind] ?? n.kind)), [shown, titles]);
+  const edges: Edge[] = useMemo(() => shown.edges.map((e) => ({
+    id: e.id, source: e.source, target: e.target, type: "lane", label: edgeShapes?.[e.id] ? fmt(edgeShapes[e.id]) : undefined,
     labelStyle: { fontSize: 10, fill: "var(--edge-label)" }, labelBgStyle: { fill: "var(--bg)" },
     markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: night ? "#00e5ff" : undefined },
-  })), [shownEdges, edgeShapes, night]);
+    data: { ...(routes.get(e.id) ?? { kind: "step", gap: 0, turn: 14, from: "", to: "" }),
+      hot: !!selected && (e.source === selected || e.target === selected), dim: !!selected && e.source !== selected && e.target !== selected },
+  })), [shown, edgeShapes, night, routes, selected]);
 
   const onNodesChange = useCallback((changes: NodeChange<Node<LayerData>>[]) => {
     setRfNodes((nds) => applyNodeChanges(changes, nds));
     if (collapsed) return; // the "×N" view is read-only
     const sel = changes.find((c) => c.type === "select" && c.selected);
     if (sel && "id" in sel) setSelected(sel.id);
+    if (readOnly) return; // the "one box per call" view: blocks can be selected (and edited in the inspector), not moved or deleted
     const removed = changes.filter((c) => c.type === "remove").map((c) => (c as { id: string }).id);
     const ends = changes.filter((c) => c.type === "position" && c.dragging === false && c.position) as { id: string; position: { x: number; y: number } }[];
     if (!removed.length && !ends.length) return;
@@ -252,13 +319,13 @@ export function Design({ st, graph, setGraph, analysis, persist, focus, toast, r
       }),
       edges: graph.edges.filter((e) => !removed.includes(e.source) && !removed.includes(e.target)),
     });
-  }, [graph, save, collapsed]);
+  }, [graph, save, collapsed, readOnly]);
 
   // copy / paste of blocks (Edit menu or ⌘C ⌘V, outside text fields): the selected blocks and the arrows between them
   useEffect(() => {
     const typing = () => { const a = document.activeElement; return !!a && ["INPUT", "TEXTAREA", "SELECT"].includes(a.tagName); };
     const onCopy = (e: ClipboardEvent) => {
-      if (typing() || collapsed) return;
+      if (typing() || readOnly) return;
       const ids = new Set(rfNodes.filter((n) => n.selected).map((n) => n.id).concat(selected ? [selected] : []));
       const nodes = graph.nodes.filter((n) => ids.has(n.id) && n.kind !== "input");
       if (!nodes.length) return;
@@ -268,7 +335,7 @@ export function Design({ st, graph, setGraph, analysis, persist, focus, toast, r
       toast(`Copied ${nodes.length} block${nodes.length > 1 ? "s" : ""}.`);
     };
     const onPaste = (e: ClipboardEvent) => {
-      if (typing() || collapsed) return;
+      if (typing() || readOnly) return;
       let data: { nnb_blocks?: number; nodes: Graph["nodes"]; edges: Graph["edges"] };
       try { data = JSON.parse(e.clipboardData?.getData("text/plain") ?? ""); } catch { return; }
       if (!data?.nnb_blocks || !Array.isArray(data.nodes)) return;
@@ -283,7 +350,7 @@ export function Design({ st, graph, setGraph, analysis, persist, focus, toast, r
     document.addEventListener("copy", onCopy);
     document.addEventListener("paste", onPaste);
     return () => { document.removeEventListener("copy", onCopy); document.removeEventListener("paste", onPaste); };
-  }, [rfNodes, selected, graph, save, toast, collapsed]);
+  }, [rfNodes, selected, graph, save, toast, readOnly]);
 
   const onEdgesChange = useCallback((changes: EdgeChange[]) => {
     const kept = applyEdgeChanges(changes, edges);
@@ -436,15 +503,21 @@ export function Design({ st, graph, setGraph, analysis, persist, focus, toast, r
     <div className="design">
       <div className="palette">
         <TemplatePicker toast={toast} onLoaded={reloadProject} />
-        <button className="arrange" onClick={() => save(arrange(graph))} disabled={collapsed}>Arrange left to right</button>
+        {canGroup && !collapsed && <button className="arrange" onClick={() => setGrouped(!grouped)}
+          title="Draw every function call and loop pass of the text as one box, laid out by image size (a U-Net as a U); double-click a box to open it">
+          {groupedView ? "Show every block" : "One box per function call"}</button>}
+        <button className="arrange" onClick={() => save(arrange(graph))} disabled={readOnly}>Arrange left to right</button>
+        <button className="arrange" onClick={() => save(arrangeByLevel(graph, levels(graph, analysis)))} disabled={readOnly || !analysis}
+          title="Left to right in computation order, top to bottom by image size: halving goes one level down, doubling one up, so skip connections between equal sizes run flat (a U-Net becomes a U)">
+          Arrange by image size (U)</button>
         <button className="arrange" onClick={() => savePng()} title="The whole design as one picture (as drawn now, in this theme), in the project's export folder">
           Save as PNG</button>
         {(canFold || collapsed) && <button className="arrange" onClick={() => setCollapsed(!collapsed)}
           title="Draw identical repeated blocks (e.g. Transformer encoder blocks) as one ×N node; a read-only view">
           {collapsed ? "Show every block" : "Collapse repeated blocks (×N)"}</button>}
-        <button className="arrange" onClick={() => addResidual()} disabled={collapsed || !sel}
+        <button className="arrange" onClick={() => addResidual()} disabled={readOnly || !sel}
           title="After the selected block: Conv 3×3 → BN → ReLU → Conv 3×3 → BN → Add (skip from the selected block) → ReLU">Residual block after selected</button>
-        <button className="arrange" onClick={() => addTwin()} disabled={collapsed || !sel}
+        <button className="arrange" onClick={() => addTwin()} disabled={readOnly || !sel}
           title="Siamese network: the branch from the Input to the selected block again, from the second band group's Input (e.g. the 'after' image), with the same weights">Twin branch (shared weights)</button>
         <p className="muted small">Click a block to add it after the selected one. Drag from a block's right dot to another block's left dot to connect (several arrows into Add / Concat / Multiply). Select + Backspace deletes.</p>
         {GROUPS.map(([g, kinds]) => (
@@ -455,14 +528,31 @@ export function Design({ st, graph, setGraph, analysis, persist, focus, toast, r
       </div>
       <div className="canvas">
         {/* measured: the canvas needs about 0.3 MB per block drawn (1,000 blocks ≈ 300 MB, 3,500 ≈ 1 GB); the parameter count does not matter */}
-        {!collapsed && graph.nodes.length > 500 && <div className="msg warn big-hint">Large design: {graph.nodes.length.toLocaleString()} blocks drawn
+        {groupedView && <div className="group-bar small">
+          <span className="muted">One box per call · double-click a box to open it, a block in an opened box to close it.</span>
+          {[...open].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).map((p) => <button key={p} className="chip small" title="Close: draw it as one box again"
+            onClick={() => setOpenSet(new Set([...open].filter((q) => q !== p && !q.startsWith(`${p}.`))))}>{p} ✕</button>)}
+          <button className="small" onClick={() => setOpenSet(new Set())}>Close all</button>
+          <button className="small" onClick={() => setOpenSet(null)}>As at first</button></div>}
+        {!readOnly && graph.nodes.length > 500 && <div className="msg warn big-hint">Large design: {graph.nodes.length.toLocaleString()} blocks drawn
           (about {Math.round(graph.nodes.length * 0.3)} MB for the canvas). {canFold ? <>
           <button className="small" onClick={() => setCollapsed(true)}>Collapse repeated blocks (×N)</button> draws each repeated group once and
           is much lighter;</> : null} the Text tab edits it without drawing.</div>}
-        {rfNodes.length > 0 && <ReactFlow nodes={rfNodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect}
+        {rfNodes.length > 0 && <ReactFlow nodes={rfNodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect}
           onPaneClick={() => setSelected(null)} fitView fitViewOptions={{ padding: 0.2, maxZoom: 1 }} minZoom={0.05}
-          deleteKeyCode={collapsed ? null : ["Backspace", "Delete"]} nodesConnectable={!collapsed}
-          onNodeDoubleClick={(_, n) => { if (n.id.startsWith("repeat")) setCollapsed(false); }} key={collapsed ? "folded" : "all"}>
+          deleteKeyCode={readOnly ? null : ["Backspace", "Delete"]} nodesConnectable={!readOnly}
+          // in the read-only views a double-click opens or closes a box (the canvas would otherwise take it as "zoom in")
+          zoomOnDoubleClick={!readOnly}
+          onNodeDoubleClick={(_, n) => {
+            if (n.id.startsWith("repeat")) setCollapsed(false);
+            else if (groupedView && n.id.startsWith("grp:")) setOpenSet(new Set([...open, n.id.slice(4)]));
+            else if (groupedView) {
+              // a block inside an opened box: close the innermost box it is in
+              const s = (graph.nodes.find((x) => x.id === n.id)?.label ?? "").split(".");
+              const p = [...Array(s.length - 1).keys()].map((k) => s.slice(0, s.length - 1 - k).join(".")).find((q) => open.has(q));
+              if (p) setOpenSet(new Set([...open].filter((q) => q !== p && !q.startsWith(`${p}.`))));
+            }
+          }} key={collapsed ? "folded" : groupedView ? `grouped ${[...open].sort().join(" ")}` : "all"}>
           <Background gap={24} />
           <PngExporter register={(f) => { pngRef.current = f; }} />
           <Controls />
