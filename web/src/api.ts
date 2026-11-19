@@ -45,7 +45,7 @@ export interface TrainSettings {
   checkpoint_minutes: number; max_resumes: number;
   val_fraction: number; early_stop: boolean; patience: number; monitor: "val_loss" | "val_acc" | "val_miou";
   weight_decay: number; schedule: "constant" | "cosine" | "plateau"; warmup_epochs: number; label_smoothing: number; grad_clip: number;
-  pretrained: "" | "resnet18" | "vgg16" | "vit_b_16"; freeze: "none" | "backbone"; export: boolean; save_memory: boolean; auto_split: boolean;
+  pretrained: "" | "resnet18" | "vgg16" | "vit_b_16" | "ssl4eo_s2"; freeze: "none" | "backbone"; export: boolean; save_memory: boolean; auto_split: boolean;
   class_weights?: "" | "inverse" | "sqrt"; tune_thresholds?: boolean; loss?: "" | "focal" | "dice" | "dice_ce" | "mse" | "l1" | "huber" | "custom"; focal_gamma?: number; custom_loss?: string; gpus?: number;
 }
 

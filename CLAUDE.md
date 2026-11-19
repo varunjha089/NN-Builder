@@ -53,9 +53,15 @@ crates/core/src/
                            per-class precision/recall/F1 (from the confusion matrix); shapes.rs macs per node + total_macs (tests: MSG
                            93,499,136 by hand, ResNet-18 1.80–1.83 G). Tests: summary.rs (incl. pdflatex of the table); CI recipe
                            check uses 6 classes and checks val_top5 / test_top5.
-                           Phase 3: TrainSettings.pretrained (resnet18 | vgg16 | vit_b_16; harness load_pretrained: each design tensor in
-                           order gets the next unused torchvision tensor of the same shape, a BatchNorm the one after the matching
-                           convolution (producers(): forward hooks); stops when < 80 % of weight tensors match;
+                           Phase 3: TrainSettings.pretrained (resnet18 | vgg16 | vit_b_16 | ssl4eo_s2; harness reference() + load_pretrained:
+                           each design tensor in order gets the next unused reference tensor of the same shape, a BatchNorm the one after the
+                           matching convolution (producers(): forward hooks); accepted when ≥ 80 % of the design's weight tensors match, or
+                           (encoder) ≥ 80 % of the reference's own weight tensors without its classifier found a place (a U-Net with a
+                           ResNet-18 encoder: doc/examples/unet_resnet18.nnb; "info" event, pretrained.encoder); ssl4eo_s2 = SSL4EO-S12
+                           MoCo ResNet-18, 13 Sentinel-2 bands (torchgeo's file on Hugging Face, torch.hub cache <data>/torch/ssl4eo, no
+                           classifier), bands only (train_script refuses it without bands); a multiband first conv gets the reference's
+                           filters by band name (adapt_first; ImageNet: expand_rgb), the rest the mean, × n/C. CI: pretrained_case
+                           unet_resnet18 / unet_ssl4eo_s2 (encoder output = ResNet-18 layer4, first layer by band, decoder untouched);
                            ImageNet normalisation) + freeze ("backbone" = train only unloaded tensors); Grad-CAM (last 4-D layer) on the
                            samples, "mistakes" (16 misclassified of up to 2000 test images); export (model.ts + model.onnx, fetched
                            with the results). CI: ci_pretrained_check.py compares the loaded demos with torchvision's own models.

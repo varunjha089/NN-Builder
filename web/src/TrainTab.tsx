@@ -40,9 +40,9 @@ function canSaveMemory(a: Analysis | null): boolean {
   return !a || (a.nodes.filter((n) => ["output", "seg_output", "detect_output"].includes(n.kind)).length <= 1 && !a.nodes.some((n) => n.kind === "exit_output"));
 }
 
-export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, toast, startJob, datasetSource, datasetTask }: {
+export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, toast, startJob, datasetSource, datasetTask, datasetBands }: {
   st: AppState; ok: boolean; analysis: Analysis | null; train: TrainSettings; setTrain: (t: TrainSettings) => void; runId: string | null; openRun: (id: string | null) => void;
-  toast: (m: string) => void; startJob: () => void; datasetSource: string; datasetTask: string;
+  toast: (m: string) => void; startJob: () => void; datasetSource: string; datasetTask: string; datasetBands: number;
 }) {
   const [targets, setTargets] = useState<{ name: string; kind: string; prepared?: boolean; count?: number }[]>([]);
   const [target, setTarget] = useState("Kaggle");
@@ -156,17 +156,21 @@ export function TrainTab({ st, ok, analysis, train, setTrain, runId, openRun, to
           </div>
           {datasetSource === "builtin" && train.aug_hflip && datasetTask !== "segment" && <p className="muted small">Note: flipping digits (MNIST) changes their meaning; use flips for objects and photos.</p>}
         </div>
-        <div className="wide aug"><strong>Start from ImageNet weights</strong>
-          <span className="muted small"> (transfer learning: much better results on small datasets; the images become 3-channel and are normalised as for ImageNet)</span>
+        <div className="wide aug"><strong>Start from pretrained weights</strong>
+          <span className="muted small"> (transfer learning: much better results on small datasets; {datasetBands ? "the first layer's filters are chosen by band name"
+            : "the images become 3-channel and are normalised as for ImageNet"})</span>
           <div className="row">
             <label>Weights<select value={train.pretrained} onChange={(e) => set({ pretrained: e.target.value as TrainSettings["pretrained"], ...(e.target.value ? {} : { freeze: "none" }) })}>
-              <option value="">none (random start)</option><option value="resnet18">torchvision ResNet-18 (for the ResNet-18 demo)</option>
-              <option value="vgg16">torchvision VGG-16 (for the VGG-16 demo)</option><option value="vit_b_16">torchvision ViT-B/16 (for the ViT-Base/16 demo)</option></select></label>
+              <option value="">none (random start)</option><option value="resnet18">torchvision ResNet-18, ImageNet (the ResNet-18 demo, or a ResNet-18 encoder)</option>
+              <option value="vgg16">torchvision VGG-16, ImageNet (for the VGG-16 demo)</option><option value="vit_b_16">torchvision ViT-B/16, ImageNet (for the ViT-Base/16 demo)</option>
+              <option value="ssl4eo_s2" disabled={!datasetBands}>SSL4EO-S12 ResNet-18, Sentinel-2 13 bands (multispectral data; the ResNet-18 demo or encoder)</option></select></label>
             {train.pretrained && <label className="chk"><input type="checkbox" checked={train.freeze === "backbone"}
-              onChange={(e) => set({ freeze: e.target.checked ? "backbone" : "none" })} />train only the new output layer (freeze the rest)</label>}
+              onChange={(e) => set({ freeze: e.target.checked ? "backbone" : "none" })} />train only what was not loaded (freeze the pretrained layers)</label>}
           </div>
-          {train.pretrained && <p className="muted small">The weights are loaded layer by layer into your design (on the GPU machine); a design that
-            no longer matches the network stops with a clear message. Use a small learning rate for fine-tuning (e.g. 0.0001), or freeze and use 0.001.</p>}
+          {train.pretrained && <p className="muted small">The weights are loaded layer by layer into your design (on the GPU machine): the unchanged demo, or a
+            design whose encoder is the demo's layers in the same order (e.g. a U-Net with a ResNet-18 encoder; the decoder starts random). A design that
+            matches neither stops with a clear message. Use a small learning rate for fine-tuning (e.g. 0.0001), or freeze and use 0.001.</p>}
+          {train.pretrained === "ssl4eo_s2" && !datasetBands && <p className="msg error small">The SSL4EO-S12 weights need multispectral data: choose the bands on the Dataset tab.</p>}
         </div>
         <div className="wide aug"><strong>Training recipe</strong>
           <span className="muted small"> (the defaults are plain training at a constant learning rate)</span>

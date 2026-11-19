@@ -737,10 +737,17 @@ $3\times3$ convolution with 16 filters: $13\cdot9\cdot16+16 = 1\,888$). On the G
   \item shows the result pictures as composites: true colour (B04 B03 B02) for Sentinel-2, VV / VH / VV$-$VH for Sentinel-1, else the
         first three bands, each stretched between its 2nd and 98th percentile.
 \end{itemize}
-\textbf{ImageNet weights with bands.} \ui{Start from ImageNet weights} (Train tab) also works for satellite images: the first
-convolution's red, green and blue filters go to B04, B03 and B02 (matched by name), every other band gets the mean of the three, and all
-are scaled by $3/C$ for $C$ bands so the layer's output keeps its size; the rest of the network loads as usual. The images are still
+\textbf{Pretrained weights with bands.} \ui{Start from pretrained weights} (Train tab) also works for satellite images: with ImageNet's
+weights the first convolution's red, green and blue filters go to B04, B03 and B02 (matched by name), every other band gets the mean of the
+three, and all are scaled by $3/C$ for $C$ bands so the layer's output keeps its size; the rest of the network loads as usual.
+\ui{SSL4EO-S12 ResNet-18} brings a ResNet-18 learnt on 13-band Sentinel-2 images (self-supervised, MoCo): each band takes the filter of the
+Sentinel-2 band with its name (B4\_pre counts as B04), the others (radar, indices) the mean, scaled by $13/C$. The images are still
 normalised per band (not with ImageNet's colour statistics).
+
+\textbf{A pretrained encoder.} The weights also fill the encoder of a bigger design: build the demo's layers, in its order, as the first
+part of your network (\file{doc/examples/unet\_resnet18.nnb}: a U-Net whose encoder is ResNet-18, with attention gates on its skip
+connections). When almost all of the pretrained network's own layers find a place, the run says so and the rest (the decoder) starts
+at random; \ui{train only what was not loaded} then trains only the decoder.
 
 \textbf{Hugging Face.} A Hugging Face dataset whose image column holds band arrays (an array feature, or GeoTIFF / \file{.npy} bytes)
 is read the same way: choose the bands under \ui{Image bands} (type the band order, since it cannot be read on the Mac). Classification,
@@ -1240,7 +1247,7 @@ Save memory & activation checkpointing~\cite{chen2016checkpoint}: \file{train.py
 Stop the EC2 instance & stop the instance when the run ends (saves money)\\
 Data augmentation & horizontal / vertical flip, random crop after padding, rotation, brightness/contrast; training images only~\cite{cubuk2018autoaugment}. Flips change the meaning of digits; vertical flips suit aerial images\\
 Copy my token to the machine & needed for Kaggle data on a server/EC2 and for gated Hugging Face data\\
-Start from ImageNet weights & transfer learning: torchvision's pretrained ResNet-18, VGG-16 or ViT-B/16 loaded into the matching demo, tensor by tensor (a new output head for your classes starts at random); optionally train only the new head. Images are then normalised with ImageNet's statistics. Usually far better than training from scratch on small datasets; use a smaller learning rate (e.g.\ 0.0001) when fine-tuning everything\\
+Start from pretrained weights & transfer learning: torchvision's ImageNet ResNet-18, VGG-16 or ViT-B/16, or SSL4EO-S12's Sentinel-2 ResNet-18 (bands only), loaded into the matching demo, tensor by tensor (a new output head for your classes starts at random), or into a design whose encoder is the demo's layers (the decoder starts at random); optionally train only what was not loaded. Images are then normalised with ImageNet's statistics. Usually far better than training from scratch on small datasets; use a smaller learning rate (e.g.\ 0.0001) when fine-tuning everything\\
 \bottomrule
 \end{longtable}
 

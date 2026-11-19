@@ -307,43 +307,73 @@ def producers(model, x):
     return seen
 
 
-def load_pretrained(model, name):
-    """copy torchvision's ImageNet weights `name` (resnet18 | vgg16 | vit_b_16) into the design: each tensor of the design, in order, gets
-    the next unused torchvision tensor of the same shape (the demos are built in torchvision's layer order). BatchNorm tensors all have the
-    same shape (C,), so a BatchNorm instead gets the torchvision BatchNorm fed by the convolution that feeds it (found by a forward pass;
-    a ResNet block with a shortcut projection is laid out in a different order). Tensors without a match (a new output head for another
-    number of classes) keep their random start. Returns the names of the loaded tensors."""
+# Sentinel-2 weights from SSL4EO-S12 (Wang et al., 2022: MoCo-v2 on 13-band Sentinel-2 L1C), as torchgeo publishes them for timm's ResNet-18
+SSL4EO_S2_URL = ("https://huggingface.co/torchgeo/resnet18_sentinel2_all_moco/resolve/main/"
+                 "resnet18_sentinel2_all_moco-59bfdff9.pth")
+SSL4EO_S2_BANDS = ["B01", "B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B09", "B10", "B11", "B12"]
+
+
+def reference(name):
+    """the network whose weights are copied: (model, band names of its input channels, the keys its file really had (None = all), title).
+    torchvision's ImageNet models take red, green, blue; "ssl4eo_s2" is a torchvision ResNet-18 with a 13-band first convolution and
+    SSL4EO-S12's Sentinel-2 weights (the same tensor names as torchvision's; the file has no classifier)"""
     import torchvision
     os.environ.setdefault("TORCH_HOME", os.path.join(DATA, "torch"))
-    ref = getattr(torchvision.models, name)(weights="DEFAULT")
+    if name == "ssl4eo_s2":
+        ref = torchvision.models.resnet18(weights=None)
+        ref.conv1 = torch.nn.Conv2d(len(SSL4EO_S2_BANDS), 64, 7, 2, 3, bias=False)
+        state = torch.hub.load_state_dict_from_url(SSL4EO_S2_URL, model_dir=os.path.join(DATA, "torch", "ssl4eo"), map_location="cpu",
+                                                   check_hash=False)
+        state = state.get("state_dict", state)
+        state = {k.removeprefix("module.").removeprefix("backbone."): v for k, v in state.items()}
+        mine = ref.state_dict()
+        kept = {k: v for k, v in state.items() if k in mine and mine[k].shape == v.shape}
+        lost = [k for k in mine if k not in kept and not k.startswith("fc.") and not k.endswith("num_batches_tracked")]
+        if lost:
+            raise SystemExit(f"PRETRAINED: the SSL4EO-S12 file does not fit a ResNet-18 ({len(lost)} tensors missing, e.g. {lost[:3]})")
+        ref.load_state_dict(kept, strict=False)
+        return ref, SSL4EO_S2_BANDS, set(kept), "SSL4EO-S12's Sentinel-2"
+    return getattr(torchvision.models, name)(weights="DEFAULT"), ["B04", "B03", "B02"], None, "ImageNet's"
+
+
+def load_pretrained(model, name):
+    """copy the weights `name` (torchvision's ImageNet resnet18 | vgg16 | vit_b_16, or ssl4eo_s2) into the design: each tensor of the design,
+    in order, gets the next unused reference tensor of the same shape (the demos are built in torchvision's layer order). BatchNorm tensors
+    all have the same shape (C,), so a BatchNorm instead gets the reference BatchNorm fed by the convolution that feeds it (found by a forward
+    pass; a ResNet block with a shortcut projection is laid out in a different order). A multiband design's first convolution gets the
+    reference's first-layer filters chosen by band name (adapt_first). Tensors without a match (a new output head, or a whole decoder
+    after a pretrained encoder) keep their random start. Returns the names of the loaded tensors."""
+    ref, ref_bands, in_file, title = reference(name)
     norm = torch.nn.modules.batchnorm._BatchNorm
     def bn_names(m):
         return {n for n, mod in m.named_modules() if isinstance(mod, norm)}
     owner = lambda key: key.rsplit(".", 1)[0] if "." in key else ""
     dev = next(model.parameters()).device
     mine_from = producers(model, torch.zeros(1, *EXPECTED["input"], device=dev)) if bn_names(model) else {}
-    ref_from = producers(ref, torch.zeros(1, 3, 224, 224)) if bn_names(ref) else {}
+    ref_from = producers(ref, torch.zeros(1, len(ref_bands), 224, 224)) if bn_names(ref) else {}
     ref_bn, my_bn = bn_names(ref), bn_names(model)
-    src = list(ref.state_dict().items())
+    src = [(k, v) for k, v in ref.state_dict().items() if in_file is None or k in in_file]
     used = [False] * len(src)
+    # the reference's first convolution (the one that sees the bands)
+    first = next((j for j, (k, st) in enumerate(src) if st.dim() == 4 and st.shape[1] == len(ref_bands)), None)
     dst = model.state_dict()
     loaded, missing, pairs = [], [], {}
     for key, t in dst.items():  # everything except BatchNorm: by order and shape
         if owner(key) in my_bn:
             continue
         j = next((j for j, (k, st) in enumerate(src) if not used[j] and owner(k) not in ref_bn and st.shape == t.shape), None)
-        widen = False
-        if j is None and MULTI and t.dim() == 4 and t.shape[1] != 3:
-            # the first convolution of a multiband design: ImageNet's 3-channel filters, widened to the bands (expand_rgb)
-            j = next((j for j, (k, st) in enumerate(src) if not used[j] and owner(k) not in ref_bn and st.dim() == 4 and st.shape[1] == 3
-                      and st.shape[0] == t.shape[0] and st.shape[2:] == t.shape[2:]), None)
-            widen = j is not None
+        adapt = MULTI and j is not None and j == first
+        if j is None and MULTI and t.dim() == 4 and first is not None and not used[first]:
+            # the first convolution of a multiband design: the reference's first-layer filters, chosen by band name
+            st = src[first][1]
+            if st.shape[0] == t.shape[0] and st.shape[2:] == t.shape[2:]:
+                j, adapt = first, True
         if j is None:
             missing.append(key)
             continue
         used[j] = True
         pairs.setdefault(owner(key), owner(src[j][0]))
-        dst[key] = (expand_rgb(src[j][1], t.shape[1]) if widen else src[j][1]).to(t.dtype)
+        dst[key] = (adapt_first(src[j][1], t.shape[1], ref_bands, title) if adapt else src[j][1]).to(t.dtype)
         loaded.append(key)
     index = {k: j for j, (k, _) in enumerate(src)}
     for bn in [n for n, _ in model.named_modules() if n in my_bn]:  # BatchNorm: the one after the matching convolution
@@ -362,11 +392,43 @@ def load_pretrained(model, name):
     adapters = {f"{n}.{x}" for n, m in model.named_modules() if hasattr(m, "base") and hasattr(m, "a") and hasattr(m, "b") for x in ("a", "b")}
     weights = [k for k, v in model.state_dict().items() if v.dim() > 1 and k not in adapters]
     loaded_weights = [k for k in loaded if k in weights]
-    if len(loaded_weights) < 0.8 * len(weights):
+    # the reference's backbone: its weight tensors without the classifier (the last 2-D tensor)
+    ref_weights = [j for j, (k, st) in enumerate(src) if st.dim() > 1]
+    if ref_weights and src[ref_weights[-1]][1].dim() == 2:
+        ref_weights = ref_weights[:-1]
+    backbone_used = sum(used[j] for j in ref_weights)
+    encoder = backbone_used >= 0.8 * len(ref_weights) and len(loaded_weights) < 0.8 * len(weights)
+    if len(loaded_weights) < 0.8 * len(weights) and not encoder:
         raise SystemExit(f"PRETRAINED: the design does not match {name}: only {len(loaded_weights)} of its {len(weights)} weight tensors have "
-                         f"a counterpart. Use ImageNet weights with the unchanged demo (its layers may be widened only at the output).")
-    emit("pretrained", weights=name, loaded=len(loaded), total=len(dst), new=[k for k in missing if not k.endswith("num_batches_tracked")][:20])
+                         f"a counterpart, and only {backbone_used} of the {len(ref_weights)} pretrained weight tensors found a place. Use the "
+                         f"weights with the unchanged demo (its layers may be widened only at the output), or build the demo's layers, in "
+                         f"its order, as the encoder of your design.")
+    if encoder:
+        emit("info", message=f"{title} weights fill the design's encoder: {backbone_used} of the network's {len(ref_weights)} weight tensors "
+                             f"placed; the other {len(weights) - len(loaded_weights)} of the design (e.g. a decoder) start random")
+    emit("pretrained", weights=name, loaded=len(loaded), total=len(dst), encoder=encoder,
+         new=[k for k in missing if not k.endswith("num_batches_tracked")][:20])
     return loaded
+
+
+def adapt_first(w, c, ref_bands, title):
+    """the reference's first-layer filters (out, n, k, k) for the design's c channels: ImageNet's red / green / blue filters (expand_rgb)
+    or a Sentinel-2 network's 13 band filters, each design band taking the filter of the band with its name (VV_pre or B04_pre: the
+    part before "_"); every other band gets the mean of the reference's filters. Scaled by n / c so the layer's output keeps its size."""
+    if ref_bands == ["B04", "B03", "B02"]:
+        return expand_rgb(w, c)
+    names = BANDS if c == len(BANDS) else next((g["bands"] for g in GROUPS if len(g["bands"]) == c), [""] * c)
+    at = {b: i for i, b in enumerate(ref_bands)}
+    def pick(b):
+        for k in (band_key(b), band_key(str(b).split("_")[0])):
+            if k in at:
+                return at[k]
+        return None
+    idx = [pick(b) for b in names]
+    out = torch.stack([w[:, i] if i is not None else w.mean(1) for i in idx], 1)
+    emit("info", message=f"{title} first-layer filters adapted from {w.shape[1]} to {c} channels "
+                         f"({sum(i is not None for i in idx)} by band name, the others from their mean)")
+    return out * (w.shape[1] / c)
 
 
 def expand_rgb(w, c):

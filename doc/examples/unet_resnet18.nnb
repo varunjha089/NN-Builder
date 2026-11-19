@@ -1,0 +1,71 @@
+net "U-Net with a ResNet-18 encoder and attention gates"
+# Segmentation that can start from pretrained weights: the encoder is torchvision's ResNet-18, block for block in its own order, so the
+# Train tab's ResNet-18 weights (ImageNet, or SSL4EO-S12 for Sentinel-2 bands) fill it; the decoder and the gates start random.
+# Each decoder step doubles the size and joins the encoder's map of that size, weighted by an attention gate (Oktay et al., 2018).
+# Any number of bands; the size must divide by 32 (512 x 512: the bottleneck is 16 x 16).
+
+def basic(c) {                        # ResNet basic block, same size
+  a conv c 3x3 none nobias
+  b bn
+  r relu
+  d conv c 3x3 none nobias
+  e bn
+  j add <- e, in
+  o relu
+}
+def down(c) {                         # ResNet basic block that halves the size, with a 1x1 projection shortcut
+  a conv c 3x3 stride 2 none nobias
+  b bn
+  r relu
+  d conv c 3x3 none nobias
+  e bn
+  p conv c 1x1 stride 2 valid none nobias <- in
+  n bn
+  j add <- e, n
+  o relu
+}
+def unit(c) {                         # decoder: conv 3x3, BN, ReLU
+  a conv c 3x3 none nobias
+  b bn
+  r relu
+}
+def gate(k) {                         # attention gate: in = g (decoder signal), in2 = x (the skip, k channels)
+  wg conv k // 2 1x1 none
+  bg bn
+  wx conv k // 2 1x1 none <- in2
+  bx bn
+  sm add <- bg, bx
+  rl relu
+  ps conv 1 1x1 none
+  bp bn
+  al sigmoid                          # one weight per pixel in [0, 1]
+  m mul <- in2, al                    # the skip, weighted
+}
+def up(c, k) {                        # bilinear x2, gate the skip, join, two units
+  u upsample x2 bilinear
+  g gate(k) <- u, in2
+  j concat <- u, g
+  a unit(c)
+  b unit(c)
+}
+
+1 input                               # (bands, 512, 512)
+2 conv 64 7x7 stride 2 none nobias    # stem: (64, 256, 256), skip s0
+3 bn
+4 relu
+5 maxpool 3x3 stride 2 pad 1          # (64, 128, 128)
+6 repeat 2 {                          # layer1: (64, 128, 128), skip s1
+    x basic(64)
+  }
+7 for c in 128, 256, 512 {            # layer2 (128, 64, 64) s2; layer3 (256, 32, 32) s3; layer4 (512, 16, 16) bottleneck
+    x down(c)
+    y basic(c)
+  }
+8 up(256, 256) <- 7.3.y, 7.2.y        # (256, 32, 32)
+9 up(128, 128) <- 8, 7.1.y            # (128, 64, 64)
+10 up(64, 64) <- 9, 6                 # (64, 128, 128)
+11 up(32, 64) <- 10, 4                # (32, 256, 256)
+12 upsample x2 bilinear               # (32, 512, 512)
+13 unit(16)
+14 unit(16)
+15 seg_output                         # (classes, 512, 512): a score per class per pixel

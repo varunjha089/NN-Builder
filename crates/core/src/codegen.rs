@@ -123,8 +123,11 @@ fn default_freeze() -> String {
     "none".into()
 }
 
-/// torchvision ImageNet weights that fit a demo of the same name
-pub const PRETRAINED: &[(&str, &str, &str)] = &[("resnet18", "resnet18", "ResNet-18"), ("vgg16", "vgg16", "VGG-16"), ("vit_b_16", "vit_b16", "ViT-Base/16")];
+/// pretrained weights (setting, the demo they fit, title): torchvision's ImageNet weights, and SSL4EO-S12's Sentinel-2 ResNet-18 (13 bands,
+/// multiband datasets only). The demo's layers may also be the encoder of a bigger design (a U-Net decoder after a ResNet-18): the
+/// harness accepts that when the pretrained network's own layers almost all find a place
+pub const PRETRAINED: &[(&str, &str, &str)] = &[("resnet18", "resnet18", "ResNet-18"), ("vgg16", "vgg16", "VGG-16"), ("vit_b_16", "vit_b16", "ViT-Base/16"),
+    ("ssl4eo_s2", "resnet18", "SSL4EO-S12 ResNet-18 (Sentinel-2)")];
 
 fn one_gpu() -> u32 {
     1
@@ -868,6 +871,9 @@ fn py_json(v: &Value) -> String {
 pub fn train_script(g: &Graph, ds: &Dataset, a: &Analysis, t: &TrainSettings, title: &str) -> Result<String> {
     if let Some(p) = ds.problems().first() {
         bail!("{p}");
+    }
+    if t.pretrained == "ssl4eo_s2" && ds.bands.is_empty() {
+        bail!("The SSL4EO-S12 weights were learnt on Sentinel-2 bands: choose the bands on the Dataset tab (multispectral), or ImageNet weights for photos.");
     }
     if ds.task == "detect" && !t.loss.is_empty() && t.loss != "custom" {
         bail!("Object detection trains with CenterNet's loss (or your own Python loss): Train tab, Loss.");

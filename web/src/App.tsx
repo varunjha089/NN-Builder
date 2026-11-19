@@ -210,7 +210,7 @@ export default function App() {
           showBlock={(id) => { setSelectId(id); setTab("design"); }} />}
         {tab === "dataset" && ds && <DatasetTab st={st} ds={ds} setDs={setDs} problems={dsProblems} toast={toast} />}
         {tab === "code" && <CodeTab toast={toast} />}
-        {tab === "train" && train && <TrainTab st={st} ok={ok} analysis={analysis} train={train} setTrain={setTrain} runId={runId} openRun={setRunId} toast={toast} startJob={startJob} datasetSource={ds?.source ?? "builtin"} datasetTask={ds?.task ?? "classify"} />}
+        {tab === "train" && train && <TrainTab st={st} ok={ok} analysis={analysis} train={train} setTrain={setTrain} runId={runId} openRun={setRunId} toast={toast} startJob={startJob} datasetSource={ds?.source ?? "builtin"} datasetTask={ds?.task ?? "classify"} datasetBands={ds?.bands?.length ?? 0} />}
         {tab === "results" && <ResultsTab runId={runId} />}
         {tab === "settings" && <SettingsTab st={st} reload={reload} />}
         {tab === "connection" && <ConnectionTab st={st} reload={reload} toast={toast} startJob={startJob} />}

@@ -1174,3 +1174,33 @@ fn recommendations_for_costly_designs() {
     assert!(d.messages.iter().any(|m| m.contains("% of the network's") && m.contains("Global pool")), "{:?}", d.messages);
     assert_eq!(a.advice.len(), 1);
 }
+
+#[test]
+fn unet_with_resnet18_encoder_takes_pretrained_weights() {
+    // doc/examples/unet_resnet18.nnb: ResNet-18's layers as the encoder, attention-gated U-Net decoder; 13 bands at 512×512
+    let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../doc/examples/unet_resnet18.nnb")).unwrap();
+    let g = nnb_core::dsl::apply(&text, &Graph::default()).unwrap();
+    let bands: Vec<String> = ["VV", "VH", "VV_pre", "VH_pre", "B2", "B3", "B4", "B8", "B11", "B12", "NDWI", "MNDWI", "present"].iter().map(|b| b.to_string()).collect();
+    let ds = Dataset { source: "local".into(), task: "segment".into(), local_dir: "/data/x".into(), local_on_machine: true, kaggle_train_dir: "images".into(),
+        kaggle_mask_dir: "masks".into(), image_size: [512, 512], channels: 13, sensor: "other".into(), band_order: bands.clone(), bands,
+        classes: vec!["land".into(), "water".into()], ..Default::default() };
+    let a = analyze(&g, &ds);
+    assert!(a.ok, "{:?}", a.problems);
+    assert_eq!(a.input, vec![13, 512, 512]);
+    assert_eq!(a.nodes.iter().find(|n| n.kind == "seg_output").unwrap().out, Some(vec![2, 512, 512]));
+    // ResNet-18 without its classifier has 11,176,512 parameters (its first layer 64·3·7·7 = 9,408; here 64·13·7·7 = 40,768)
+    let encoder: u64 = a.nodes.iter().filter(|n| g.node(&n.id).is_some_and(|x| ["2", "3", "6", "7"].iter().any(|p| x.label == *p || x.label.starts_with(&format!("{p}.")))))
+        .map(|n| n.params).sum();
+    assert_eq!(encoder, 11_176_512 - 9_408 + 40_768);
+    assert_eq!(a.total_params, 14_494_382);
+    let t = TrainSettings { pretrained: "ssl4eo_s2".into(), ..Default::default() }.clean();
+    assert_eq!(t.pretrained, "ssl4eo_s2");
+    let code = train_script(&g, &ds, &a, &t, "unet").unwrap();
+    assert!(code.contains("\"pretrained\": \"ssl4eo_s2\""), "the setting reaches train.py");
+    // Sentinel-2 weights on plain photos: refused before anything starts
+    let photos = Dataset { source: "huggingface".into(), task: "segment".into(), hf_repo: "x/y".into(), image_size: [512, 512], channels: 3,
+        classes: vec!["a".into(), "b".into()], ..Default::default() };
+    let a = analyze(&g, &photos);
+    let err = train_script(&g, &photos, &a, &t, "unet").unwrap_err().to_string();
+    assert!(err.contains("Sentinel-2 bands"), "{err}");
+}
