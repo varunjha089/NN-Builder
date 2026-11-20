@@ -3,6 +3,10 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 20_11_26_14_13_39
+
+**TEST_APP: pretrained encoder on a lab GPU, CIFAR-10 download on Kaggle** (`456b331`)
+
 ## 20_11_26_14_00_46
 
 **Built-in data: install pyarrow when missing; CI compares CIFAR-10's training set as pairs** (`eaeb265`)
