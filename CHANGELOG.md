@@ -3,6 +3,14 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 20_11_26_13_48_18
+
+**Remote machines: temporary files and caches in the machine's folder** (`6b32873`)
+
+Prepare and run.sh export TMPDIR=<workdir>/tmp and XDG_CACHE_HOME=<workdir>/cache. A lab machine
+with a full system disk had no usable /tmp, so even 'import torchvision' failed and Prepare reported
+no PyTorch. TEST_APP: 6.2 and 6.8 done on the college lab machines; 6.4 not possible there (one GPU each).
+
 ## 19_11_26_16_25_16
 
 **Text: a rewritten design is laid out afresh** (`1828b5c`)
