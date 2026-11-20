@@ -3,6 +3,14 @@
 Every change to NN Builder, newest first. Each entry is headed by its time as `dd_mm_yy_hr_min_sec` (day, month, two-digit year,
 hour, minute, second; the commit time) and the commit. Regenerate with `python3 scripts/make_changelog.py`.
 
+## 20_11_26_14_00_46
+
+**Built-in data: install pyarrow when missing; CI compares CIFAR-10's training set as pairs** (`eaeb265`)
+
+A lab machine's venv had no pyarrow, so Hugging Face's copy of MNIST failed and only torchvision's slow
+source was left. The CI check failed because Hugging Face stores CIFAR-10's training images in another
+order (same images, same labels, same class numbers; the test set is in torchvision's order).
+
 ## 20_11_26_13_48_18
 
 **Remote machines: temporary files and caches in the machine's folder** (`6b32873`)
