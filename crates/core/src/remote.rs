@@ -355,7 +355,9 @@ pub fn prepare_script(m: &Machine) -> String {
     format!(
         r#"set -u
 W={w}
-mkdir -p "$W/runs" "$W/data" || {{ echo "NNB_FAIL cannot make $W"; exit 1; }}
+mkdir -p "$W/runs" "$W/data" "$W/tmp" "$W/cache" || {{ echo "NNB_FAIL cannot make $W"; exit 1; }}
+# temporary files and caches (pip, Hugging Face, torch hub) inside W: a full system disk (/tmp, ~/.cache) stops even "import torchvision"
+export TMPDIR="$W/tmp" XDG_CACHE_HOME="$W/cache"
 echo "NNB_HOST $(hostname) $(uname -sm)"
 DRIVER=""
 if command -v nvidia-smi >/dev/null 2>&1; then

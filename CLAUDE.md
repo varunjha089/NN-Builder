@@ -288,6 +288,8 @@ crates/core/src/
                            Connection tab Find Python → Use this: read-only, venvs next to the remote folder, home, conda, /opt);
                            save_machine forgets the prepared facts when host / user / port / jump / workdir / python / instance change), choose_launch,
                            put_secret_script (file via stdin, chmod 600)
+                           Prepare and run.sh export TMPDIR=<workdir>/tmp and XDG_CACHE_HOME=<workdir>/cache (pip, Hugging Face, torch hub): a full system
+                           disk (/tmp, ~/.cache) otherwise stops even `import torchvision` (seen on a lab machine, 2026-11-20)
   cloud.rs                 tools venv (settings/tools: kaggle + boto3), kaggle_test/files/push/status/output (CLI with env credentials and a
                            private KAGGLE_CONFIG_DIR), class_folders, aws() (python/helpers/aws_ec2.py: describe/start/stop)
   runs.rs                  spot: run_script (run.sh with flock, time budget over resumes, IMDS watcher), RESUME_SH + crontab @reboot,

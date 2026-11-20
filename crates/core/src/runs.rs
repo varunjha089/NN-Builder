@@ -772,6 +772,8 @@ pub fn run_script(t: &codegen::TrainSettings, p: &Prepared, m: &Machine, gpu: &s
          cd \"$(dirname \"$0\")\"\n\
          if command -v flock >/dev/null 2>&1; then exec 9>run.lock; flock -n 9 || exit 0; fi\n\
          export NNB_DATA={data} PYTHONUNBUFFERED=1{ck_env}\n\
+         # temporary files and caches in the machine's folder, not on its system disk (which may be full)\n\
+         export TMPDIR={w}/tmp XDG_CACHE_HOME={w}/cache; mkdir -p \"$TMPDIR\" \"$XDG_CACHE_HOME\"\n\
          A=\"$(dirname {py})/activate\"; if [ -f \"$A\" ]; then . \"$A\"; fi\n\
          {gpu}echo $$ > pid.txt\n\
          USED=$(cat used_seconds.txt 2>/dev/null || echo 0); LEFT=$(( {secs} - USED ))\n\
@@ -793,6 +795,7 @@ pub fn run_script(t: &codegen::TrainSettings, p: &Prepared, m: &Machine, gpu: &s
         re = RESUME_EXIT,
         stop_note = if stop.is_empty() { "" } else { "; then stops the instance" },
         data = remote::remote_path(&format!("{}/data", m.workdir.trim_end_matches('/'))),
+        w = remote::remote_path(m.workdir.trim_end_matches('/')),
         gpu = match gpu {
             "" => String::new(),
             "free" => free_gpu_wait(t.gpus),
