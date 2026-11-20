@@ -490,7 +490,8 @@ class ArrayImages(torch.utils.data.Dataset):
         return self.transform(Image.fromarray(self.data[i])), int(self.targets[i])
 
 
-# Hugging Face's copies of the built-in sets (same images, same class order as torchvision's): repository, folder, image column, sizes
+# Hugging Face's copies of the built-in sets (same images and labels, same class numbers as torchvision's; CIFAR-10's training images come in
+# another order, which only changes which images the validation split takes): repository, folder, image column, sizes
 BUILTIN_HF = {
     "mnist": ("ylecun/mnist", "mnist", "image", (60000, 10000)),
     "fashion_mnist": ("zalando-datasets/fashion_mnist", "fashion_mnist", "image", (60000, 10000)),
@@ -559,7 +560,7 @@ def builtin_fast(root, name):
     """a built-in set (mnist | fashion_mnist | cifar10) from Hugging Face's copy, kept as <name>.npz: torchvision downloads from its own
     servers, which took 23 minutes for CIFAR-10 on Kaggle (2026-11-18) and failed for MNIST on a lab machine with a poor connection
     (2026-11-19); this copy is fetched with retries that resume. None (torchvision's own files) when torchvision's files are already on the
-    machine, or this copy cannot be had."""
+    machine, or this copy cannot be had. pyarrow (to read it) is installed when missing."""
     import numpy as np
     cache = os.path.join(root, f"{name}.npz")
     if not os.path.exists(cache):
@@ -567,7 +568,13 @@ def builtin_fast(root, name):
             return None
         repo, folder, col, sizes = BUILTIN_HF[name]
         try:
-            import io, pyarrow.parquet as pq
+            import io
+            try:
+                import pyarrow.parquet as pq
+            except ImportError:  # a machine's own venv may lack it (a lab machine, 2026-11-20): the slow source was then the only one
+                emit("info", message="installing pyarrow (reads Hugging Face's copy)")
+                pip_install("pyarrow")
+                import pyarrow.parquet as pq
             from PIL import Image
             os.makedirs(root, exist_ok=True)
             t0, parts = time.time(), []

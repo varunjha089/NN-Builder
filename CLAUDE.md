@@ -521,8 +521,9 @@ train. It could come back later as an optional "export to C++" for teaching.
   /kaggle/input, 4 levels, ≤ 20,000 folders; e.g. a datasets folder beside the data folder). fetch(): 60 s timeouts, 6 tries that resume (Range),
   a transfer counts only at its announced length (a dropped connection ends reading quietly). Then torchvision's download; if that fails
   too, "DATA: this machine could not download …" says to train on Kaggle or copy the folder. Why: torchvision's Toronto server took
-  23 min for CIFAR-10 on Kaggle; MNIST failed on the lab machine over a poor connection (2026-11-19). CI ci_builtin_check.py: the real
-  copies, identical to torchvision's (MNIST, CIFAR-10).
+  23 min for CIFAR-10 on Kaggle; MNIST failed on the lab machine over a poor connection (2026-11-19). pyarrow is pip-installed when
+  missing (a lab venv lacked it, 2026-11-20). CI ci_builtin_check.py: the real copies hold torchvision's (image, label) pairs (MNIST,
+  CIFAR-10); in torchvision's order except CIFAR-10's training set (HF stores it in another order: only the validation pick differs).
 - The app shows the size before a run; the data is cached on the machine (`~/.nn_builder/data`) and not downloaded again.
 
 ## 4. Where training runs

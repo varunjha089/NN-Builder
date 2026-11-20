@@ -1,12 +1,15 @@
 """CI only (GitHub Actions; never on the owner's Mac): the built-in datasets from Hugging Face's copies, with the harness's own code.
 
 builtin_fast() downloads MNIST, Fashion-MNIST and CIFAR-10 from Hugging Face (ylecun/mnist, zalando-datasets/fashion_mnist,
-uoft-cs/cifar10); MNIST and CIFAR-10 must be image for image and label for label what torchvision's own download gives, so a run gets
-the same data whichever way it came. A second call must use the cache (no download).
+uoft-cs/cifar10); MNIST and CIFAR-10 must hold the same (image, label) pairs as torchvision's own download, so a run gets the same data
+whichever way it came. MNIST and both test sets must also be in torchvision's order; CIFAR-10's training set comes from Hugging Face in
+another order (its test set does not). A second call must use the cache (no download).
 
 usage: python ci_builtin_check.py <scratch folder>
 """
 import ast
+import collections
+import hashlib
 import os
 import sys
 import time
@@ -42,9 +45,13 @@ def main(work):
             ref = cls(tv, train=train, download=True)
             rx, ry = np.asarray(ref.data), np.asarray(ref.targets)
             assert x.shape == rx.shape, f"{name}: {x.shape} vs torchvision {rx.shape}"
+            if name == "cifar10" and train:
+                key = lambda xs_, ys_: collections.Counter(hashlib.sha1(im.tobytes()).hexdigest() + str(int(c)) for im, c in zip(xs_, ys_))
+                assert key(x, y) == key(rx, ry), f"{name}: the (image, label) pairs differ from torchvision's"
+                continue
             assert (y == ry).all(), f"{name}: labels differ from torchvision's"
             assert (x == rx).all(), f"{name}: images differ from torchvision's ({int((x != rx).any(axis=tuple(range(1, x.ndim))).sum())} differ)"
-        print(f"{name}: identical to torchvision's download (train and test, images and labels)")
+        print(f"{name}: the same images and labels as torchvision's download (train and test)")
         n = len(events)
         ns["builtin_fast"](root, name)
         assert len(events) == n, f"{name}: downloaded again instead of using the cache"
